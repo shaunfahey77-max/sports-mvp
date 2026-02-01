@@ -35,14 +35,53 @@ const nhlGames = [
   { id: "nhl-003", date: "2026-02-02", homeTeamId: "nhl-nyr", awayTeamId: "nhl-tor" },
 ];
 
+// --- lookup maps for "expand=teams"
+const nbaTeamById = Object.fromEntries(nbaTeams.map((t) => [t.id, t]));
+const nhlTeamById = Object.fromEntries(nhlTeams.map((t) => [t.id, t]));
+
 // --- routes ---
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "sports-mvp-api",
+    time: new Date().toISOString(),
+  });
+});
 
 app.get("/api/nba/teams", (_req, res) => res.json(nbaTeams));
 app.get("/api/nhl/teams", (_req, res) => res.json(nhlTeams));
 
-app.get("/api/nba/games", (_req, res) => res.json(nbaGames));
-app.get("/api/nhl/games", (_req, res) => res.json(nhlGames));
+app.get("/api/nba/games", (req, res) => {
+  const { date, expand } = req.query;
+
+  let games = date ? nbaGames.filter((g) => g.date === date) : nbaGames;
+
+  if (expand === "teams") {
+    games = games.map((g) => ({
+      ...g,
+      homeTeam: nbaTeamById[g.homeTeamId] ?? null,
+      awayTeam: nbaTeamById[g.awayTeamId] ?? null,
+    }));
+  }
+
+  res.json(games);
+});
+
+app.get("/api/nhl/games", (req, res) => {
+  const { date, expand } = req.query;
+
+  let games = date ? nhlGames.filter((g) => g.date === date) : nhlGames;
+
+  if (expand === "teams") {
+    games = games.map((g) => ({
+      ...g,
+      homeTeam: nhlTeamById[g.homeTeamId] ?? null,
+      awayTeam: nhlTeamById[g.awayTeamId] ?? null,
+    }));
+  }
+
+  res.json(games);
+});
 
 app.listen(PORT, () => {
   console.log(`API listening on http://127.0.0.1:${PORT}`);
