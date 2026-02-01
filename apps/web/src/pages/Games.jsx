@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 function formatDateYYYYMMDD(d) {
-  // local date -> YYYY-MM-DD
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
@@ -22,10 +22,6 @@ export default function Games({ league = "nba" }) {
         setError("");
         setLoading(true);
 
-        // If you're using a Vite proxy, this is perfect:
-        // /api -> http://127.0.0.1:3001
-        //
-        // Uses the new API: ?date=YYYY-MM-DD&expand=teams
         const res = await fetch(
           `/api/${league}/games?date=${encodeURIComponent(date)}&expand=teams`
         );
@@ -46,7 +42,7 @@ export default function Games({ league = "nba" }) {
   }, [league, date]);
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
         <h1 style={{ marginTop: 0, marginBottom: 0 }}>{leagueLabel} Games</h1>
 
@@ -74,7 +70,14 @@ export default function Games({ league = "nba" }) {
 
             return (
               <li key={g.id}>
-                {g.date} — {away} @ {home}
+                {g.date} —{" "}
+                <Link to={`/teams/${g.awayTeamId}`} style={{ fontWeight: 700 }}>
+                  {away}
+                </Link>{" "}
+                @{" "}
+                <Link to={`/teams/${g.homeTeamId}`} style={{ fontWeight: 700 }}>
+                  {home}
+                </Link>
               </li>
             );
           })}
