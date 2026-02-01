@@ -1,17 +1,20 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import Games from "./pages/Games.jsx";
+import GamesTabs from "./pages/GamesTabs.jsx";
 import TeamDetail from "./pages/TeamDetail.jsx";
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Default landing → NBA */}
-        <Route path="/" element={<Navigate to="/nba/games" replace />} />
+        {/* Default landing */}
+        <Route path="/" element={<Navigate to="/games" replace />} />
 
-        {/* NBA & NHL games */}
-        <Route path="/nba/games" element={<Games league="nba" />} />
-        <Route path="/nhl/games" element={<Games league="nhl" />} />
+        {/* Games with NBA / NHL tabs */}
+        <Route path="/games" element={<GamesTabs />} />
+
+        {/* Optional: keep old URLs working (redirects) */}
+        <Route path="/nba/games" element={<Navigate to="/games" replace />} />
+        <Route path="/nhl/games" element={<Navigate to="/games" replace />} />
 
         {/* Team detail (shared) */}
         <Route path="/teams/:id" element={<TeamDetail />} />
