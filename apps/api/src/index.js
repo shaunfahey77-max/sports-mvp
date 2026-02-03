@@ -1,10 +1,14 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import nbaTeamLast5 from "./routes/nbaTeamLast5.js";
+import nbaPredictLite from "./routes/nbaPredictLite.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use("/api/nba", nbaTeamLast5);
+app.use("/api/nba", nbaPredictLite);
 
 const PORT = process.env.PORT || 3001;
 
@@ -55,7 +59,7 @@ async function fetchJson(url, { headers } = {}) {
  * Helpers
  */
 function normalizeDateParam(date) {
-  // expects YYYY-MM-DD (your frontend already uses this)
+  // expects YYYY-MM-DD (frontend uses this)
   if (!date) return null;
   const ok = /^\d{4}-\d{2}-\d{2}$/.test(date);
   return ok ? date : null;
@@ -88,7 +92,7 @@ async function getNbaTeams() {
   const json = await fetchJson(url, { headers: { Authorization: NBA_API_KEY } });
 
   // Balldontlie returns modern teams + historical/defunct teams.
-  // We only want the current NBA 30 teams (ids 1–30).
+  // Keep only the current NBA 30 teams (ids 1–30).
   const teams = (json?.data || [])
     .filter((t) => Number(t?.id) >= 1 && Number(t?.id) <= 30)
     .map((t) => ({
@@ -99,7 +103,7 @@ async function getNbaTeams() {
       _source: { provider: "balldontlie", teamId: t.id },
     }));
 
-  // Safety: de-dupe by abbreviation (prevents collisions like duplicate WAS)
+  // Safety: de-dupe by abbreviation
   const byAbbr = new Map();
   for (const t of teams) {
     if (t?.abbr) byAbbr.set(t.abbr, t);
@@ -128,7 +132,7 @@ async function getNbaGamesByDate(dateYYYYMMDD, expandTeams) {
 
     const base = {
       id: `nba-${g.id}`,
-      // Normalize to YYYY-MM-DD for the frontend/date filtering
+      // Normalize to YYYY-MM-DD for frontend filtering
       date: String(g?.date || "").slice(0, 10),
       homeTeamId: toNbaTeamId(homeAbbr),
       awayTeamId: toNbaTeamId(awayAbbr),
@@ -158,7 +162,7 @@ async function getNbaGamesByDate(dateYYYYMMDD, expandTeams) {
  * NHL (api-web.nhle.com)
  */
 async function getNhlTeams() {
-  // standings/now includes team meta
+  // standings/now includes team meta (no auth)
   const url = `${NHL_API_BASE}/standings/now`;
   const json = await fetchJson(url);
 
@@ -173,13 +177,14 @@ async function getNhlTeams() {
 
       return {
         id: toNhlTeamId(tri),
-        name: name,
+        name,
         city: city || "",
         abbr: tri,
       };
     })
     .filter(Boolean);
 
+  // de-dupe by abbr
   const map = new Map();
   for (const t of teams) map.set(t.abbr, t);
   return { teams: Array.from(map.values()), byAbbr: map };
@@ -266,7 +271,8 @@ app.get("/api/nhl/teams", async (_req, res) => {
 app.get("/api/nba/games", async (req, res) => {
   try {
     const date =
-      normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
+      normalizeDateParam(req.query.date) ||
+      new Date().toISOString().slice(0, 10);
     const expand = wantExpandTeams(req);
     const games = await getNbaGamesByDate(date, expand);
     res.json(games);
@@ -278,7 +284,8 @@ app.get("/api/nba/games", async (req, res) => {
 app.get("/api/nhl/games", async (req, res) => {
   try {
     const date =
-      normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
+      normalizeDateParam(req.query.date) ||
+      new Date().toISOString().slice(0, 10);
     const expand = wantExpandTeams(req);
     const games = await getNhlGamesByDate(date, expand);
     res.json(games);
