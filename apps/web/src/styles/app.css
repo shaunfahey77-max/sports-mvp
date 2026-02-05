@@ -331,3 +331,158 @@ input[type="date"]:focus, select:focus{
 .predMatch a:hover{ text-decoration: underline; }
 .predMeta{ margin-top: 6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .predRight{ display:flex; align-items:center; gap:10px; }
+/* ===== Home Dashboard ===== */
+.home { display: grid; gap: 14px; }
+
+.homeHero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.homeTitle { margin: 0; font-size: 34px; letter-spacing: 0.2px; }
+.homeSub { margin-top: 6px; opacity: 0.72; font-size: 14px; }
+
+.homeMeta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.mutedSmall { font-size: 12px; opacity: 0.60; }
+
+.statusPill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.18);
+  font-weight: 850;
+  font-size: 12px;
+}
+.statusPill.ok { box-shadow: 0 0 0 1px rgba(64,195,138,0.18) inset; }
+.statusPill.bad { box-shadow: 0 0 0 1px rgba(255,107,107,0.18) inset; }
+
+.homeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.leagueCard {
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.22);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.leagueCard.nba { box-shadow: 0 0 0 1px rgba(80,180,220,0.10) inset, 0 10px 30px rgba(0,0,0,0.25); }
+.leagueCard.nhl { box-shadow: 0 0 0 1px rgba(64,195,138,0.10) inset, 0 10px 30px rgba(0,0,0,0.25); }
+
+.leagueCardHead { display: flex; justify-content: space-between; align-items: center; }
+
+.leagueBadge {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  font-weight: 900;
+  font-size: 12px;
+}
+.leagueDot { width: 9px; height: 9px; border-radius: 999px; background: rgba(80,180,220,0.9); }
+.leagueCard.nhl .leagueDot { background: rgba(64,195,138,0.9); }
+
+.leagueCardTitle { font-size: 18px; font-weight: 920; }
+.leagueCardSub { font-size: 13px; opacity: 0.70; }
+
+.leagueCardPick { margin-top: 2px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+.pickLabel { font-size: 12px; opacity: 0.65; font-weight: 850; margin-bottom: 8px; }
+
+.pickRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+}
+.pickRow.skeleton { height: 42px; opacity: 0.6; background: rgba(255,255,255,0.02); }
+
+.pickMatch { display: inline-flex; gap: 8px; align-items: center; font-weight: 900; }
+.pickTeam { letter-spacing: 0.2px; }
+
+.pickRight { display: inline-flex; gap: 10px; align-items: center; }
+.pickWinner {
+  font-size: 12px;
+  font-weight: 900;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.20);
+}
+.pickConf {
+  font-size: 12px;
+  font-weight: 950;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.20);
+}
+
+.leagueCardMeta { display: grid; gap: 4px; opacity: 0.85; }
+
+.leagueCardActions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+
+.btnPrimary, .btnGhost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+.btnPrimary { background: rgba(80,180,220,0.16); color: rgba(255,255,255,0.92); }
+.leagueCard.nhl .btnPrimary { background: rgba(64,195,138,0.14); }
+
+.btnGhost { background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.85); }
+
+.homeFooterCard {
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.18);
+  padding: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.homeFooterTitle { font-weight: 950; margin-bottom: 4px; }
+.homeFooterBody { font-size: 13px; opacity: 0.70; max-width: 680px; }
+.homeFooterRight { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.homeError {
+  border-radius: 18px;
+  border: 1px solid rgba(255,107,107,0.30);
+  background: rgba(0,0,0,0.18);
+  padding: 14px;
+}
+.homeErrorTitle { font-weight: 950; color: rgba(255,107,107,0.95); }
+.homeErrorBody { margin-top: 6px; opacity: 0.85; }
+.homeErrorActions { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+
+@media (max-width: 980px) {
+  .homeGrid { grid-template-columns: 1fr; }
+  .homeTitle { font-size: 28px; }
+}
+.homeFull { width: 100%; }

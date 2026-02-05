@@ -191,13 +191,13 @@ function Meter({ conf }) {
   );
 }
 
-/** ✅ canonical team route helper */
+/** ✅ Canonical team route helper */
 function teamHref(leagueLower, teamId) {
   if (!teamId) return null;
   return `/league/${leagueLower}/team/${teamId}`;
 }
 
-/** ✅ safe ID -> ABBR */
+/** ✅ Safe ID -> ABBR */
 function stripPrefix(idOrAbbr) {
   return String(idOrAbbr || "").replace("nba-", "").replace("nhl-", "").toUpperCase();
 }
@@ -425,6 +425,9 @@ export default function Predict({ league = "nba" }) {
     color: "inherit",
   };
 
+  // ✅ RECOMMENDED: canonical hub link (optional but useful)
+  const hubUrl = `/league/${activeLeague}/hub`;
+
   return (
     <div style={pageBg}>
       <div style={shell}>
@@ -452,8 +455,29 @@ export default function Predict({ league = "nba" }) {
               <div style={{ fontSize: 12, letterSpacing: 0.2, opacity: 0.75, fontWeight: 800 }}>
                 {leagueLabel}
               </div>
+
+              {/* ✅ tiny hub shortcut so the hub is discoverable */}
+              <Link
+                to={hubUrl}
+                style={{
+                  marginLeft: 8,
+                  fontSize: 12,
+                  fontWeight: 900,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                  textDecoration: "none",
+                  color: "rgba(255,255,255,0.82)",
+                }}
+                title="Open hub (legacy layout)"
+              >
+                Hub
+              </Link>
             </div>
+
             <h1 style={{ margin: 0, fontSize: 26, letterSpacing: 0.2 }}>Games & Predictions</h1>
+
             <div style={{ fontSize: 13, opacity: 0.70 }}>
               {view === "games"
                 ? "Date-based slate (clean games list)."

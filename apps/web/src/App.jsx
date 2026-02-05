@@ -8,13 +8,19 @@ import TeamDetail from "./pages/TeamDetail";
 
 import "./styles/app.css";
 
+function normalizeLeague(raw) {
+  const l = String(raw || "nba").toLowerCase();
+  return l === "nhl" ? "nhl" : "nba"; // lock to supported leagues
+}
+
 /**
  * Redirect legacy team URLs to the canonical route:
  * /league/:league/team/:teamId
  */
 function TeamLegacyRedirect() {
   const { league, teamId } = useParams();
-  const l = String(league || "nba").toLowerCase();
+  const l = normalizeLeague(league);
+  if (!teamId) return <Navigate to={`/league/${l}`} replace />;
   return <Navigate to={`/league/${l}/team/${teamId}`} replace />;
 }
 
@@ -28,7 +34,7 @@ function TeamLegacyRedirect() {
  */
 function HubLegacyRedirect() {
   const { league } = useParams();
-  const l = String(league || "nba").toLowerCase();
+  const l = normalizeLeague(league);
   return <Navigate to={`/league/${l}/hub`} replace />;
 }
 
