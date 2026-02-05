@@ -23,7 +23,7 @@ const NHL_API_BASE = "https://api-web.nhle.com/v1";
 /**
  * Caching
  * - short TTL for live pages
- * - longer TTL for heavy NBA history pulls
+ * - longer TTL for heavy history pulls
  */
 const CACHE_TTL_MS = 60_000;
 const HEAVY_CACHE_TTL_MS = 10 * 60_000;
@@ -104,6 +104,181 @@ function addDays(yyyyMmDd, deltaDays) {
   const d = new Date(`${yyyyMmDd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + deltaDays);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * =========================================
+ * Elo (Premium MVP, free)
+ * =========================================
+ * - Shared across NBA + NHL
+ * - Ratings are trained on a window of completed games
+ * - Predict returns real win probabilities (confidence)
+ */
+const ELO_BASE = 1500;
+
+const ELO_CFG = {
+  nba: { K: 20, HOME_ADV: 65 },
+  nhl: { K: 18, HOME_ADV: 55 },
+};
+
+function eloExpected(rA, rB) {
+  // Expected score for A vs B
+  return 1 / (1 + Math.pow(10, (rB - rA) / 400));
+}
+
+function eloMovMultiplier(scoreDiff) {
+  // Premium but safe: rewards bigger wins without letting blowouts dominate
+  const d = Math.max(1, Number(scoreDiff) || 1);
+  return Math.log(d + 1);
+}
+
+function eloUpdatePair({ rHome, rAway, homeScore, awayScore, cfg }) {
+  const diff = Math.abs((homeScore ?? 0) - (awayScore ?? 0));
+  const mov = eloMovMultiplier(diff);
+
+  const expectedHome = eloExpected(rHome, rAway);
+
+  let actualHome = 0.5;
+  if (homeScore > awayScore) actualHome = 1;
+  else if (homeScore < awayScore) actualHome = 0;
+
+  // K adjusted with MOV, capped so one game can't swing ratings wildly
+  const kAdj = clamp(cfg.K * mov, cfg.K * 0.75, cfg.K * 2.5);
+
+  const delta = kAdj * (actualHome - expectedHome);
+
+  return {
+    rHomeNew: rHome + delta,
+    rAwayNew: rAway - delta,
+    expectedHome,
+  };
+}
+
+function getRating(map, teamId) {
+  return map.has(teamId) ? map.get(teamId) : ELO_BASE;
+}
+
+/**
+ * Convert home win probability to UI-friendly "confidence"
+ * (we keep it honest: it is a probability)
+ */
+function probToConfidence(pHome, pick) {
+  const p = pick === "home" ? pHome : (1 - pHome);
+  return clamp(p, 0.51, 0.97);
+}
+
+/**
+ * =========================================
+ * Rest / Back-to-back adjustment (free add-on)
+ * =========================================
+ * - Uses the SAME history window you already fetch for Elo training
+ * - Computes who played yesterday / 3-in-4 / long rest
+ * - Applies small Elo nudges to make predictions feel premium
+ */
+const REST_CFG = {
+  nba: {
+    b2bPenaltyElo: 25,      // played yesterday
+    threeInFourPenaltyElo: 15,
+    longRestBonusElo: 8,    // 2+ days rest
+  },
+  nhl: {
+    b2bPenaltyElo: 20,
+    threeInFourPenaltyElo: 12,
+    longRestBonusElo: 6,
+  },
+};
+
+function ymdToUtcMs(ymd) {
+  return new Date(`${ymd}T00:00:00Z`).getTime();
+}
+
+function daysBetweenUtc(ymdA, ymdB) {
+  const a = ymdToUtcMs(ymdA);
+  const b = ymdToUtcMs(ymdB);
+  return Math.round((b - a) / 86400000);
+}
+
+/**
+ * Build a map: teamId -> sorted list of dates played (YYYY-MM-DD) within history window.
+ * Works with:
+ * - NBA raw balldontlie rows (home_team/visitor_team)
+ * - NHL normalized rows (homeTeamId/awayTeamId)
+ */
+function buildPlayedDatesMap({ league, histRows }) {
+  const played = new Map(); // teamId -> Set(dates)
+
+  const add = (teamId, dateYmd) => {
+    if (!teamId || !dateYmd) return;
+    if (!played.has(teamId)) played.set(teamId, new Set());
+    played.get(teamId).add(dateYmd);
+  };
+
+  if (league === "nba") {
+    for (const g of histRows) {
+      const hs = g?.home_team_score;
+      const as = g?.visitor_team_score;
+      if (typeof hs !== "number" || typeof as !== "number") continue; // only completed
+      const dateYmd = String(g?.date || "").slice(0, 10);
+      const homeId = toNbaTeamId(g?.home_team?.abbreviation);
+      const awayId = toNbaTeamId(g?.visitor_team?.abbreviation);
+      add(homeId, dateYmd);
+      add(awayId, dateYmd);
+    }
+  } else {
+    for (const g of histRows) {
+      const hs = g?.homeScore;
+      const as = g?.awayScore;
+      if (typeof hs !== "number" || typeof as !== "number") continue; // only completed
+      const dateYmd = String(g?.date || "");
+      add(g?.homeTeamId, dateYmd);
+      add(g?.awayTeamId, dateYmd);
+    }
+  }
+
+  const out = new Map();
+  for (const [teamId, set] of played.entries()) {
+    const arr = [...set].sort();
+    out.set(teamId, arr);
+  }
+  return out;
+}
+
+/**
+ * For a team, look back 4 days ending on (date-1) and count games.
+ * Also compute restDays (days off between last game and target date).
+ */
+function workloadForTeam(playedDatesArr, dateYmd) {
+  if (!playedDatesArr || playedDatesArr.length === 0) {
+    return { restDays: null, gamesLast4: 0, playedYesterday: false };
+  }
+
+  const yesterday = addDays(dateYmd, -1);
+  const windowStart = addDays(dateYmd, -4); // date-4..date-1
+
+  let gamesLast4 = 0;
+  let playedYesterday = false;
+
+  for (const d of playedDatesArr) {
+    if (d >= windowStart && d <= yesterday) gamesLast4 += 1;
+    if (d === yesterday) playedYesterday = true;
+  }
+
+  const lastPlayed = playedDatesArr[playedDatesArr.length - 1];
+  const restDays = lastPlayed ? daysBetweenUtc(lastPlayed, dateYmd) - 1 : null;
+
+  return { restDays, gamesLast4, playedYesterday };
+}
+
+function restEloAdjustment(league, workload) {
+  const cfg = REST_CFG[league] || REST_CFG.nba;
+  let adj = 0;
+
+  if (workload.playedYesterday) adj -= cfg.b2bPenaltyElo;
+  if (workload.gamesLast4 >= 3) adj -= cfg.threeInFourPenaltyElo;
+  if (workload.restDays != null && workload.restDays >= 2) adj += cfg.longRestBonusElo;
+
+  // keep subtle
+  return clamp(adj, -40, 20);
 }
 
 /**
@@ -223,8 +398,8 @@ async function getNbaGamesByDate(dateYYYYMMDD, expandTeams) {
 }
 
 /**
- * ✅ NEW: Bulk NBA history fetch (league-wide) in a date window.
- * This avoids the per-team spam that causes 429s.
+ * ✅ Bulk NBA history fetch (league-wide) in a date window.
+ * This avoids per-team spam that causes 429s.
  */
 async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
   if (!NBA_API_KEY) {
@@ -263,38 +438,6 @@ async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
 
   setCache(cacheKey, all, HEAVY_CACHE_TTL_MS);
   return all;
-}
-
-function computeWinPctFromGames(rows) {
-  // rows are balldontlie games objects
-  const W = new Map(); // teamAbbr -> wins
-  const G = new Map(); // teamAbbr -> games
-
-  for (const g of rows) {
-    const home = g?.home_team?.abbreviation;
-    const away = g?.visitor_team?.abbreviation;
-
-    const hs = g?.home_team_score;
-    const as = g?.visitor_team_score;
-
-    // only count completed games with numeric scores
-    if (typeof hs !== "number" || typeof as !== "number") continue;
-
-    if (!home || !away) continue;
-
-    G.set(home, (G.get(home) || 0) + 1);
-    G.set(away, (G.get(away) || 0) + 1);
-
-    if (hs > as) W.set(home, (W.get(home) || 0) + 1);
-    else if (as > hs) W.set(away, (W.get(away) || 0) + 1);
-  }
-
-  const pct = new Map();
-  for (const [abbr, games] of G.entries()) {
-    const wins = W.get(abbr) || 0;
-    pct.set(abbr, games > 0 ? wins / games : 0.5);
-  }
-  return { pct, gamesCount: G };
 }
 
 /**
@@ -350,9 +493,40 @@ async function getNhlGamesByDate(dateYYYYMMDD, expandTeams) {
 }
 
 /**
- * ✅ NEW: shared helper that returns the NBA predict payload (same as /api/nba/predict)
+ * ✅ NHL history fetch in a date window (used for Elo training)
+ * NHL schedule is per-day, so we loop dates. Cache keeps it fast.
+ */
+async function getNhlGamesInRange(startYYYYMMDD, endYYYYMMDD) {
+  const cacheKey = `NHL_RANGE:${startYYYYMMDD}:${endYYYYMMDD}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const all = [];
+  let cur = startYYYYMMDD;
+
+  for (let i = 0; i < 40_000; i++) {
+    const games = await getNhlGamesByDate(cur, true);
+    all.push(...games);
+
+    if (cur === endYYYYMMDD) break;
+    cur = addDays(cur, 1);
+
+    // tiny pause to avoid bursts
+    await sleep(120);
+  }
+
+  setCache(cacheKey, all, HEAVY_CACHE_TTL_MS);
+  return all;
+}
+
+/**
+ * ✅ NBA Predict (Elo-based + rest adjustment)
+ * - Trains Elo on completed games in history window [date-windowDays .. date-1]
+ * - Predicts slate on `date` using ratings + home advantage + rest adjustments
  */
 async function buildNbaPredictPayload(date, windowDays) {
+  const cfg = ELO_CFG.nba;
+
   const endHist = addDays(date, -1);
   const startHist = addDays(endHist, -(windowDays - 1));
 
@@ -362,43 +536,115 @@ async function buildNbaPredictPayload(date, windowDays) {
     windowDays,
     historyStart: startHist,
     historyEnd: endHist,
-    note: "Predictions based on rolling win% (bulk history fetch; avoids per-team spam).",
+    model: "Elo (window-trained) + rest",
+    note:
+      "Elo ratings trained on recent completed games; predicts win probability with home advantage + rest/back-to-back adjustments.",
   };
 
   try {
     const todaysGames = await getNbaGamesByDate(date, true);
+
+    // Train Elo on completed games in history window
     const histRows = await getNbaGamesInRange(startHist, endHist);
-    const { pct, gamesCount } = computeWinPctFromGames(histRows);
 
+    // Build played dates map for rest computations (same history window)
+    const playedMap = buildPlayedDatesMap({ league: "nba", histRows });
+
+    // sort chronologically (balldontlie has ISO datetime)
+    const hist = [...histRows].sort((a, b) => {
+      const ad = new Date(a?.date || 0).getTime();
+      const bd = new Date(b?.date || 0).getTime();
+      return ad - bd;
+    });
+
+    const ratings = new Map();
+    let trainedGames = 0;
+
+    for (const g of hist) {
+      const hs = g?.home_team_score;
+      const as = g?.visitor_team_score;
+      if (typeof hs !== "number" || typeof as !== "number") continue;
+
+      const homeAbbr = g?.home_team?.abbreviation;
+      const awayAbbr = g?.visitor_team?.abbreviation;
+      if (!homeAbbr || !awayAbbr) continue;
+
+      const homeId = toNbaTeamId(homeAbbr);
+      const awayId = toNbaTeamId(awayAbbr);
+
+      const rHome = getRating(ratings, homeId) + cfg.HOME_ADV;
+      const rAway = getRating(ratings, awayId);
+
+      const { rHomeNew, rAwayNew } = eloUpdatePair({
+        rHome,
+        rAway,
+        homeScore: hs,
+        awayScore: as,
+        cfg,
+      });
+
+      // store neutral ratings (remove home advantage)
+      ratings.set(homeId, rHomeNew - cfg.HOME_ADV);
+      ratings.set(awayId, rAwayNew);
+
+      trainedGames += 1;
+    }
+
+    // Predict today's slate using trained ratings + rest adjustments
     const predictions = todaysGames.map((g) => {
-      const homeAbbr = g?.homeTeam?.abbr || (g.homeTeamId || "").replace("nba-", "").toUpperCase();
-      const awayAbbr = g?.awayTeam?.abbr || (g.awayTeamId || "").replace("nba-", "").toUpperCase();
+      const homeAbbr =
+        g?.homeTeam?.abbr || (g.homeTeamId || "").replace("nba-", "").toUpperCase();
+      const awayAbbr =
+        g?.awayTeam?.abbr || (g.awayTeamId || "").replace("nba-", "").toUpperCase();
 
-      const homePct = pct.has(homeAbbr) ? pct.get(homeAbbr) : 0.5;
-      const awayPct = pct.has(awayAbbr) ? pct.get(awayAbbr) : 0.5;
+      const homeId = g.homeTeamId || toNbaTeamId(homeAbbr);
+      const awayId = g.awayTeamId || toNbaTeamId(awayAbbr);
 
-      const diff = awayPct - homePct;
-      const winnerIsAway = diff >= 0;
+      const homeWork = workloadForTeam(playedMap.get(homeId), date);
+      const awayWork = workloadForTeam(playedMap.get(awayId), date);
 
-      const confidence = clamp(0.5 + Math.abs(diff) * 0.49, 0.51, 0.99);
+      const homeRestAdj = restEloAdjustment("nba", homeWork);
+      const awayRestAdj = restEloAdjustment("nba", awayWork);
+
+      const rHomeBase = getRating(ratings, homeId);
+      const rAwayBase = getRating(ratings, awayId);
+
+      const rHome = rHomeBase + cfg.HOME_ADV + homeRestAdj;
+      const rAway = rAwayBase + awayRestAdj;
+
+      const pHome = eloExpected(rHome, rAway);
+
+      const pick = pHome >= 0.5 ? "home" : "away";
+      const winnerTeamId = pick === "home" ? homeId : awayId;
+      const winnerName = pick === "home" ? homeAbbr : awayAbbr;
+      const confidence = probToConfidence(pHome, pick);
 
       return {
         gameId: g.id,
         date,
         status: g.status,
-        home: { id: g.homeTeamId, name: homeAbbr },
-        away: { id: g.awayTeamId, name: awayAbbr },
+        home: { id: homeId, abbr: homeAbbr, name: homeAbbr },
+        away: { id: awayId, abbr: awayAbbr, name: awayAbbr },
         prediction: {
-          winnerTeamId: winnerIsAway ? g.awayTeamId : g.homeTeamId,
-          winnerName: winnerIsAway ? awayAbbr : homeAbbr,
+          winnerTeamId,
+          winnerName,
           confidence,
           factors: {
+            model: "elo+rest",
             windowDays,
-            homeWinPct: homePct,
-            awayWinPct: awayPct,
-            homeGames: gamesCount.get(homeAbbr) || 0,
-            awayGames: gamesCount.get(awayAbbr) || 0,
-            winPctDiff: awayPct - homePct,
+            pHomeWin: pHome,
+            rHome,
+            rAway,
+            rHomeBase,
+            rAwayBase,
+            homeAdv: cfg.HOME_ADV,
+            rest: {
+              home: homeWork,
+              away: awayWork,
+              homeRestAdj,
+              awayRestAdj,
+            },
+            trainedGames,
           },
         },
       };
@@ -408,17 +654,17 @@ async function buildNbaPredictPayload(date, windowDays) {
       meta: {
         ...meta,
         historyGamesFetched: histRows.length,
-        historyTeamsSeen: pct.size,
+        historyGamesWithScores: trainedGames,
+        teamsRated: ratings.size,
       },
       predictions,
     };
   } catch (e) {
-    // never hard-fail
     return {
       meta: {
         ...meta,
         error: String(e?.message || e),
-        note: "NBA predict returned safely with error info (upstream may be rate-limiting or missing key).",
+        note: "NBA Elo predict returned safely with error info (upstream may be rate-limiting or missing key).",
       },
       predictions: [],
     };
@@ -426,58 +672,137 @@ async function buildNbaPredictPayload(date, windowDays) {
 }
 
 /**
- * ✅ NEW: safe NHL “prediction” placeholder so UI never breaks
- * - If game is live/final, pick current leader
- * - Else pick home with low confidence
+ * ✅ NHL Predict (Elo-based + rest adjustment)
+ * - Trains Elo on completed games in history window [date-windowDays .. date-1]
+ * - Predicts slate on `date` using ratings + home ice advantage + rest adjustments
  */
-async function buildNhlPredictPayload(date) {
+async function buildNhlPredictPayload(date, windowDays = 5) {
+  const cfg = ELO_CFG.nhl;
+
+  const endHist = addDays(date, -1);
+  const startHist = addDays(endHist, -(windowDays - 1));
+
   const meta = {
     league: "nhl",
     date,
-    note: "Placeholder NHL picks (leader if live/final; otherwise home). Replace with real model later.",
+    windowDays,
+    historyStart: startHist,
+    historyEnd: endHist,
+    model: "Elo (window-trained) + rest",
+    note:
+      "Elo ratings trained on recent completed games; predicts win probability with home ice advantage + rest/back-to-back adjustments.",
   };
 
   try {
-    const games = await getNhlGamesByDate(date, true);
+    // Train on history window (completed games only)
+    const histGames = await getNhlGamesInRange(startHist, endHist);
 
-    const predictions = games.map((g) => {
-      const home = g.homeTeam?.abbr || (g.homeTeamId || "").replace("nhl-", "").toUpperCase();
-      const away = g.awayTeam?.abbr || (g.awayTeamId || "").replace("nhl-", "").toUpperCase();
+    // Rest map for NHL (same history window)
+    const playedMap = buildPlayedDatesMap({ league: "nhl", histRows: histGames });
 
-      const hs = Number(g.homeScore ?? g.homeTeam?.score ?? 0);
-      const as = Number(g.awayScore ?? g.awayTeam?.score ?? 0);
+    // sort by day (good enough for MVP)
+    const hist = [...histGames].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-      const status = String(g.status || "").toLowerCase();
-      const started =
-        status.includes("live") ||
-        status.includes("final") ||
-        status.includes("off") ||
-        status.includes("in progress") ||
-        status.includes("ongoing");
+    const ratings = new Map();
+    let trainedGames = 0;
 
-      const winnerName = started ? (hs >= as ? home : away) : home;
-      const winnerTeamId = winnerName === home ? g.homeTeamId : g.awayTeamId;
+    for (const g of hist) {
+      const hs = g?.homeScore;
+      const as = g?.awayScore;
+      if (typeof hs !== "number" || typeof as !== "number") continue;
 
-      const confidence = started
-        ? clamp(0.55 + Math.abs(hs - as) / 10, 0.55, 0.95)
-        : 0.55;
+      const homeId = g.homeTeamId;
+      const awayId = g.awayTeamId;
+      if (!homeId || !awayId) continue;
+
+      const rHome = getRating(ratings, homeId) + cfg.HOME_ADV;
+      const rAway = getRating(ratings, awayId);
+
+      const { rHomeNew, rAwayNew } = eloUpdatePair({
+        rHome,
+        rAway,
+        homeScore: hs,
+        awayScore: as,
+        cfg,
+      });
+
+      ratings.set(homeId, rHomeNew - cfg.HOME_ADV);
+      ratings.set(awayId, rAwayNew);
+
+      trainedGames += 1;
+    }
+
+    // Predict today's slate
+    const todaysGames = await getNhlGamesByDate(date, true);
+
+    const predictions = todaysGames.map((g) => {
+      const homeAbbr =
+        g?.homeTeam?.abbr || (g.homeTeamId || "").replace("nhl-", "").toUpperCase();
+      const awayAbbr =
+        g?.awayTeam?.abbr || (g.awayTeamId || "").replace("nhl-", "").toUpperCase();
+
+      const homeId = g.homeTeamId;
+      const awayId = g.awayTeamId;
+
+      const homeWork = workloadForTeam(playedMap.get(homeId), date);
+      const awayWork = workloadForTeam(playedMap.get(awayId), date);
+
+      const homeRestAdj = restEloAdjustment("nhl", homeWork);
+      const awayRestAdj = restEloAdjustment("nhl", awayWork);
+
+      const rHomeBase = getRating(ratings, homeId);
+      const rAwayBase = getRating(ratings, awayId);
+
+      const rHome = rHomeBase + cfg.HOME_ADV + homeRestAdj;
+      const rAway = rAwayBase + awayRestAdj;
+
+      const pHome = eloExpected(rHome, rAway);
+
+      const pick = pHome >= 0.5 ? "home" : "away";
+      const winnerTeamId = pick === "home" ? homeId : awayId;
+      const winnerName = pick === "home" ? homeAbbr : awayAbbr;
+      const confidence = probToConfidence(pHome, pick);
 
       return {
         gameId: g.id,
         date,
         status: g.status,
-        home: { id: g.homeTeamId, name: home },
-        away: { id: g.awayTeamId, name: away },
+        home: { id: homeId, abbr: homeAbbr, name: homeAbbr },
+        away: { id: awayId, abbr: awayAbbr, name: awayAbbr },
         prediction: {
           winnerTeamId,
           winnerName,
           confidence,
-          factors: { placeholder: true },
+          factors: {
+            model: "elo+rest",
+            windowDays,
+            pHomeWin: pHome,
+            rHome,
+            rAway,
+            rHomeBase,
+            rAwayBase,
+            homeAdv: cfg.HOME_ADV,
+            rest: {
+              home: homeWork,
+              away: awayWork,
+              homeRestAdj,
+              awayRestAdj,
+            },
+            trainedGames,
+          },
         },
       };
     });
 
-    return { meta, predictions };
+    return {
+      meta: {
+        ...meta,
+        historyGamesFetched: histGames.length,
+        historyGamesWithScores: trainedGames,
+        teamsRated: ratings.size,
+      },
+      predictions,
+    };
   } catch (e) {
     return {
       meta: { ...meta, error: String(e?.message || e) },
@@ -494,7 +819,7 @@ app.get("/api/health", (_req, res) =>
 );
 
 /**
- * ✅ Ensure /api/nba/teams never 404s (your UI was hitting this and failing)
+ * ✅ Ensure /api/nba/teams never 404s
  */
 app.get("/api/nba/teams", async (_req, res) => {
   const { teams } = await getNbaTeams();
@@ -525,7 +850,7 @@ app.get("/api/nhl/games", async (req, res) => {
 });
 
 /**
- * ✅ NBA Predict (rolling win% using BULK history fetch)
+ * ✅ NBA Predict (Elo)
  * Query:
  *   /api/nba/predict?date=YYYY-MM-DD&window=14
  */
@@ -537,10 +862,22 @@ app.get("/api/nba/predict", async (req, res) => {
 });
 
 /**
- * ✅ NEW: The missing endpoint your UI is calling
+ * ✅ NHL Predict (Elo) endpoint
+ * Query:
+ *   /api/nhl/predict?date=YYYY-MM-DD&window=5
+ */
+app.get("/api/nhl/predict", async (req, res) => {
+  const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
+  const windowDays = Math.max(3, Math.min(30, Number(req.query.window || 5)));
+  const payload = await buildNhlPredictPayload(date, windowDays);
+  res.json(payload);
+});
+
+/**
+ * ✅ Generic predictions endpoint
  * Query:
  *   /api/predictions?league=nba&date=YYYY-MM-DD&window=14
- *   /api/predictions?league=nhl&date=YYYY-MM-DD
+ *   /api/predictions?league=nhl&date=YYYY-MM-DD&window=5
  */
 app.get("/api/predictions", async (req, res) => {
   const league = String(req.query.league || "nba").toLowerCase();
@@ -558,7 +895,7 @@ app.get("/api/predictions", async (req, res) => {
   }
 
   if (league === "nhl") {
-    const payload = await buildNhlPredictPayload(date);
+    const payload = await buildNhlPredictPayload(date, windowDays);
     return res.json({
       league,
       date,

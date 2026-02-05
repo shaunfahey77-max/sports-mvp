@@ -1,66 +1,95 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-function formatDateYYYYMMDD(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
+/**
+ * LOCAL YYYY-MM-DD
+ * This MUST match <input type="date"> semantics.
+ */
+function todayLocalYYYYMMDD() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
 export default function Games({ league = "nba" }) {
   const [games, setGames] = useState([]);
-  const [date, setDate] = useState(() => formatDateYYYYMMDD(new Date()));
-  const [loading, setLoading] = useState(true);
+  const [date, setDate] = useState(() => todayLocalYYYYMMDD());
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const leagueLabel = useMemo(() => league.toUpperCase(), [league]);
+  const leagueLabel = useMemo(() => String(league).toUpperCase(), [league]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function load() {
+      setLoading(true);
+      setError("");
+
       try {
-        setError("");
-        setLoading(true);
+        // IMPORTANT: send the date string EXACTLY as YYYY-MM-DD
+        const url = `/api/${league}/games?date=${encodeURIComponent(
+          date
+        )}&expand=teams`;
 
-        const res = await fetch(
-          `/api/${league}/games?date=${encodeURIComponent(date)}&expand=teams`
-        );
+        const res = await fetch(url);
 
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
+        if (!res.ok) {
+          if (!cancelled) {
+            setError(`Games API error: ${res.status}`);
+            setGames([]);
+          }
+          return;
+        }
 
         const data = await res.json();
-        setGames(Array.isArray(data) ? data : []);
+        if (!cancelled) {
+          setGames(Array.isArray(data) ? data : []);
+        }
       } catch (e) {
-        setError(e?.message || "Failed to load games");
-        setGames([]);
+        if (!cancelled) {
+          setError(e?.message || "Failed to load games");
+          setGames([]);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     load();
+    return () => {
+      cancelled = true;
+    };
   }, [league, date]);
 
   return (
     <div>
       <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-        <h1 style={{ marginTop: 0, marginBottom: 0 }}>{leagueLabel} Games</h1>
+        <h1 style={{ margin: 0 }}>{leagueLabel} Games</h1>
 
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ fontSize: 14, opacity: 0.8 }}>Date</span>
           <input
             type="date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(e) => setDate(e.target.value)} // keep string
             style={{ padding: "6px 8px" }}
           />
         </label>
+
+        <span style={{ fontSize: 12, opacity: 0.6 }}>
+          Showing: {date} (local)
+        </span>
       </div>
 
       {loading && <p>Loading…</p>}
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 
-      {!loading && !error && games.length === 0 && <p>No games found.</p>}
+      {!loading && !error && games.length === 0 && (
+        <p style={{ opacity: 0.75 }}>No games scheduled for this date.</p>
+      )}
 
       {!loading && !error && games.length > 0 && (
         <ul style={{ paddingLeft: 18 }}>

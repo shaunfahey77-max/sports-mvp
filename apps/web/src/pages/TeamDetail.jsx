@@ -1,159 +1,234 @@
+// apps/web/src/pages/TeamDetail.jsx
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { getNbaTeams } from "../lib/api";
 
-function inferLeagueFromTeamId(teamId) {
-  if (typeof teamId !== "string") return null;
-  if (teamId.startsWith("nba-")) return "nba";
-  if (teamId.startsWith("nhl-")) return "nhl";
-  return null;
+function todayUTCYYYYMMDD() {
+  const now = new Date();
+  const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return utc.toISOString().slice(0, 10);
 }
 
-function formatDateYYYYMMDD(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+/**
+ * ESPN logo fallback (works well for MVP).
+ * NBA: https://a.espncdn.com/i/teamlogos/nba/500/bos.png
+ * NHL: https://a.espncdn.com/i/teamlogos/nhl/500/bos.png
+ */
+function logoUrl(league, abbr) {
+  const a = String(abbr || "").toLowerCase();
+  if (!a) return "";
+  const l = String(league || "").toLowerCase();
+  const sport = l === "nhl" ? "nhl" : "nba";
+  return `https://a.espncdn.com/i/teamlogos/${sport}/500/${a}.png`;
+}
+
+function TeamAvatar({ league, abbr, name, size = 34 }) {
+  const [imgOk, setImgOk] = useState(true);
+  const url = logoUrl(league, abbr);
+  const fallback = (abbr || name || "?").slice(0, 3).toUpperCase();
+
+  useEffect(() => setImgOk(true), [league, abbr]);
+
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 999,
+        overflow: "hidden",
+        background: "rgba(255,255,255,0.06)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        display: "grid",
+        placeItems: "center",
+        flex: "0 0 auto",
+      }}
+      title={name || abbr || ""}
+    >
+      {url && imgOk ? (
+        <img
+          src={url}
+          alt={abbr || name || "team"}
+          width={size}
+          height={size}
+          loading="lazy"
+          onError={() => setImgOk(false)}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      ) : (
+        <span style={{ fontSize: 12, opacity: 0.85, fontWeight: 900 }}>{fallback}</span>
+      )}
+    </div>
+  );
+}
+
+function stripPrefix(teamId) {
+  return String(teamId || "")
+    .replace("nba-", "")
+    .replace("nhl-", "")
+    .toUpperCase();
 }
 
 export default function TeamDetail() {
-  const { id } = useParams();
-  const league = useMemo(() => inferLeagueFromTeamId(id), [id]);
+  const { league, teamId } = useParams();
+  const activeLeague = String(league || "").toLowerCase();
 
-  const [team, setTeam] = useState(null);
-  const [allTeamGames, setAllTeamGames] = useState([]); // all games involving this team
-  const [date, setDate] = useState(() => formatDateYYYYMMDD(new Date()));
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  // Derived (filtered) view by date
-  const gamesForDate = useMemo(() => {
-    return allTeamGames.filter((g) => g.date === date);
-  }, [allTeamGames, date]);
+  const [date, setDate] = useState(() => todayUTCYYYYMMDD());
+  const [games, setGames] = useState([]);
+  const [teamName, setTeamName] = useState(teamId);
+  const [teamAbbr, setTeamAbbr] = useState(stripPrefix(teamId));
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    let alive = true;
+
     async function load() {
+      setErr("");
+      setLoading(true);
+
       try {
-        setError("");
-        setLoading(true);
-        setTeam(null);
-        setAllTeamGames([]);
+        // ✅ league-specific games endpoint (fast + clean)
+        const url = `/api/${activeLeague}/games?date=${encodeURIComponent(date)}&expand=teams`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`API ${res.status} for ${url}`);
+        const rows = await res.json();
 
-        if (!league) throw new Error(`Unknown team league for id: ${id}`);
+        if (!alive) return;
+        setGames(Array.isArray(rows) ? rows : []);
 
-        // 1) Team info
-        const teamsRes = await fetch(`/api/${league}/teams`);
-        if (!teamsRes.ok) throw new Error(`Teams API error: ${teamsRes.status}`);
-        const teams = await teamsRes.json();
-
-        const found = Array.isArray(teams) ? teams.find((t) => t.id === id) : null;
-        if (!found) throw new Error(`Team not found: ${id}`);
-        setTeam(found);
-
-        // 2) All games (expand for abbr)
-        const gamesRes = await fetch(`/api/${league}/games?expand=teams`);
-        if (!gamesRes.ok) throw new Error(`Games API error: ${gamesRes.status}`);
-        const games = await gamesRes.json();
-
-        const filtered = Array.isArray(games)
-          ? games.filter((g) => g.homeTeamId === id || g.awayTeamId === id)
-          : [];
-
-        filtered.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
-        setAllTeamGames(filtered);
+        // Resolve team display name
+        if (activeLeague === "nba") {
+          const teams = await getNbaTeams();
+          if (!alive) return;
+          const match = (teams || []).find((t) => t.id === teamId);
+          if (match) {
+            setTeamName(match.name || match.abbr || teamId);
+            setTeamAbbr((match.abbr || stripPrefix(teamId)).toUpperCase());
+          } else {
+            setTeamName(stripPrefix(teamId));
+            setTeamAbbr(stripPrefix(teamId));
+          }
+        } else {
+          // NHL (no /api/nhl/teams yet): just use ID-derived abbr
+          setTeamName(stripPrefix(teamId));
+          setTeamAbbr(stripPrefix(teamId));
+        }
       } catch (e) {
-        setError(e?.message || "Failed to load team");
+        if (!alive) return;
+        setErr(String(e?.message || e));
       } finally {
+        if (!alive) return;
         setLoading(false);
       }
     }
 
     load();
-  }, [id, league]);
+    return () => {
+      alive = false;
+    };
+  }, [activeLeague, teamId, date]);
+
+  const teamGames = useMemo(() => {
+    return (games || []).filter((g) => g.homeTeamId === teamId || g.awayTeamId === teamId);
+  }, [games, teamId]);
+
+  const accent = activeLeague === "nhl" ? "var(--nhl)" : "var(--nba)";
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 12 }}>
-        <Link to="/games" style={{ textDecoration: "none" }}>
-          ← Back to Games
-        </Link>
+    <div>
+      <div className="badge" style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="dot" style={{ background: accent }} />
+        {String(activeLeague).toUpperCase()}
       </div>
 
-      {loading && <p>Loading…</p>}
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+        <TeamAvatar league={activeLeague} abbr={teamAbbr} name={teamName} size={40} />
+        <div>
+          <h1 className="h1" style={{ marginBottom: 2 }}>{teamName}</h1>
+          <p className="sub" style={{ marginTop: 0 }}>
+            Team detail (MVP). Slate snapshot + navigation.
+          </p>
+        </div>
+      </div>
 
-      {!loading && !error && team && (
-        <>
-          <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-            <h1 style={{ marginTop: 0, marginBottom: 0 }}>
-              {team.name}{" "}
-              <span style={{ fontSize: 14, opacity: 0.7, fontWeight: 600 }}>
-                ({team.abbr})
-              </span>
-            </h1>
-
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 14, opacity: 0.8 }}>Date</span>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                style={{ padding: "6px 8px" }}
-              />
-            </label>
+      <div className="panel">
+        <div
+          className="panelHead"
+          style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}
+        >
+          <div style={{ fontWeight: 760, display: "flex", alignItems: "center", gap: 10 }}>
+            Games on
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(0,0,0,0.25)",
+                color: "rgba(255,255,255,0.9)",
+              }}
+            />
+            <span className="muted">{loading ? "Loading…" : ""}</span>
           </div>
 
-          <p style={{ marginTop: 6, opacity: 0.85 }}>
-            {team.city} • {league.toUpperCase()}
-          </p>
+          <div className="controls" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {/* ✅ these routes exist in App.jsx */}
+            <Link className="tab active" to={`/league/${activeLeague}`}>
+              Back to {String(activeLeague).toUpperCase()} (Predictions)
+            </Link>
+            <Link className="tab" to={`/league/${activeLeague}/hub`}>
+              Back to Hub
+            </Link>
+          </div>
+        </div>
 
-          <h2 style={{ marginTop: 18, marginBottom: 8, fontSize: 18 }}>Games</h2>
+        <div className="list">
+          {err ? <div className="error">Error: {err}</div> : null}
 
-          <p style={{ marginTop: 0, opacity: 0.75 }}>
-            Showing {gamesForDate.length} on <b>{date}</b> • {allTeamGames.length} total for this team
-          </p>
+          {teamGames.length ? (
+            teamGames.map((g) => {
+              const homeAbbr = g.homeTeam?.abbr || stripPrefix(g.homeTeamId);
+              const awayAbbr = g.awayTeam?.abbr || stripPrefix(g.awayTeamId);
 
-          {gamesForDate.length === 0 ? (
-            <p>No games found for this team on {date}.</p>
+              const hs = typeof g.homeScore === "number" ? g.homeScore : "-";
+              const as = typeof g.awayScore === "number" ? g.awayScore : "-";
+
+              const isHome = g.homeTeamId === teamId;
+              const opponentId = isHome ? g.awayTeamId : g.homeTeamId;
+              const opponentAbbr = isHome ? awayAbbr : homeAbbr;
+
+              return (
+                <div className="card" key={g.id}>
+                  <div className="row" style={{ alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <TeamAvatar league={activeLeague} abbr={awayAbbr} name={awayAbbr} size={28} />
+                      <div style={{ fontWeight: 820 }}>{awayAbbr} @ {homeAbbr}</div>
+                      <TeamAvatar league={activeLeague} abbr={homeAbbr} name={homeAbbr} size={28} />
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <div className="muted" style={{ fontWeight: 900 }}>{as}–{hs}</div>
+
+                      {/* ✅ match App.jsx route */}
+                      <Link className="tab" to={`/team/${activeLeague}/${opponentId}`} title="Open opponent">
+                        vs {opponentAbbr}
+                      </Link>
+                    </div>
+                  </div>
+
+                  <div className="kicker">{g.status}</div>
+                </div>
+              );
+            })
           ) : (
-            <ul style={{ paddingLeft: 18 }}>
-              {gamesForDate.map((g) => {
-                const away = g.awayTeam?.abbr || g.awayTeamId;
-                const home = g.homeTeam?.abbr || g.homeTeamId;
-
-                const isHome = g.homeTeamId === id;
-                const vsText = isHome ? `vs ${away}` : `@ ${home}`;
-
-                return (
-                  <li key={g.id}>
-                    {g.date} — {vsText}
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="card">
+              <div className="muted">No games found for this team on this date.</div>
+            </div>
           )}
-
-          {allTeamGames.length > 0 && (
-            <>
-              <h3 style={{ marginTop: 18, marginBottom: 8, fontSize: 16, opacity: 0.9 }}>
-                All games for this team (stub)
-              </h3>
-              <ul style={{ paddingLeft: 18, opacity: 0.9 }}>
-                {allTeamGames.map((g) => {
-                  const away = g.awayTeam?.abbr || g.awayTeamId;
-                  const home = g.homeTeam?.abbr || g.homeTeamId;
-                  const isHome = g.homeTeamId === id;
-                  const vsText = isHome ? `vs ${away}` : `@ ${home}`;
-                  return (
-                    <li key={g.id}>
-                      {g.date} — {vsText}
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          )}
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }

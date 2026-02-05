@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getCombinedGames, getPredictions } from "../lib/api";
+import { getPredictions, getLeagueGames } from "../lib/api";
 
 function todayUTC() {
   return new Date().toISOString().slice(0, 10);
@@ -30,6 +30,12 @@ function classifyPick(conf) {
   return { label: "Avoid", tone: "avoid" };
 }
 
+// ✅ canonical team route helper
+function teamHref(leagueLower, teamId) {
+  if (!teamId) return "#";
+  return `/league/${leagueLower}/team/${teamId}`;
+}
+
 export default function LeagueHub() {
   const { league } = useParams(); // "nba" | "nhl"
   const leagueLower = String(league || "").toLowerCase();
@@ -47,15 +53,18 @@ export default function LeagueHub() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const filteredGames = useMemo(() => {
-    return (games || []).filter((g) => String(g.league).toLowerCase() === leagueLower);
-  }, [games, leagueLower]);
+  // ✅ games are already league-specific now
+  const filteredGames = useMemo(() => games || [], [games]);
 
   const picks = useMemo(() => {
     const list = (predictions || [])
       .map((p) => {
-        const awayName = p.away?.name || asTeamAbbr(p.away?.id);
-        const homeName = p.home?.name || asTeamAbbr(p.home?.id);
+        const awayId = p.away?.id;
+        const homeId = p.home?.id;
+
+        const awayName = p.away?.abbr || p.away?.name || asTeamAbbr(awayId);
+        const homeName = p.home?.abbr || p.home?.name || asTeamAbbr(homeId);
+
         const pickName = p.prediction?.winnerName || "—";
         const conf = p.prediction?.confidence;
 
@@ -64,8 +73,8 @@ export default function LeagueHub() {
         return {
           key: p.gameId,
           status: p.status,
-          away: { id: p.away?.id, name: awayName },
-          home: { id: p.home?.id, name: homeName },
+          away: { id: awayId, name: awayName },
+          home: { id: homeId, name: homeName },
           pickName,
           conf,
           badge,
@@ -85,14 +94,21 @@ export default function LeagueHub() {
     async function load() {
       setLoading(true);
       setErr("");
+
       try {
-        const [g, p] = await Promise.all([
-          getCombinedGames(date),
-          getPredictions({ league: leagueLower, date, windowDays }),
-        ]);
+        // ✅ Only fetch what you need based on the active tab.
+        // This keeps it fast + avoids unnecessary endpoint churn.
+        if (tab === "games") {
+          const g = await getLeagueGames(leagueLower, date);
+          if (!alive) return;
+          setGames(Array.isArray(g) ? g : g?.games || []);
+          return;
+        }
+
+        // predictions tab
+        const p = await getPredictions({ league: leagueLower, date, windowDays });
         if (!alive) return;
 
-        setGames(g?.games || []);
         setPredictions(p?.predictions || []);
         setMeta(p?.meta || null);
       } catch (e) {
@@ -110,7 +126,7 @@ export default function LeagueHub() {
     return () => {
       alive = false;
     };
-  }, [leagueLower, date, windowDays]);
+  }, [leagueLower, date, windowDays, tab]);
 
   return (
     <div>
@@ -163,7 +179,8 @@ export default function LeagueHub() {
             </div>
           ) : null}
 
-          {!loading && meta ? (
+          {/* Model card only makes sense on predictions */}
+          {!loading && tab === "predictions" && meta ? (
             <div className="card">
               <div className="row">
                 <div style={{ fontWeight: 760 }}>Model</div>
@@ -180,7 +197,7 @@ export default function LeagueHub() {
                 {typeof meta.historyGamesFetched === "number" ? (
                   <>
                     {" "}
-                    • Samples: {meta.historyGamesFetched} games / {meta.historyTeamsSeen} teams
+                    • Samples: {meta.historyGamesFetched} games
                   </>
                 ) : null}
               </div>
@@ -206,35 +223,31 @@ export default function LeagueHub() {
                   </div>
 
                   <div className="topGrid">
-                    {topPicks.map((p, idx) => {
-                      const hrefAway = p.away?.id ? `/team/${leagueLower}/${p.away.id}` : null;
-                      const hrefHome = p.home?.id ? `/team/${leagueLower}/${p.home.id}` : null;
+                    {topPicks.map((p, idx) => (
+                      <div className="topPick" key={p.key}>
+                        <div className="topPickRank">#{idx + 1}</div>
 
-                      return (
-                        <div className="topPick" key={p.key}>
-                          <div className="topPickRank">#{idx + 1}</div>
-                          <div className="topPickMain">
-                            <div className="topPickMatch">
-                              {hrefAway ? <Link to={hrefAway}>{p.away.name}</Link> : p.away.name}{" "}
-                              <span className="muted">@</span>{" "}
-                              {hrefHome ? <Link to={hrefHome}>{p.home.name}</Link> : p.home.name}
-                            </div>
-                            <div className="topPickMeta">
-                              <span className={`pill pill-${p.badge.tone}`}>{p.badge.label}</span>
-                              <span className="muted">{p.status}</span>
-                            </div>
+                        <div className="topPickMain">
+                          <div className="topPickMatch">
+                            <Link to={teamHref(leagueLower, p.away.id)}>{p.away.name}</Link>{" "}
+                            <span className="muted">@</span>{" "}
+                            <Link to={teamHref(leagueLower, p.home.id)}>{p.home.name}</Link>
                           </div>
-
-                          <div className="topPickRight">
-                            <div className="pickPill">
-                              <span className="muted">Pick</span>
-                              <b>{p.pickName}</b>
-                            </div>
-                            <span className="conf">{pct(p.conf)}</span>
+                          <div className="topPickMeta">
+                            <span className={`pill pill-${p.badge.tone}`}>{p.badge.label}</span>
+                            <span className="muted">{p.status}</span>
                           </div>
                         </div>
-                      );
-                    })}
+
+                        <div className="topPickRight">
+                          <div className="pickPill">
+                            <span className="muted">Pick</span>
+                            <b>{p.pickName}</b>
+                          </div>
+                          <span className="conf">{pct(p.conf)}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : null}
@@ -250,34 +263,29 @@ export default function LeagueHub() {
                   </div>
 
                   <div className="predList">
-                    {picks.map((p) => {
-                      const hrefAway = p.away?.id ? `/team/${leagueLower}/${p.away.id}` : null;
-                      const hrefHome = p.home?.id ? `/team/${leagueLower}/${p.home.id}` : null;
-
-                      return (
-                        <div className="predRow" key={p.key}>
-                          <div className="predLeft">
-                            <div className="predMatch">
-                              {hrefAway ? <Link to={hrefAway}>{p.away.name}</Link> : p.away.name}{" "}
-                              <span className="muted">@</span>{" "}
-                              {hrefHome ? <Link to={hrefHome}>{p.home.name}</Link> : p.home.name}
-                            </div>
-                            <div className="predMeta">
-                              <span className={`pill pill-${p.badge.tone}`}>{p.badge.label}</span>
-                              <span className="muted">{p.status}</span>
-                            </div>
+                    {picks.map((p) => (
+                      <div className="predRow" key={p.key}>
+                        <div className="predLeft">
+                          <div className="predMatch">
+                            <Link to={teamHref(leagueLower, p.away.id)}>{p.away.name}</Link>{" "}
+                            <span className="muted">@</span>{" "}
+                            <Link to={teamHref(leagueLower, p.home.id)}>{p.home.name}</Link>
                           </div>
-
-                          <div className="predRight">
-                            <div className="pickPill">
-                              <span className="muted">Pick</span>
-                              <b>{p.pickName}</b>
-                            </div>
-                            <span className="conf">{pct(p.conf)}</span>
+                          <div className="predMeta">
+                            <span className={`pill pill-${p.badge.tone}`}>{p.badge.label}</span>
+                            <span className="muted">{p.status}</span>
                           </div>
                         </div>
-                      );
-                    })}
+
+                        <div className="predRight">
+                          <div className="pickPill">
+                            <span className="muted">Pick</span>
+                            <b>{p.pickName}</b>
+                          </div>
+                          <span className="conf">{pct(p.conf)}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : (
@@ -288,7 +296,7 @@ export default function LeagueHub() {
             </>
           ) : null}
 
-          {/* GAMES TAB (keep simple, still premium cards) */}
+          {/* GAMES TAB (league-native endpoint) */}
           {tab === "games" && !loading ? (
             filteredGames.length ? (
               filteredGames.map((g) => {
@@ -301,11 +309,11 @@ export default function LeagueHub() {
                   <div className="card" key={g.id}>
                     <div className="row">
                       <div style={{ fontWeight: 720 }}>
-                        <Link to={`/team/${leagueLower}/${g.awayTeamId}`} style={{ color: "inherit" }}>
+                        <Link to={teamHref(leagueLower, g.awayTeamId)} style={{ color: "inherit" }}>
                           {away}
                         </Link>{" "}
                         @{" "}
-                        <Link to={`/team/${leagueLower}/${g.homeTeamId}`} style={{ color: "inherit" }}>
+                        <Link to={teamHref(leagueLower, g.homeTeamId)} style={{ color: "inherit" }}>
                           {home}
                         </Link>
                       </div>

@@ -1,26 +1,69 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import GamesTabs from "./pages/GamesTabs.jsx";
-import TeamDetail from "./pages/TeamDetail.jsx";
-import Predict from "./pages/Predict.jsx";
+// apps/web/src/App.jsx
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
+import Layout from "./components/Layout";
+import Home from "./pages/Home";
+import LeagueHub from "./pages/LeagueHub";
+import Predict from "./pages/Predict";
+import TeamDetail from "./pages/TeamDetail";
+
+import "./styles/app.css";
+
+/**
+ * Redirect legacy team URLs to the canonical route:
+ * /league/:league/team/:teamId
+ */
+function TeamLegacyRedirect() {
+  const { league, teamId } = useParams();
+  const l = String(league || "nba").toLowerCase();
+  return <Navigate to={`/league/${l}/team/${teamId}`} replace />;
+}
+
+/**
+ * Redirect legacy hub URLs to the canonical route:
+ * /league/:league/hub
+ *
+ * Examples:
+ * /nhl/hub -> /league/nhl/hub
+ * /nba/hub -> /league/nba/hub
+ */
+function HubLegacyRedirect() {
+  const { league } = useParams();
+  const l = String(league || "nba").toLowerCase();
+  return <Navigate to={`/league/${l}/hub`} replace />;
+}
 
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Navigate to="/games" replace />} />
+      <Layout>
+        <Routes>
+          {/* Primary flow */}
+          <Route path="/" element={<Home />} />
 
-        <Route path="/games" element={<GamesTabs />} />
+          {/* Default league route goes to Predictions */}
+          <Route path="/league/:league" element={<Predict />} />
 
-        <Route path="/nba/games" element={<Navigate to="/games" replace />} />
-        <Route path="/nhl/games" element={<Navigate to="/games" replace />} />
+          {/* Hub still accessible */}
+          <Route path="/league/:league/hub" element={<LeagueHub />} />
 
-        <Route path="/teams/:id" element={<TeamDetail />} />
+          {/* ✅ Canonical team route */}
+          <Route path="/league/:league/team/:teamId" element={<TeamDetail />} />
 
-        {/* NEW */}
-        <Route path="/predict" element={<Predict />} />
-        {/* optional: keep /predictions working */}
-        <Route path="/predictions" element={<Navigate to="/predict" replace />} />
-      </Routes>
+          {/* ✅ Back-compat: old team route patterns redirect to canonical */}
+          <Route path="/team/:league/:teamId" element={<TeamLegacyRedirect />} />
+          <Route path="/:league/team/:teamId" element={<TeamLegacyRedirect />} />
+
+          {/* ✅ Back-compat: legacy hub route patterns redirect to canonical */}
+          <Route path="/:league/hub" element={<HubLegacyRedirect />} />
+
+          {/* Back-compat league shortcuts */}
+          <Route path="/nba" element={<Navigate to="/league/nba" replace />} />
+          <Route path="/nhl" element={<Navigate to="/league/nhl" replace />} />
+
+          {/* Catch-all */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Layout>
     </BrowserRouter>
   );
 }
