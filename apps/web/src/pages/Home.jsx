@@ -200,6 +200,28 @@ export default function Home() {
             />
           </div>
 
+          {/* ✅ NEW: Upset Watch teaser mounted on homepage */}
+          <div className="homeFooterCard">
+            <div className="homeFooterLeft">
+              <div className="homeFooterTitle">Upset Watch</div>
+              <div className="homeFooterBody">
+                Underdog candidates with real win equity (based on today’s model slate). Mounted now — full page lives in
+                the logged-in area.
+              </div>
+            </div>
+            <div className="homeFooterRight">
+              <Link className="btnPrimary" to="/upsets">
+                Open Upsets
+              </Link>
+              <Link className="btnGhost" to="/league/nba">
+                NBA Slate
+              </Link>
+              <Link className="btnGhost" to="/league/nhl">
+                NHL Slate
+              </Link>
+            </div>
+          </div>
+
           <div className="homeFooterCard">
             <div className="homeFooterLeft">
               <div className="homeFooterTitle">What this is</div>

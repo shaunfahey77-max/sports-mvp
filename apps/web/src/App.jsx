@@ -5,8 +5,7 @@ import Home from "./pages/Home";
 import LeagueHub from "./pages/LeagueHub";
 import Predict from "./pages/Predict";
 import TeamDetail from "./pages/TeamDetail";
-
-import "./styles/app.css";
+import Upsets from "./pages/Upsets"; // ✅ ADD
 
 function normalizeLeague(raw) {
   const l = String(raw || "nba").toLowerCase();
@@ -45,6 +44,13 @@ export default function App() {
         <Routes>
           {/* Primary flow */}
           <Route path="/" element={<Home />} />
+
+          {/* ✅ Upsets (public + "logged-in area" namespace) */}
+          <Route path="/upsets" element={<Upsets />} />
+          <Route path="/app/upsets" element={<Upsets />} />
+
+          {/* Optional legacy shortcut */}
+          <Route path="/upset" element={<Navigate to="/upsets" replace />} />
 
           {/* Default league route goes to Predictions */}
           <Route path="/league/:league" element={<Predict />} />

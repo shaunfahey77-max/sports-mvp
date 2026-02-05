@@ -1,15 +1,23 @@
-/* Premium dark shell — no Tailwind required */
+/* =========================================================
+   Premium dark shell — cleaned + updated
+   ========================================================= */
+
 :root{
-  --bg0:#070A12;
-  --bg1:#0B1021;
+  --bg0:#050711;     /* darker + cleaner */
+  --bg1:#0A0F24;     /* deeper navy */
   --card: rgba(255,255,255,.06);
   --card2: rgba(255,255,255,.08);
-  --stroke: rgba(255,255,255,.10);
+  --stroke: rgba(255,255,255,.11);
   --text:#EAF0FF;
   --muted: rgba(234,240,255,.70);
 
   --nba:#4FA6FF;
   --nhl:#6EE7B7;
+
+  /* confidence colors */
+  --low: rgba(255, 99, 132, .95);
+  --med: rgba(255, 206, 86, .98);
+  --high: rgba(75, 192, 192, .98);
 
   --shadow: 0 12px 40px rgba(0,0,0,.45);
   --radius: 16px;
@@ -20,13 +28,17 @@
 
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
+
 body{
   margin:0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
   color:var(--text);
+
+  /* Updated background: more premium + subtle depth + a 3rd tone */
   background:
-    radial-gradient(1200px 700px at 20% 0%, rgba(79,166,255,.22), transparent 55%),
-    radial-gradient(1000px 650px at 85% 12%, rgba(110,231,183,.18), transparent 52%),
+    radial-gradient(1200px 720px at 18% -6%, rgba(79,166,255,.18), transparent 58%),
+    radial-gradient(1000px 650px at 88% 8%, rgba(110,231,183,.13), transparent 56%),
+    radial-gradient(900px 600px at 55% 0%, rgba(167,139,250,.10), transparent 62%),
     linear-gradient(180deg, var(--bg0), var(--bg1));
 }
 
@@ -34,6 +46,11 @@ a{ color:inherit; text-decoration:none; }
 a:hover{ text-decoration:none; }
 
 .app{ min-height:100vh; }
+
+/* =========================================================
+   Topbar
+   ========================================================= */
+
 .topbar{
   position:sticky; top:0; z-index:20;
   backdrop-filter: blur(14px);
@@ -77,6 +94,10 @@ a:hover{ text-decoration:none; }
   background: rgba(255,255,255,.06);
 }
 
+/* =========================================================
+   Layout / Containers
+   ========================================================= */
+
 .container{
   max-width: var(--max);
   margin: 0 auto;
@@ -106,6 +127,7 @@ a:hover{ text-decoration:none; }
 .tile:hover{ transform: translateY(-2px); border-color: rgba(255,255,255,.20); }
 .tileTitle{ font-weight: 760; font-size: 18px; }
 .tileMeta{ color: var(--muted); margin-top:6px; font-size: 13px; }
+
 .badge{
   display:inline-flex; align-items:center; gap:8px;
   font-size: 12px; padding: 6px 10px;
@@ -115,6 +137,19 @@ a:hover{ text-decoration:none; }
   color: var(--muted);
 }
 .dot{ width:8px; height:8px; border-radius:999px; }
+
+/* Single, canonical pill (you had two earlier) */
+.pill{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.04);
+  color: rgba(234,240,255,.90);
+}
 
 .panel{
   margin-top: 14px;
@@ -211,7 +246,11 @@ input[type="date"]:focus, select:focus{
   padding: 10px 12px;
   border-radius: 14px;
 }
-/* ---------- Premium prediction sections ---------- */
+
+/* =========================================================
+   Premium prediction sections
+   ========================================================= */
+
 .sectionHead{
   display:flex;
   align-items:flex-start;
@@ -239,17 +278,6 @@ input[type="date"]:focus, select:focus{
 .chipLean{ border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: rgba(234,240,255,.88); }
 .chipAvoid{ border-color: rgba(239,68,68,.35); background: rgba(239,68,68,.08); color: rgba(234,240,255,.92); }
 
-.pill{
-  display:inline-flex;
-  align-items:center;
-  gap:8px;
-  font-size: 11px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(255,255,255,.04);
-  color: rgba(234,240,255,.90);
-}
 .pill-top{ border-color: rgba(79,166,255,.40); background: rgba(79,166,255,.10); }
 .pill-value{ border-color: rgba(110,231,183,.40); background: rgba(110,231,183,.10); }
 .pill-lean{ border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: rgba(234,240,255,.85); }
@@ -331,7 +359,11 @@ input[type="date"]:focus, select:focus{
 .predMatch a:hover{ text-decoration: underline; }
 .predMeta{ margin-top: 6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 .predRight{ display:flex; align-items:center; gap:10px; }
-/* ===== Home Dashboard ===== */
+
+/* =========================================================
+   Home Dashboard
+   ========================================================= */
+
 .home { display: grid; gap: 14px; }
 
 .homeHero {
@@ -485,4 +517,207 @@ input[type="date"]:focus, select:focus{
   .homeGrid { grid-template-columns: 1fr; }
   .homeTitle { font-size: 28px; }
 }
+
 .homeFull { width: 100%; }
+
+/* =========================================================
+   NEW: Upset Pick of the Day (Homepage feature)
+   Matches your panel/card styling + confidence badge system
+   ========================================================= */
+
+.upset {
+  width: 100%;
+}
+
+.upsetCard{
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.28));
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  overflow: hidden;
+  position: relative;
+}
+
+.upsetHead{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  padding: 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.upsetKicker{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(234,240,255,.82);
+}
+.upsetBolt{
+  width: 22px;
+  height: 22px;
+  border-radius: 10px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+}
+
+.upsetMeta{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+
+.confBadge{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: rgba(234,240,255,.90);
+}
+.confDot{
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.35);
+}
+.conf-low .confDot{ background: var(--low); }
+.conf-med .confDot{ background: var(--med); }
+.conf-high .confDot{ background: var(--high); }
+
+.upsetBody{
+  padding: 14px;
+  display:grid;
+  gap:10px;
+}
+
+.upsetTitle{
+  margin: 0;
+  font-size: 18px;
+  font-weight: 950;
+  letter-spacing: .2px;
+}
+.upsetSub{
+  margin: 0;
+  font-size: 13px;
+  opacity: .72;
+}
+
+.upsetWhy{
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  padding: 12px;
+  position: relative;
+}
+
+.upsetWhyHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom: 8px;
+}
+
+.upsetWhyTitle{
+  margin:0;
+  font-size: 12px;
+  font-weight: 900;
+  opacity: .85;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+
+.upsetLockHint{
+  font-size: 12px;
+  opacity: .75;
+  display:inline-flex;
+  gap:8px;
+  align-items:center;
+}
+
+.upsetReasons{
+  margin:0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  opacity: .92;
+}
+
+.upsetNote{
+  margin-top: 10px;
+  font-size: 13px;
+  opacity: .84;
+}
+
+.upsetFade{
+  pointer-events:none;
+  position:absolute;
+  left:0; right:0; bottom:0;
+  height: 42px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.60));
+}
+
+.upsetActions{
+  padding: 12px 14px 14px;
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.btnDarkPrimary, .btnDarkGhost{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid rgba(255,255,255,0.12);
+  cursor: pointer;
+}
+
+.btnDarkPrimary{
+  background: rgba(79,166,255,0.16);
+  color: rgba(255,255,255,0.92);
+}
+.btnDarkPrimary:hover{ background: rgba(79,166,255,0.20); }
+
+.btnDarkGhost{
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.86);
+}
+.btnDarkGhost:hover{ background: rgba(255,255,255,0.05); }
+
+.upsetAccent{
+  position:absolute;
+  left:0; right:0; bottom:0;
+  height: 4px;
+  opacity: .95;
+}
+.upsetAccent.low{
+  background: linear-gradient(90deg, rgba(255,99,132,.95), rgba(255,99,132,.12));
+}
+.upsetAccent.medium{
+  background: linear-gradient(90deg, rgba(255,206,86,.98), rgba(255,206,86,.12));
+}
+.upsetAccent.high{
+  background: linear-gradient(90deg, rgba(75,192,192,.98), rgba(75,192,192,.12));
+}
+body {
+}
+
