@@ -5,15 +5,20 @@ import Home from "./pages/Home";
 import LeagueHub from "./pages/LeagueHub";
 import Predict from "./pages/Predict";
 import TeamDetail from "./pages/TeamDetail";
-import Upsets from "./pages/Upsets"; // ✅ ADD
+import Upsets from "./pages/Upsets";
+import ParlayLab from "./pages/ParlayLab";
+import SuperBowlProps from "./pages/SuperBowlProps";
 
 function normalizeLeague(raw) {
   const l = String(raw || "nba").toLowerCase();
-  return l === "nhl" ? "nhl" : "nba"; // lock to supported leagues
+  return l === "nhl" ? "nhl" : "nba";
 }
 
+// Seasonal toggle (unique to Super Bowl)
+const SHOW_SUPERBOWL = String(import.meta.env.VITE_SHOW_SUPERBOWL || "false").toLowerCase() === "true";
+
 /**
- * Redirect legacy team URLs to the canonical route:
+ * Redirect legacy team URLs to:
  * /league/:league/team/:teamId
  */
 function TeamLegacyRedirect() {
@@ -24,12 +29,8 @@ function TeamLegacyRedirect() {
 }
 
 /**
- * Redirect legacy hub URLs to the canonical route:
+ * Redirect legacy hub URLs to:
  * /league/:league/hub
- *
- * Examples:
- * /nhl/hub -> /league/nhl/hub
- * /nba/hub -> /league/nba/hub
  */
 function HubLegacyRedirect() {
   const { league } = useParams();
@@ -40,32 +41,42 @@ function HubLegacyRedirect() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout>
+      <Layout showSuperBowl={SHOW_SUPERBOWL}>
         <Routes>
           {/* Primary flow */}
           <Route path="/" element={<Home />} />
 
-          {/* ✅ Upsets (public + "logged-in area" namespace) */}
+          {/* ✅ Parlay Lab */}
+          <Route path="/parlay-lab" element={<ParlayLab />} />
+          <Route path="/app/parlay-lab" element={<ParlayLab />} />
+          <Route path="/parlay" element={<Navigate to="/parlay-lab" replace />} />
+
+          {/* ✅ Upsets */}
           <Route path="/upsets" element={<Upsets />} />
           <Route path="/app/upsets" element={<Upsets />} />
-
-          {/* Optional legacy shortcut */}
           <Route path="/upset" element={<Navigate to="/upsets" replace />} />
+
+          {/* ✅ Super Bowl (seasonal) */}
+          {SHOW_SUPERBOWL ? (
+            <>
+              <Route path="/superbowl" element={<SuperBowlProps />} />
+              <Route path="/super-bowl" element={<Navigate to="/superbowl" replace />} />
+              <Route path="/super-bowl-props" element={<Navigate to="/superbowl" replace />} />
+            </>
+          ) : null}
 
           {/* Default league route goes to Predictions */}
           <Route path="/league/:league" element={<Predict />} />
 
-          {/* Hub still accessible */}
+          {/* Hub */}
           <Route path="/league/:league/hub" element={<LeagueHub />} />
 
-          {/* ✅ Canonical team route */}
+          {/* Team */}
           <Route path="/league/:league/team/:teamId" element={<TeamDetail />} />
 
-          {/* ✅ Back-compat: old team route patterns redirect to canonical */}
+          {/* Back-compat redirects */}
           <Route path="/team/:league/:teamId" element={<TeamLegacyRedirect />} />
           <Route path="/:league/team/:teamId" element={<TeamLegacyRedirect />} />
-
-          {/* ✅ Back-compat: legacy hub route patterns redirect to canonical */}
           <Route path="/:league/hub" element={<HubLegacyRedirect />} />
 
           {/* Back-compat league shortcuts */}

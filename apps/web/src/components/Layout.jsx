@@ -1,7 +1,7 @@
 // apps/web/src/components/Layout.jsx
 import { NavLink } from "react-router-dom";
 
-export default function Layout({ children }) {
+export default function Layout({ children, showSuperBowl = false }) {
   return (
     <div className="app">
       <header className="topbar">
@@ -15,27 +15,31 @@ export default function Layout({ children }) {
           </div>
 
           <nav className="nav">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}
-            >
+            <NavLink to="/" end className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
               Home
             </NavLink>
 
-            <NavLink
-              to="/league/nba"
-              className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}
-            >
+            <NavLink to="/league/nba" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
               NBA
             </NavLink>
 
-            <NavLink
-              to="/league/nhl"
-              className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}
-            >
+            <NavLink to="/league/nhl" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
               NHL
             </NavLink>
+
+            <NavLink to="/parlay-lab" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
+              Parlay Lab
+            </NavLink>
+
+            <NavLink to="/upsets" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
+              Upset Watch
+            </NavLink>
+
+            {showSuperBowl ? (
+              <NavLink to="/superbowl" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
+                Super Bowl
+              </NavLink>
+            ) : null}
           </nav>
         </div>
       </header>

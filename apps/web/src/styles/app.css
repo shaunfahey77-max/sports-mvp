@@ -1,5 +1,11 @@
 /* =========================================================
-   Premium dark shell — cleaned + updated
+   Premium dark shell — cleaned + updated (Parlay Lab ready)
+   Enhancements included:
+   - Fix leg-row label overlap (Team/labels) ✅
+   - Parlay Lab slightly wider + better grid behavior ✅
+   - Metrics/actions wrap gracefully on mid-width screens ✅
+   - Safer form controls + focus-visible styling ✅
+   - Small quality-of-life polish (reduced motion) ✅
    ========================================================= */
 
 :root{
@@ -46,6 +52,24 @@ a{ color:inherit; text-decoration:none; }
 a:hover{ text-decoration:none; }
 
 .app{ min-height:100vh; }
+
+/* =========================================================
+   Global inputs + focus polish (future-safe)
+   ========================================================= */
+
+button, input, select, textarea{
+  font: inherit;
+}
+
+:focus{ outline: none; }
+:focus-visible{
+  outline: 2px solid rgba(255,255,255,.18);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; scroll-behavior:auto !important; }
+}
 
 /* =========================================================
    Topbar
@@ -138,7 +162,7 @@ a:hover{ text-decoration:none; }
 }
 .dot{ width:8px; height:8px; border-radius:999px; }
 
-/* Single, canonical pill (you had two earlier) */
+/* Single, canonical pill */
 .pill{
   display:inline-flex;
   align-items:center;
@@ -168,12 +192,14 @@ a:hover{ text-decoration:none; }
   padding: 14px 16px;
   border-bottom: 1px solid var(--stroke);
 }
+
 .controls{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
 .control{
   display:flex; gap:8px; align-items:center;
   color: var(--muted);
   font-size: 13px;
 }
+
 input[type="date"], select{
   background: rgba(0,0,0,.25);
   color: var(--text);
@@ -181,6 +207,7 @@ input[type="date"], select{
   border-radius: 12px;
   padding: 8px 10px;
   outline: none;
+  min-width: 0; /* prevents overflow in tight flex rows */
 }
 input[type="date"]:focus, select:focus{
   border-color: rgba(255,255,255,.24);
@@ -210,13 +237,13 @@ input[type="date"]:focus, select:focus{
   border-radius: var(--radius);
   padding: 14px 14px;
 }
+
 .row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .muted{ color: var(--muted); font-size: 13px; }
 .kicker{ font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-.pick{
-  display:flex; align-items:center; gap:10px;
-}
+.pick{ display:flex; align-items:center; gap:10px; }
+
 .conf{
   font-variant-numeric: tabular-nums;
   font-size: 12px;
@@ -283,12 +310,7 @@ input[type="date"]:focus, select:focus{
 .pill-lean{ border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.05); color: rgba(234,240,255,.85); }
 .pill-avoid{ border-color: rgba(239,68,68,.40); background: rgba(239,68,68,.10); }
 
-.topGrid{
-  margin-top: 10px;
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
+.topGrid{ margin-top: 10px; display:flex; flex-direction:column; gap:10px; }
 .topPick{
   border: 1px solid rgba(255,255,255,.12);
   background: linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.26));
@@ -333,12 +355,7 @@ input[type="date"]:focus, select:focus{
   font-size: 12px;
 }
 
-.predList{
-  margin-top: 10px;
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-}
+.predList{ margin-top: 10px; display:flex; flex-direction:column; gap:10px; }
 .predRow{
   border: 1px solid rgba(255,255,255,.10);
   background: rgba(0,0,0,.18);
@@ -366,13 +383,13 @@ input[type="date"]:focus, select:focus{
 
 .home { display: grid; gap: 14px; }
 
-.homeHero {
-  display: flex;
+.homeHero{
+  display:flex;
   justify-content: space-between;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 10px;
+  align-items:flex-end;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-top:10px;
 }
 
 .homeTitle { margin: 0; font-size: 34px; letter-spacing: 0.2px; }
@@ -381,7 +398,7 @@ input[type="date"]:focus, select:focus{
 .homeMeta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .mutedSmall { font-size: 12px; opacity: 0.60; }
 
-.statusPill {
+.statusPill{
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.12);
@@ -392,31 +409,26 @@ input[type="date"]:focus, select:focus{
 .statusPill.ok { box-shadow: 0 0 0 1px rgba(64,195,138,0.18) inset; }
 .statusPill.bad { box-shadow: 0 0 0 1px rgba(255,107,107,0.18) inset; }
 
-.homeGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
+.homeGrid{ display:grid; grid-template-columns: 1fr 1fr; gap:14px; }
 
-.leagueCard {
+.leagueCard{
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(0,0,0,0.22);
   box-shadow: 0 10px 30px rgba(0,0,0,0.25);
   padding: 14px;
-  display: grid;
-  gap: 10px;
+  display:grid;
+  gap:10px;
 }
-
 .leagueCard.nba { box-shadow: 0 0 0 1px rgba(80,180,220,0.10) inset, 0 10px 30px rgba(0,0,0,0.25); }
 .leagueCard.nhl { box-shadow: 0 0 0 1px rgba(64,195,138,0.10) inset, 0 10px 30px rgba(0,0,0,0.25); }
 
-.leagueCardHead { display: flex; justify-content: space-between; align-items: center; }
+.leagueCardHead{ display:flex; justify-content:space-between; align-items:center; }
 
-.leagueBadge {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
+.leagueBadge{
+  display:inline-flex;
+  gap:8px;
+  align-items:center;
   padding: 6px 10px;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.10);
@@ -424,32 +436,32 @@ input[type="date"]:focus, select:focus{
   font-weight: 900;
   font-size: 12px;
 }
-.leagueDot { width: 9px; height: 9px; border-radius: 999px; background: rgba(80,180,220,0.9); }
-.leagueCard.nhl .leagueDot { background: rgba(64,195,138,0.9); }
+.leagueDot{ width: 9px; height: 9px; border-radius: 999px; background: rgba(80,180,220,0.9); }
+.leagueCard.nhl .leagueDot{ background: rgba(64,195,138,0.9); }
 
-.leagueCardTitle { font-size: 18px; font-weight: 920; }
-.leagueCardSub { font-size: 13px; opacity: 0.70; }
+.leagueCardTitle{ font-size: 18px; font-weight: 920; }
+.leagueCardSub{ font-size: 13px; opacity: 0.70; }
 
-.leagueCardPick { margin-top: 2px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
-.pickLabel { font-size: 12px; opacity: 0.65; font-weight: 850; margin-bottom: 8px; }
+.leagueCardPick{ margin-top: 2px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); }
+.pickLabel{ font-size: 12px; opacity: 0.65; font-weight: 850; margin-bottom: 8px; }
 
-.pickRow {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
+.pickRow{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  align-items:center;
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.03);
 }
-.pickRow.skeleton { height: 42px; opacity: 0.6; background: rgba(255,255,255,0.02); }
+.pickRow.skeleton{ height: 42px; opacity: 0.6; background: rgba(255,255,255,0.02); }
 
-.pickMatch { display: inline-flex; gap: 8px; align-items: center; font-weight: 900; }
-.pickTeam { letter-spacing: 0.2px; }
+.pickMatch{ display:inline-flex; gap:8px; align-items:center; font-weight: 900; }
+.pickTeam{ letter-spacing: 0.2px; }
 
-.pickRight { display: inline-flex; gap: 10px; align-items: center; }
-.pickWinner {
+.pickRight{ display:inline-flex; gap:10px; align-items:center; }
+.pickWinner, .pickConf{
   font-size: 12px;
   font-weight: 900;
   padding: 6px 10px;
@@ -457,77 +469,63 @@ input[type="date"]:focus, select:focus{
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(0,0,0,0.20);
 }
-.pickConf {
-  font-size: 12px;
-  font-weight: 950;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(0,0,0,0.20);
-}
+.pickConf{ font-weight: 950; }
 
-.leagueCardMeta { display: grid; gap: 4px; opacity: 0.85; }
+.leagueCardMeta{ display:grid; gap:4px; opacity: 0.85; }
+.leagueCardActions{ display:flex; gap:10px; flex-wrap:wrap; margin-top: 2px; }
 
-.leagueCardActions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
-
-.btnPrimary, .btnGhost {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.btnPrimary, .btnGhost{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
   padding: 9px 12px;
   border-radius: 12px;
   font-size: 12px;
   font-weight: 900;
-  text-decoration: none;
+  text-decoration:none;
   border: 1px solid rgba(255,255,255,0.12);
 }
+.btnPrimary{ background: rgba(80,180,220,0.16); color: rgba(255,255,255,0.92); }
+.leagueCard.nhl .btnPrimary{ background: rgba(64,195,138,0.14); }
+.btnGhost{ background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.85); }
 
-.btnPrimary { background: rgba(80,180,220,0.16); color: rgba(255,255,255,0.92); }
-.leagueCard.nhl .btnPrimary { background: rgba(64,195,138,0.14); }
-
-.btnGhost { background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.85); }
-
-.homeFooterCard {
+.homeFooterCard{
   border-radius: 18px;
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(0,0,0,0.18);
   padding: 14px;
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-  align-items: center;
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+  flex-wrap:wrap;
+  align-items:center;
 }
 
-.homeFooterTitle { font-weight: 950; margin-bottom: 4px; }
-.homeFooterBody { font-size: 13px; opacity: 0.70; max-width: 680px; }
-.homeFooterRight { display: flex; gap: 10px; flex-wrap: wrap; }
+.homeFooterTitle{ font-weight: 950; margin-bottom: 4px; }
+.homeFooterBody{ font-size: 13px; opacity: 0.70; max-width: 680px; }
+.homeFooterRight{ display:flex; gap:10px; flex-wrap:wrap; }
 
-.homeError {
+.homeError{
   border-radius: 18px;
   border: 1px solid rgba(255,107,107,0.30);
   background: rgba(0,0,0,0.18);
   padding: 14px;
 }
-.homeErrorTitle { font-weight: 950; color: rgba(255,107,107,0.95); }
-.homeErrorBody { margin-top: 6px; opacity: 0.85; }
-.homeErrorActions { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+.homeErrorTitle{ font-weight: 950; color: rgba(255,107,107,0.95); }
+.homeErrorBody{ margin-top: 6px; opacity: 0.85; }
+.homeErrorActions{ margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; }
 
 @media (max-width: 980px) {
   .homeGrid { grid-template-columns: 1fr; }
   .homeTitle { font-size: 28px; }
 }
-
 .homeFull { width: 100%; }
 
 /* =========================================================
-   NEW: Upset Pick of the Day (Homepage feature)
-   Matches your panel/card styling + confidence badge system
+   Upset Pick of the Day
    ========================================================= */
 
-.upset {
-  width: 100%;
-}
+.upset{ width: 100%; }
 
 .upsetCard{
   border-radius: 18px;
@@ -597,23 +595,10 @@ input[type="date"]:focus, select:focus{
 .conf-med .confDot{ background: var(--med); }
 .conf-high .confDot{ background: var(--high); }
 
-.upsetBody{
-  padding: 14px;
-  display:grid;
-  gap:10px;
-}
+.upsetBody{ padding: 14px; display:grid; gap:10px; }
 
-.upsetTitle{
-  margin: 0;
-  font-size: 18px;
-  font-weight: 950;
-  letter-spacing: .2px;
-}
-.upsetSub{
-  margin: 0;
-  font-size: 13px;
-  opacity: .72;
-}
+.upsetTitle{ margin: 0; font-size: 18px; font-weight: 950; letter-spacing: .2px; }
+.upsetSub{ margin: 0; font-size: 13px; opacity: .72; }
 
 .upsetWhy{
   border-radius: 16px;
@@ -657,11 +642,7 @@ input[type="date"]:focus, select:focus{
   opacity: .92;
 }
 
-.upsetNote{
-  margin-top: 10px;
-  font-size: 13px;
-  opacity: .84;
-}
+.upsetNote{ margin-top: 10px; font-size: 13px; opacity: .84; }
 
 .upsetFade{
   pointer-events:none;
@@ -691,16 +672,10 @@ input[type="date"]:focus, select:focus{
   cursor: pointer;
 }
 
-.btnDarkPrimary{
-  background: rgba(79,166,255,0.16);
-  color: rgba(255,255,255,0.92);
-}
+.btnDarkPrimary{ background: rgba(79,166,255,0.16); color: rgba(255,255,255,0.92); }
 .btnDarkPrimary:hover{ background: rgba(79,166,255,0.20); }
 
-.btnDarkGhost{
-  background: rgba(255,255,255,0.03);
-  color: rgba(255,255,255,0.86);
-}
+.btnDarkGhost{ background: rgba(255,255,255,0.03); color: rgba(255,255,255,0.86); }
 .btnDarkGhost:hover{ background: rgba(255,255,255,0.05); }
 
 .upsetAccent{
@@ -709,15 +684,441 @@ input[type="date"]:focus, select:focus{
   height: 4px;
   opacity: .95;
 }
-.upsetAccent.low{
-  background: linear-gradient(90deg, rgba(255,99,132,.95), rgba(255,99,132,.12));
-}
-.upsetAccent.medium{
-  background: linear-gradient(90deg, rgba(255,206,86,.98), rgba(255,206,86,.12));
-}
-.upsetAccent.high{
-  background: linear-gradient(90deg, rgba(75,192,192,.98), rgba(75,192,192,.12));
-}
-body {
+.upsetAccent.low{ background: linear-gradient(90deg, rgba(255,99,132,.95), rgba(255,99,132,.12)); }
+.upsetAccent.medium{ background: linear-gradient(90deg, rgba(255,206,86,.98), rgba(255,206,86,.12)); }
+.upsetAccent.high{ background: linear-gradient(90deg, rgba(75,192,192,.98), rgba(75,192,192,.12)); }
+
+/* =========================================================
+   Parlay Lab page shell (ParlayLab.jsx)
+   ========================================================= */
+
+.pl-page{
+  /* slightly wider than global for Lab */
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 26px 18px 42px;
 }
 
+.pl-head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom: 16px;
+}
+
+.pl-kicker{
+  font-size: 12px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  opacity: .7;
+  margin-bottom: 6px;
+}
+
+.pl-title{
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: .2px;
+}
+
+.pl-sub{
+  margin: 8px 0 0;
+  opacity: .75;
+  max-width: 68ch;
+}
+
+.pl-grid{
+  display:grid;
+  grid-template-columns: 1.35fr .65fr;
+  gap: 16px;
+  align-items:start;
+}
+
+.pl-main{ min-width: 0; }
+.pl-side{ display:flex; flex-direction:column; gap: 12px; }
+
+.pl-panel{
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,.05);
+  border-radius: var(--radius2);
+  padding: 14px 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.20);
+}
+
+.pl-panelTitle{
+  font-weight: 900;
+  letter-spacing: .2px;
+  margin-bottom: 8px;
+}
+
+.pl-list{
+  margin: 0;
+  padding-left: 18px;
+  opacity: .78;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px){
+  .pl-grid{ grid-template-columns: 1fr; }
+}
+
+/* =========================================================
+   Parlay Results Card (scoped)
+   ========================================================= */
+
+.pr-card{
+  border: 1px solid var(--stroke);
+  background: rgba(255,255,255,.06);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 16px 50px rgba(0,0,0,.35);
+}
+
+.pr-head{
+  display:flex;
+  gap:16px;
+  align-items:flex-start;
+  justify-content:space-between;
+  padding:16px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+
+.pr-titleWrap{ flex:1; min-width: 280px; }
+.pr-titleRow{ display:flex; gap:10px; align-items:center; }
+.pr-title{ margin:0; font-size:15px; letter-spacing:.2px; }
+.pr-sub{ display:flex; gap:10px; align-items:center; margin-top:6px; flex-wrap:wrap; }
+.pr-sub .dot{ width:4px; height:4px; border-radius:999px; background: rgba(255,255,255,.25); }
+
+.pr-splitRow{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:10px;
+}
+
+.pr-card .splitChip{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+}
+
+.pr-splitRow--types .splitChip--type{
+  background: rgba(255,255,255,.03);
+  border-color: rgba(255,255,255,.08);
+}
+
+.pr-card .splitLeague{ font-size:11px; font-weight:900; letter-spacing:.5px; }
+.pr-card .splitWL{ font-size:11px; font-weight:900; }
+.pr-card .splitPct{ font-size:11px; }
+
+.pr-rightCol{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:10px;
+}
+
+.pr-metrics{
+  display:flex;
+  gap:10px;
+  align-items:stretch;
+  flex-wrap:nowrap;
+}
+
+.metric{
+  min-width:78px;
+  padding:10px 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.05);
+  border-radius: 14px;
+  text-align:right;
+}
+.metric-k{ font-weight:900; font-size:14px; }
+.metric-l{ font-size:11px; opacity:.7; margin-top:2px; }
+
+.pr-actions{
+  display:flex;
+  gap:8px;
+  justify-content:flex-end;
+  flex-wrap:wrap;
+}
+
+/* mid-width wrap improvement */
+@media (max-width: 1100px){
+  .pr-metrics{ flex-wrap:wrap; justify-content:flex-end; }
+  .metric{ min-width: 74px; }
+}
+
+.pr-card .btn{
+  appearance:none;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.92);
+  padding:8px 10px;
+  border-radius: 12px;
+  font-size:12px;
+  font-weight:900;
+  cursor:pointer;
+}
+.pr-card .btn:hover{ background: rgba(255,255,255,.12); }
+.pr-card .btn:disabled{ opacity:.45; cursor:not-allowed; }
+.pr-card .btn-ghost{
+  background: rgba(255,255,255,.04);
+  border-color: rgba(255,255,255,.10);
+}
+.pr-card .btn-danger{
+  background: rgba(255,90,120,.10);
+  border-color: rgba(255,90,120,.24);
+}
+.pr-card .btn-danger:hover{ background: rgba(255,90,120,.14); }
+
+.pr-saved{ display:flex; gap:10px; align-items:center; }
+.pr-savedLabel{ font-size:11px; }
+
+.pr-select{
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.18);
+  color: rgba(255,255,255,.92);
+  padding:8px 10px;
+  border-radius: 12px;
+  font-size:12px;
+  min-width: 180px;
+}
+
+.pr-body{ padding: 12px 12px 14px; }
+
+.pr-legsHead{
+  display:grid;
+  grid-template-columns: 90px 1fr 90px 90px;
+  gap:10px;
+  padding: 0 8px 8px;
+  font-size:11px;
+  opacity:.8;
+}
+.pr-legs{ margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:8px; }
+.pr-leg{
+  display:grid;
+  grid-template-columns: 90px 1fr 90px 90px;
+  gap:10px;
+  align-items:center;
+  padding: 10px 8px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.12);
+  border-radius: 14px;
+}
+
+.pr-right{ text-align:right; }
+
+.pr-card .badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:6px 10px;
+  border-radius:999px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.2px;
+  color: rgba(234,240,255,.92);
+}
+.pr-card .badge-soft{
+  background: rgba(255,255,255,.04);
+  border-color: rgba(255,255,255,.10);
+}
+
+.pr-teamName{ font-weight:900; font-size:13px; }
+.pr-odds{ font-size:11px; margin-top:2px; opacity:.7; }
+
+.pr-card .pill{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:6px 10px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.4px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+}
+.pr-card .pill-win{
+  border-color: rgba(90,255,170,.30);
+  background: rgba(90,255,170,.10);
+}
+.pr-card .pill-loss{
+  border-color: rgba(255,90,120,.30);
+  background: rgba(255,90,120,.10);
+}
+
+.pr-card .muted{ opacity:.75; font-size:12px; color: rgba(234,240,255,.70); }
+.pr-card .mutedStrong{ opacity:1; font-weight:900; }
+
+.pr-foot{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:12px;
+  padding: 10px 8px 0;
+  border-top: 1px dashed rgba(255,255,255,.10);
+}
+.pr-notes{ max-width: 60%; text-align:right; }
+
+/* ---------- Inline editor (scoped) ---------- */
+
+.pr-editor{
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.10);
+  border-radius: 16px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.pr-editorHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom: 10px;
+}
+
+.pr-editorTitle{ font-weight:900; letter-spacing:.2px; }
+
+.pr-editorBtns{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+
+.pr-editorError{
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,90,120,.24);
+  background: rgba(255,90,120,.10);
+  font-size:12px;
+  font-weight:800;
+}
+
+.pr-editorGrid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap:10px;
+}
+
+.pr-editor .field{ display:flex; flex-direction:column; gap:6px; min-width:0; }
+.pr-editor .fieldLabel{ font-size:11px; opacity:.75; }
+.pr-editor .fieldInput{
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.18);
+  color: rgba(255,255,255,.92);
+  padding: 10px 10px;
+  border-radius: 12px;
+  font-size:12px;
+  outline:none;
+  min-width:0;
+}
+.pr-editor .fieldInput:focus{
+  border-color: rgba(255,255,255,.22);
+  background: rgba(0,0,0,.22);
+}
+
+.pr-editor .field--wide{ grid-column: 1 / -1; }
+
+.pr-legsEditorHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-top: 12px;
+  margin-bottom: 8px;
+}
+
+.pr-legsEditor{ display:flex; flex-direction:column; gap:10px; }
+
+/* =========================================================
+   ✅ FIXED: Leg editor row overlap (this was your screenshot issue)
+   - align-items: start (not end)
+   - label spacing + nowrap
+   ========================================================= */
+
+.legRow{
+  display:grid;
+  grid-template-columns: 120px 1.6fr 110px 120px 160px 110px;
+  gap:10px;
+
+  /* ✅ KEY FIX */
+  align-items: start;
+
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.03);
+  border-radius: 14px;
+}
+
+/* ✅ Enhancement: prevent label collisions */
+.legRow .fieldLabel{
+  display:block;
+  margin-bottom: 6px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.legRow .field{
+  min-width: 0;
+  gap: 6px;
+}
+
+.field--team{ min-width: 0; }
+.field--remove{ justify-content:flex-end; }
+
+.seg{
+  display:flex;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.18);
+  border-radius: 12px;
+  overflow:hidden;
+}
+.segBtn{
+  flex:1;
+  padding: 10px 8px;
+  font-size:12px;
+  font-weight:900;
+  color: rgba(255,255,255,.85);
+  background: transparent;
+  border: 0;
+  cursor:pointer;
+}
+.segBtn--on{
+  background: rgba(255,255,255,.10);
+  color: rgba(255,255,255,.95);
+}
+
+/* mobile */
+@media (max-width: 860px){
+  .pr-head{ flex-direction:column; align-items:stretch; }
+  .pr-rightCol{ align-items:stretch; }
+  .pr-metrics{ justify-content:space-between; }
+  .metric{ text-align:left; }
+  .pr-actions{ justify-content:flex-start; }
+  .pr-select{ width: 100%; min-width: 0; }
+
+  .pr-legsHead, .pr-leg{
+    grid-template-columns: 80px 1fr 72px 80px;
+  }
+
+  .pr-editorGrid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .legRow{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .field--remove .btn{ width: 100%; }
+  .pr-notes{ max-width: 100%; text-align:left; }
+}
