@@ -15,7 +15,11 @@ function pct(conf) {
 }
 
 function stripPrefix(idOrAbbr) {
-  return String(idOrAbbr || "").replace("nba-", "").replace("nhl-", "").toUpperCase();
+  return String(idOrAbbr || "")
+    .replace("nba-", "")
+    .replace("nhl-", "")
+    .replace("ncaam-", "")
+    .toUpperCase();
 }
 
 function shortWinner(name) {
@@ -83,6 +87,9 @@ export default function Home() {
   const [nba, setNba] = useState({ gamesCount: null, topPick: null, meta: null });
   const [nhl, setNhl] = useState({ gamesCount: null, topPick: null, meta: null });
 
+  // ✅ NEW: NCAAM state (games only for now)
+  const [ncaam, setNcaam] = useState({ gamesCount: null });
+
   useEffect(() => {
     let alive = true;
 
@@ -91,10 +98,12 @@ export default function Home() {
       setErr("");
 
       try {
-        const [h, nbaGames, nhlGames, nbaPred, nhlPred] = await Promise.all([
+        const [h, nbaGames, nhlGames, ncaamGames, nbaPred, nhlPred] = await Promise.all([
           fetchJson("/api/health"),
           fetchJson(`/api/nba/games?date=${encodeURIComponent(date)}&expand=teams`),
           fetchJson(`/api/nhl/games?date=${encodeURIComponent(date)}&expand=teams`),
+          // ✅ NEW: NCAAM games (your API expects ?date=... not dates[]=...)
+          fetchJson(`/api/ncaam/games?date=${encodeURIComponent(date)}&expand=teams`),
           fetchJson(`/api/nba/predict?date=${encodeURIComponent(date)}&window=${encodeURIComponent(windowDays)}`),
           fetchJson(`/api/nhl/predict?date=${encodeURIComponent(date)}&window=${encodeURIComponent(windowDays)}`),
         ]);
@@ -115,6 +124,12 @@ export default function Home() {
             ? nhlGames.games.length
             : 0;
 
+        const ncaamGamesCount = Array.isArray(ncaamGames)
+          ? ncaamGames.length
+          : Array.isArray(ncaamGames?.games)
+            ? ncaamGames.games.length
+            : 0;
+
         setNba({
           gamesCount: nbaGamesCount,
           topPick: pickFromPredPayload(nbaPred),
@@ -125,6 +140,10 @@ export default function Home() {
           gamesCount: nhlGamesCount,
           topPick: pickFromPredPayload(nhlPred),
           meta: nhlPred?.meta || null,
+        });
+
+        setNcaam({
+          gamesCount: ncaamGamesCount,
         });
 
         setLastUpdated(new Date().toLocaleString());
@@ -143,8 +162,6 @@ export default function Home() {
   }, [date, windowDays]);
 
   return (
-    // ✅ FIX: Home was being constrained/weird due to wrapper mismatch.
-    // Wrap in full-width, then re-apply the normal container for consistent padding/max-width.
     <div className="homeFull">
       <div className="container">
         <div className="home">
@@ -172,6 +189,9 @@ export default function Home() {
                 <Link className="btnGhost" to="/league/nhl">
                   Open NHL
                 </Link>
+                <Link className="btnGhost" to="/league/ncaam">
+                  Open NCAAM
+                </Link>
               </div>
             </div>
           ) : null}
@@ -198,9 +218,11 @@ export default function Home() {
               topPick={nhl.topPick}
               meta={nhl.meta}
             />
+
+            {/* ✅ NEW: NCAAM (games-only card for now) */}
+            <NcaamCard date={date} loading={loading} gamesCount={ncaam.gamesCount} />
           </div>
 
-          {/* ✅ NEW: Upset Watch teaser mounted on homepage */}
           <div className="homeFooterCard">
             <div className="homeFooterLeft">
               <div className="homeFooterTitle">Upset Watch</div>
@@ -219,6 +241,9 @@ export default function Home() {
               <Link className="btnGhost" to="/league/nhl">
                 NHL Slate
               </Link>
+              <Link className="btnGhost" to="/league/ncaam">
+                NCAAM Slate
+              </Link>
             </div>
           </div>
 
@@ -236,6 +261,9 @@ export default function Home() {
               </Link>
               <Link className="btnGhost" to="/league/nhl">
                 NHL Predictions
+              </Link>
+              <Link className="btnGhost" to="/league/ncaam">
+                NCAAM Games
               </Link>
             </div>
           </div>
@@ -298,6 +326,47 @@ function LeagueCard({ league, to, accent, date, loading, gamesCount, topPick, me
         </Link>
         <Link className="btnGhost" to={to}>
           Predictions
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ✅ NCAAM card (games-only for now)
+ * Uses existing button classes so it matches your theme.
+ */
+function NcaamCard({ date, loading, gamesCount }) {
+  return (
+    <div className="leagueCard ncaam">
+      <div className="leagueCardHead">
+        <div className="leagueBadge">
+          <span className="leagueDot" />
+          NCAAM
+        </div>
+        <div className="mutedSmall">{date}</div>
+      </div>
+
+      <div className="leagueCardTitle">NCAAM Games</div>
+      <div className="leagueCardSub">{loading ? "Loading…" : gamesCount != null ? `${gamesCount} games today` : "—"}</div>
+
+      <div className="leagueCardPick">
+        <div className="pickLabel">Top 25</div>
+        <div className="mutedSmall" style={{ opacity: 0.85 }}>
+          AP Top 25 is live in the API.
+        </div>
+      </div>
+
+      <div className="leagueCardMeta">
+        <div className="mutedSmall">Games-only (predictions coming soon)</div>
+      </div>
+
+      <div className="leagueCardActions">
+        <Link className="btnPrimary" to="/league/ncaam">
+          Open NCAAM
+        </Link>
+        <Link className="btnGhost" to="/league/ncaam">
+          Games
         </Link>
       </div>
     </div>

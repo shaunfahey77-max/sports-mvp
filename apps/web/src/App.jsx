@@ -7,15 +7,19 @@ import Predict from "./pages/Predict";
 import TeamDetail from "./pages/TeamDetail";
 import Upsets from "./pages/Upsets";
 import ParlayLab from "./pages/ParlayLab";
-import SuperBowlProps from "./pages/SuperBowlProps";
 
+/**
+ * Normalize supported leagues.
+ * Supports: nba, nhl, ncaam (NCAA Men's College Basketball)
+ */
 function normalizeLeague(raw) {
   const l = String(raw || "nba").toLowerCase();
-  return l === "nhl" ? "nhl" : "nba";
+  if (l === "nba") return "nba";
+  if (l === "nhl") return "nhl";
+  if (l === "ncaam") return "ncaam";
+  // If someone types /league/foo, keep UX stable but avoid crashing.
+  return "nba";
 }
-
-// Seasonal toggle (unique to Super Bowl)
-const SHOW_SUPERBOWL = String(import.meta.env.VITE_SHOW_SUPERBOWL || "false").toLowerCase() === "true";
 
 /**
  * Redirect legacy team URLs to:
@@ -41,9 +45,9 @@ function HubLegacyRedirect() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Layout showSuperBowl={SHOW_SUPERBOWL}>
+      <Layout>
         <Routes>
-          {/* Primary flow */}
+          {/* Home */}
           <Route path="/" element={<Home />} />
 
           {/* ✅ Parlay Lab */}
@@ -56,17 +60,16 @@ export default function App() {
           <Route path="/app/upsets" element={<Upsets />} />
           <Route path="/upset" element={<Navigate to="/upsets" replace />} />
 
-          {/* ✅ Super Bowl (seasonal) */}
-          {SHOW_SUPERBOWL ? (
-            <>
-              <Route path="/superbowl" element={<SuperBowlProps />} />
-              <Route path="/super-bowl" element={<Navigate to="/superbowl" replace />} />
-              <Route path="/super-bowl-props" element={<Navigate to="/superbowl" replace />} />
-            </>
-          ) : null}
+          {/*
+  Primary league route:
+  - /league/nba   -> Predict (Games/Predictions)
+  - /league/nhl   -> Predict (Games/Predictions)
+  - /league/ncaam -> Predict (Games + Top25, predictions disabled for now)
+*/}
+<Route path="/league/:league" element={<Predict />} />
 
-          {/* Default league route goes to Predictions */}
-          <Route path="/league/:league" element={<Predict />} />
+          {/* Optional explicit alias (safe to have, makes linking clearer) */}
+          <Route path="/league/:league/predict" element={<Predict />} />
 
           {/* Hub */}
           <Route path="/league/:league/hub" element={<LeagueHub />} />
@@ -82,6 +85,7 @@ export default function App() {
           {/* Back-compat league shortcuts */}
           <Route path="/nba" element={<Navigate to="/league/nba" replace />} />
           <Route path="/nhl" element={<Navigate to="/league/nhl" replace />} />
+          <Route path="/ncaam" element={<Navigate to="/league/ncaam" replace />} />
 
           {/* Catch-all */}
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -3,6 +3,9 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 
+// ✅ NEW: mount predictor router (single source of truth)
+import predictRouter from "./routes/predict.js";
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -10,9 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 // ✅ sanity route (proves we’re running THIS file)
-app.get("/__ping", (_req, res) =>
-  res.json({ ok: true, from: "apps/api/src/index.js" })
-);
+app.get("/__ping", (_req, res) => res.json({ ok: true, from: "apps/api/src/index.js" }));
 
 /**
  * Config
@@ -22,15 +23,18 @@ const NBA_API_KEY = process.env.NBA_API_KEY || "";
 const NHL_API_BASE = "https://api-web.nhle.com/v1";
 
 /**
+ * ✅ NCAAM (Men's College Basketball) via ESPN (no key)
+ */
+const ESPN_SITE_API = "https://site.api.espn.com/apis/site/v2/sports";
+const ESPN_NCAAM_PATH = "basketball/mens-college-basketball";
+
+/**
  * Caching
- * - short TTL for live pages
- * - longer TTL for heavy history pulls
  */
 const CACHE_TTL_MS = 60_000;
 const HEAVY_CACHE_TTL_MS = 10 * 60_000;
 
 const cache = new Map();
-
 function getCache(key) {
   const hit = cache.get(key);
   if (!hit) return null;
@@ -50,13 +54,13 @@ function sleep(ms) {
 }
 
 async function fetchJson(url, { headers } = {}, { cacheTtlMs = CACHE_TTL_MS } = {}) {
-  const cacheKey = `GET:${url}`;
+  const auth = headers?.Authorization ? String(headers.Authorization) : "";
+  const cacheKey = `GET:${url}:AUTH=${auth}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
   const res = await fetch(url, { headers });
 
-  // Handle rate limit explicitly
   if (res.status === 429) {
     const text = await res.text().catch(() => "");
     const err = new Error(
@@ -68,9 +72,7 @@ async function fetchJson(url, { headers } = {}, { cacheTtlMs = CACHE_TTL_MS } = 
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    const err = new Error(
-      `Upstream error ${res.status} for ${url}${text ? ` — ${text}` : ""}`
-    );
+    const err = new Error(`Upstream error ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
     err.status = res.status;
     throw err;
   }
@@ -88,28 +90,49 @@ function normalizeDateParam(date) {
   const ok = /^\d{4}-\d{2}-\d{2}$/.test(date);
   return ok ? date : null;
 }
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+function addDays(yyyyMmDd, deltaDays) {
+  const safe = normalizeDateParam(yyyyMmDd);
+  if (!safe) throw new Error(`Invalid date (expected YYYY-MM-DD): ${yyyyMmDd}`);
+  const d = new Date(`${safe}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
+}
+
 function toNbaTeamId(abbr) {
   return `nba-${String(abbr || "").toLowerCase()}`;
 }
 function toNhlTeamId(triCode) {
   return `nhl-${String(triCode || "").toLowerCase()}`;
 }
+function toNcaamTeamId(code) {
+  return `ncaam-${String(code || "").toLowerCase()}`;
+}
+
 function wantExpandTeams(req) {
   const v = String(req.query.expand || "").toLowerCase();
   return v === "teams" || v === "true" || v === "1";
 }
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
+
+/** Accepts `?date=YYYY-MM-DD` OR `?dates[]=YYYY-MM-DD` */
+function readDateFromReq(req) {
+  const d1 = normalizeDateParam(req.query.date);
+  const d2 = normalizeDateParam(req.query["dates[]"]);
+  return d1 || d2 || new Date().toISOString().slice(0, 10);
 }
-function addDays(yyyyMmDd, deltaDays) {
-  const d = new Date(`${yyyyMmDd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + deltaDays);
-  return d.toISOString().slice(0, 10);
+
+/** ESPN uses YYYYMMDD */
+function ymdToEspn(ymd) {
+  const safe = normalizeDateParam(ymd);
+  if (!safe) return null;
+  return safe.replaceAll("-", "");
 }
 
 /**
  * =========================================
- * Elo (Premium MVP, free)
+ * Elo (used ONLY for Upset Watch signals now)
  * =========================================
  */
 const ELO_BASE = 1500;
@@ -122,16 +145,13 @@ const ELO_CFG = {
 function eloExpected(rA, rB) {
   return 1 / (1 + Math.pow(10, (rB - rA) / 400));
 }
-
 function eloMovMultiplier(scoreDiff) {
   const d = Math.max(1, Number(scoreDiff) || 1);
   return Math.log(d + 1);
 }
-
 function eloUpdatePair({ rHome, rAway, homeScore, awayScore, cfg }) {
   const diff = Math.abs((homeScore ?? 0) - (awayScore ?? 0));
   const mov = eloMovMultiplier(diff);
-
   const expectedHome = eloExpected(rHome, rAway);
 
   let actualHome = 0.5;
@@ -141,17 +161,11 @@ function eloUpdatePair({ rHome, rAway, homeScore, awayScore, cfg }) {
   const kAdj = clamp(cfg.K * mov, cfg.K * 0.75, cfg.K * 2.5);
   const delta = kAdj * (actualHome - expectedHome);
 
-  return {
-    rHomeNew: rHome + delta,
-    rAwayNew: rAway - delta,
-    expectedHome,
-  };
+  return { rHomeNew: rHome + delta, rAwayNew: rAway - delta, expectedHome };
 }
-
 function getRating(map, teamId) {
   return map.has(teamId) ? map.get(teamId) : ELO_BASE;
 }
-
 function probToConfidence(pHome, pick) {
   const p = pick === "home" ? pHome : 1 - pHome;
   return clamp(p, 0.51, 0.97);
@@ -159,7 +173,7 @@ function probToConfidence(pHome, pick) {
 
 /**
  * =========================================
- * Rest / Back-to-back adjustment
+ * Rest / Back-to-back adjustment (Upsets)
  * =========================================
  */
 const REST_CFG = {
@@ -178,7 +192,6 @@ function daysBetweenUtc(ymdA, ymdB) {
 
 function buildPlayedDatesMap({ league, histRows }) {
   const played = new Map();
-
   const add = (teamId, dateYmd) => {
     if (!teamId || !dateYmd) return;
     if (!played.has(teamId)) played.set(teamId, new Set());
@@ -208,9 +221,7 @@ function buildPlayedDatesMap({ league, histRows }) {
   }
 
   const out = new Map();
-  for (const [teamId, set] of played.entries()) {
-    out.set(teamId, [...set].sort());
-  }
+  for (const [teamId, set] of played.entries()) out.set(teamId, [...set].sort());
   return out;
 }
 
@@ -468,7 +479,128 @@ async function getNhlGamesInRange(startYYYYMMDD, endYYYYMMDD) {
 }
 
 /**
- * Predict payload builders
+ * ✅ NCAAM Games + Top25 (kept)
+ */
+function espnPickTeamCode(team) {
+  const abbr = team?.abbreviation;
+  if (abbr) return String(abbr);
+  const short = team?.shortDisplayName;
+  if (short) return String(short).slice(0, 4);
+  const id = team?.id;
+  return id ? String(id) : "team";
+}
+
+async function getNcaamGamesByDate(dateYYYYMMDD, expandTeams) {
+  const yyyymmdd = ymdToEspn(dateYYYYMMDD);
+  if (!yyyymmdd) throw new Error(`Invalid date (expected YYYY-MM-DD): ${dateYYYYMMDD}`);
+
+  const url = `${ESPN_SITE_API}/${ESPN_NCAAM_PATH}/scoreboard?dates=${encodeURIComponent(yyyymmdd)}`;
+  const json = await fetchJson(url, {}, { cacheTtlMs: CACHE_TTL_MS });
+
+  const events = Array.isArray(json?.events) ? json.events : [];
+
+  const rows = [];
+  for (const ev of events) {
+    const competitions = Array.isArray(ev?.competitions) ? ev.competitions : [];
+    const comp = competitions[0];
+    if (!comp) continue;
+
+    const competitors = Array.isArray(comp?.competitors) ? comp.competitors : [];
+    const home = competitors.find((c) => c?.homeAway === "home");
+    const away = competitors.find((c) => c?.homeAway === "away");
+    if (!home || !away) continue;
+
+    const homeTeam = home?.team || {};
+    const awayTeam = away?.team || {};
+
+    const homeEspnId = homeTeam?.id ? String(homeTeam.id) : null;
+    const awayEspnId = awayTeam?.id ? String(awayTeam.id) : null;
+
+    const homeCode = espnPickTeamCode(homeTeam);
+    const awayCode = espnPickTeamCode(awayTeam);
+
+    const homeScore = Number.isFinite(Number(home?.score)) ? Number(home.score) : null;
+    const awayScore = Number.isFinite(Number(away?.score)) ? Number(away.score) : null;
+
+    const base = {
+      league: "ncaam",
+      id: `ncaam-${ev?.id || comp?.id || `${awayCode}-${homeCode}-${yyyymmdd}`}`,
+      date: dateYYYYMMDD,
+      status: ev?.status?.type?.shortDetail || ev?.status?.type?.description || "",
+      homeScore,
+      awayScore,
+      homeTeamId: toNcaamTeamId(homeCode),
+      awayTeamId: toNcaamTeamId(awayCode),
+      homeTeamEspnId: homeEspnId,
+      awayTeamEspnId: awayEspnId,
+    };
+
+    if (!expandTeams) {
+      rows.push(base);
+      continue;
+    }
+
+    rows.push({
+      ...base,
+      homeTeam: {
+        id: toNcaamTeamId(homeCode),
+        espnId: homeEspnId,
+        name: homeTeam?.displayName || homeTeam?.name || homeCode,
+        city: "",
+        abbr: homeCode,
+        score: homeScore,
+      },
+      awayTeam: {
+        id: toNcaamTeamId(awayCode),
+        espnId: awayEspnId,
+        name: awayTeam?.displayName || awayTeam?.name || awayCode,
+        city: "",
+        abbr: awayCode,
+        score: awayScore,
+      },
+    });
+  }
+
+  return rows;
+}
+
+async function getNcaamTop25() {
+  const url = `${ESPN_SITE_API}/${ESPN_NCAAM_PATH}/rankings`;
+  const json = await fetchJson(url, {}, { cacheTtlMs: 10 * 60_000 });
+
+  const ranks = [];
+  const lists = Array.isArray(json?.rankings) ? json.rankings : [];
+  for (const r of lists) {
+    const name = r?.name || r?.shortName || r?.type || "Rankings";
+    const entries = Array.isArray(r?.ranks) ? r.ranks : Array.isArray(r?.entries) ? r.entries : [];
+
+    for (const e of entries) {
+      const team = e?.team || e?.team?.team || e?.athlete || {};
+      const abbr = team?.abbreviation || team?.abbr;
+      const code = abbr || team?.shortDisplayName || team?.id;
+
+      ranks.push({
+        poll: name,
+        rank: e?.current || e?.rank || e?.position || null,
+        teamId: toNcaamTeamId(code || "team"),
+        abbr: abbr || String(code || "").slice(0, 4),
+        name: team?.displayName || team?.name || team?.shortDisplayName || String(code || ""),
+        record: e?.recordSummary || e?.record || null,
+        points: e?.points ?? null,
+        firstPlaceVotes: e?.firstPlaceVotes ?? null,
+      });
+    }
+  }
+
+  const ap = ranks.filter((x) => String(x.poll).toLowerCase().includes("ap"));
+  const finalList = ap.length ? ap : ranks;
+
+  finalList.sort((a, b) => (Number(a.rank) || 999) - (Number(b.rank) || 999));
+  return finalList.slice(0, 25);
+}
+
+/**
+ * Predict payload builders (Elo+rest) — kept for Upset Watch scoring only
  */
 async function buildNbaPredictPayload(date, windowDays) {
   const cfg = ELO_CFG.nba;
@@ -492,11 +624,7 @@ async function buildNbaPredictPayload(date, windowDays) {
     const histRows = await getNbaGamesInRange(startHist, endHist);
     const playedMap = buildPlayedDatesMap({ league: "nba", histRows });
 
-    const hist = [...histRows].sort((a, b) => {
-      const ad = new Date(a?.date || 0).getTime();
-      const bd = new Date(b?.date || 0).getTime();
-      return ad - bd;
-    });
+    const hist = [...histRows].sort((a, b) => new Date(a?.date || 0).getTime() - new Date(b?.date || 0).getTime());
 
     const ratings = new Map();
     let trainedGames = 0;
@@ -516,13 +644,7 @@ async function buildNbaPredictPayload(date, windowDays) {
       const rHome = getRating(ratings, homeId) + cfg.HOME_ADV;
       const rAway = getRating(ratings, awayId);
 
-      const { rHomeNew, rAwayNew } = eloUpdatePair({
-        rHome,
-        rAway,
-        homeScore: hs,
-        awayScore: as,
-        cfg,
-      });
+      const { rHomeNew, rAwayNew } = eloUpdatePair({ rHome, rAway, homeScore: hs, awayScore: as, cfg });
 
       ratings.set(homeId, rHomeNew - cfg.HOME_ADV);
       ratings.set(awayId, rAwayNew);
@@ -531,10 +653,8 @@ async function buildNbaPredictPayload(date, windowDays) {
     }
 
     const predictions = todaysGames.map((g) => {
-      const homeAbbr =
-        g?.homeTeam?.abbr || (g.homeTeamId || "").replace("nba-", "").toUpperCase();
-      const awayAbbr =
-        g?.awayTeam?.abbr || (g.awayTeamId || "").replace("nba-", "").toUpperCase();
+      const homeAbbr = g?.homeTeam?.abbr || (g.homeTeamId || "").replace("nba-", "").toUpperCase();
+      const awayAbbr = g?.awayTeam?.abbr || (g.awayTeamId || "").replace("nba-", "").toUpperCase();
 
       const homeId = g.homeTeamId || toNbaTeamId(homeAbbr);
       const awayId = g.awayTeamId || toNbaTeamId(awayAbbr);
@@ -577,12 +697,7 @@ async function buildNbaPredictPayload(date, windowDays) {
             rHomeBase,
             rAwayBase,
             homeAdv: cfg.HOME_ADV,
-            rest: {
-              home: homeWork,
-              away: awayWork,
-              homeRestAdj,
-              awayRestAdj,
-            },
+            rest: { home: homeWork, away: awayWork, homeRestAdj, awayRestAdj },
             trainedGames,
           },
         },
@@ -590,21 +705,12 @@ async function buildNbaPredictPayload(date, windowDays) {
     });
 
     return {
-      meta: {
-        ...meta,
-        historyGamesFetched: histRows.length,
-        historyGamesWithScores: trainedGames,
-        teamsRated: ratings.size,
-      },
+      meta: { ...meta, historyGamesFetched: histRows.length, historyGamesWithScores: trainedGames, teamsRated: ratings.size },
       predictions,
     };
   } catch (e) {
     return {
-      meta: {
-        ...meta,
-        error: String(e?.message || e),
-        note: "NBA Elo predict returned safely with error info.",
-      },
+      meta: { ...meta, error: String(e?.message || e), note: "NBA Elo predict returned safely with error info." },
       predictions: [],
     };
   }
@@ -630,7 +736,6 @@ async function buildNhlPredictPayload(date, windowDays = 5) {
   try {
     const histGames = await getNhlGamesInRange(startHist, endHist);
     const playedMap = buildPlayedDatesMap({ league: "nhl", histRows: histGames });
-
     const hist = [...histGames].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
     const ratings = new Map();
@@ -648,13 +753,7 @@ async function buildNhlPredictPayload(date, windowDays = 5) {
       const rHome = getRating(ratings, homeId) + cfg.HOME_ADV;
       const rAway = getRating(ratings, awayId);
 
-      const { rHomeNew, rAwayNew } = eloUpdatePair({
-        rHome,
-        rAway,
-        homeScore: hs,
-        awayScore: as,
-        cfg,
-      });
+      const { rHomeNew, rAwayNew } = eloUpdatePair({ rHome, rAway, homeScore: hs, awayScore: as, cfg });
 
       ratings.set(homeId, rHomeNew - cfg.HOME_ADV);
       ratings.set(awayId, rAwayNew);
@@ -665,10 +764,8 @@ async function buildNhlPredictPayload(date, windowDays = 5) {
     const todaysGames = await getNhlGamesByDate(date, true);
 
     const predictions = todaysGames.map((g) => {
-      const homeAbbr =
-        g?.homeTeam?.abbr || (g.homeTeamId || "").replace("nhl-", "").toUpperCase();
-      const awayAbbr =
-        g?.awayTeam?.abbr || (g.awayTeamId || "").replace("nhl-", "").toUpperCase();
+      const homeAbbr = g?.homeTeam?.abbr || (g.homeTeamId || "").replace("nhl-", "").toUpperCase();
+      const awayAbbr = g?.awayTeam?.abbr || (g.awayTeamId || "").replace("nhl-", "").toUpperCase();
 
       const homeId = g.homeTeamId;
       const awayId = g.awayTeamId;
@@ -711,12 +808,7 @@ async function buildNhlPredictPayload(date, windowDays = 5) {
             rHomeBase,
             rAwayBase,
             homeAdv: cfg.HOME_ADV,
-            rest: {
-              home: homeWork,
-              away: awayWork,
-              homeRestAdj,
-              awayRestAdj,
-            },
+            rest: { home: homeWork, away: awayWork, homeRestAdj, awayRestAdj },
             trainedGames,
           },
         },
@@ -724,19 +816,11 @@ async function buildNhlPredictPayload(date, windowDays = 5) {
     });
 
     return {
-      meta: {
-        ...meta,
-        historyGamesFetched: histGames.length,
-        historyGamesWithScores: trainedGames,
-        teamsRated: ratings.size,
-      },
+      meta: { ...meta, historyGamesFetched: histGames.length, historyGamesWithScores: trainedGames, teamsRated: ratings.size },
       predictions,
     };
   } catch (e) {
-    return {
-      meta: { ...meta, error: String(e?.message || e) },
-      predictions: [],
-    };
+    return { meta: { ...meta, error: String(e?.message || e) }, predictions: [] };
   }
 }
 
@@ -747,6 +831,10 @@ app.get("/api/health", (_req, res) =>
   res.json({ ok: true, service: "sports-mvp-api", time: new Date().toISOString() })
 );
 
+// ✅ Mount predictor router AFTER /api/health, before other /api routes is fine either way.
+// This makes: /api/nba/predict, /api/nhl/predict, /api/ncaam/predict come from src/routes/predict.js
+app.use("/api", predictRouter);
+
 app.get("/api/nba/teams", async (_req, res) => {
   const { teams } = await getNbaTeams();
   res.json(teams);
@@ -754,7 +842,7 @@ app.get("/api/nba/teams", async (_req, res) => {
 
 app.get("/api/nba/games", async (req, res) => {
   try {
-    const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
+    const date = readDateFromReq(req);
     const expand = wantExpandTeams(req);
     const games = await getNbaGamesByDate(date, expand);
     res.json(games);
@@ -765,7 +853,7 @@ app.get("/api/nba/games", async (req, res) => {
 
 app.get("/api/nhl/games", async (req, res) => {
   try {
-    const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
+    const date = readDateFromReq(req);
     const expand = wantExpandTeams(req);
     const games = await getNhlGamesByDate(date, expand);
     res.json(games);
@@ -774,36 +862,30 @@ app.get("/api/nhl/games", async (req, res) => {
   }
 });
 
-app.get("/api/nba/predict", async (req, res) => {
-  const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
-  const windowDays = Math.max(3, Math.min(30, Number(req.query.window || 14)));
-  const payload = await buildNbaPredictPayload(date, windowDays);
-  res.json(payload);
+/**
+ * ✅ NCAAM (ESPN)
+ *   /api/ncaam/games?date=YYYY-MM-DD&expand=teams
+ *   /api/ncaam/games?dates[]=YYYY-MM-DD&expand=teams
+ *   /api/ncaam/top25
+ */
+app.get("/api/ncaam/games", async (req, res) => {
+  try {
+    const date = readDateFromReq(req);
+    const expand = wantExpandTeams(req);
+    const games = await getNcaamGamesByDate(date, expand);
+    res.json(games);
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
 });
 
-app.get("/api/nhl/predict", async (req, res) => {
-  const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
-  const windowDays = Math.max(3, Math.min(30, Number(req.query.window || 5)));
-  const payload = await buildNhlPredictPayload(date, windowDays);
-  res.json(payload);
-});
-
-app.get("/api/predictions", async (req, res) => {
-  const league = String(req.query.league || "nba").toLowerCase();
-  const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
-  const windowDays = Math.max(3, Math.min(30, Number(req.query.window || 14)));
-
-  if (league === "nba") {
-    const payload = await buildNbaPredictPayload(date, windowDays);
-    return res.json({ league, date, count: payload.predictions?.length || 0, ...payload });
+app.get("/api/ncaam/top25", async (_req, res) => {
+  try {
+    const rows = await getNcaamTop25();
+    res.json({ ok: true, count: rows.length, rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
-
-  if (league === "nhl") {
-    const payload = await buildNhlPredictPayload(date, windowDays);
-    return res.json({ league, date, count: payload.predictions?.length || 0, ...payload });
-  }
-
-  return res.status(400).json({ error: "Unsupported league. Use league=nba or league=nhl", got: league });
 });
 
 /**
@@ -814,15 +896,13 @@ app.get("/api/predictions", async (req, res) => {
 app.get("/api/upsets", async (req, res) => {
   try {
     const league = String(req.query.league || "nba").toLowerCase();
-    const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
+    const date = readDateFromReq(req);
     const windowDays = clamp(Number(req.query.window || 5), 3, 30);
     const minGap = clamp(Number(req.query.minGap || 15), 0, 250);
     const limit = clamp(Number(req.query.limit || 12), 1, 50);
 
     const payload =
-      league === "nhl"
-        ? await buildNhlPredictPayload(date, windowDays)
-        : await buildNbaPredictPayload(date, windowDays);
+      league === "nhl" ? await buildNhlPredictPayload(date, windowDays) : await buildNbaPredictPayload(date, windowDays);
 
     const preds = Array.isArray(payload?.predictions) ? payload.predictions : [];
 
@@ -850,7 +930,7 @@ app.get("/api/upsets", async (req, res) => {
         const isLowerRatedWin = Number.isFinite(baseGap) && baseGap >= minGap;
 
         const closeness = 1 - Math.min(1, Math.abs(winProb - 0.5) / 0.5);
-        const score = (Math.max(0, baseGap) / 50) + (closeness * 0.75) + (isAwayPick ? 0.15 : 0);
+        const score = Math.max(0, baseGap) / 50 + closeness * 0.75 + (isAwayPick ? 0.15 : 0);
 
         return {
           league,
@@ -880,7 +960,9 @@ app.get("/api/upsets", async (req, res) => {
         };
       })
       .filter(Boolean)
-      .filter((r) => r.signals && (r.signals.isAwayPick || (r.signals.baseGap != null && r.signals.baseGap >= minGap)))
+      .filter(
+        (r) => r.signals && (r.signals.isAwayPick || (r.signals.baseGap != null && r.signals.baseGap >= minGap))
+      )
       .sort((a, b) => (b.signals.score || 0) - (a.signals.score || 0))
       .slice(0, limit);
 
@@ -903,7 +985,7 @@ app.get("/api/upsets", async (req, res) => {
 });
 
 app.get("/api/games", async (req, res) => {
-  const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
+  const date = readDateFromReq(req);
   const expandTeams = wantExpandTeams(req);
 
   let nbaGames = [];

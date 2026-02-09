@@ -34,15 +34,16 @@ function formatTipTime(iso) {
 }
 
 /**
- * ESPN logo fallback (works well for MVP).
- * NBA: https://a.espncdn.com/i/teamlogos/nba/500/bos.png
- * NHL: https://a.espncdn.com/i/teamlogos/nhl/500/bos.png
+ * ESPN logo fallback.
+ * NBA:   https://a.espncdn.com/i/teamlogos/nba/500/bos.png
+ * NHL:   https://a.espncdn.com/i/teamlogos/nhl/500/bos.png
+ * NCAAM: https://a.espncdn.com/i/teamlogos/ncb/500/duke.png
  */
 function logoUrl(league, abbr) {
   const a = String(abbr || "").toLowerCase();
   if (!a) return "";
   const l = String(league || "").toLowerCase();
-  const sport = l === "nhl" ? "nhl" : "nba";
+  const sport = l === "nhl" ? "nhl" : l === "ncaam" ? "ncb" : "nba";
   return `https://a.espncdn.com/i/teamlogos/${sport}/500/${a}.png`;
 }
 
@@ -104,6 +105,7 @@ function Segmented({ value, onChange, options }) {
         return (
           <button
             key={opt.value}
+            type="button"
             onClick={() => onChange(opt.value)}
             style={{
               cursor: "pointer",
@@ -129,7 +131,6 @@ function Meter({ conf }) {
   const p = pct(conf);
   const tone = confidenceTone(p);
 
-  // map conf 0.50–0.90 into 0–1 for bar fill
   const raw = Number(conf);
   const fill = clamp01((raw - 0.5) / (0.9 - 0.5));
   const fillPct = Math.round(fill * 100);
@@ -191,57 +192,86 @@ function Meter({ conf }) {
   );
 }
 
-/** ✅ Canonical team route helper */
 function teamHref(leagueLower, teamId) {
   if (!teamId) return null;
   return `/league/${leagueLower}/team/${teamId}`;
 }
 
-/** ✅ Safe ID -> ABBR */
 function stripPrefix(idOrAbbr) {
-  return String(idOrAbbr || "").replace("nba-", "").replace("nhl-", "").toUpperCase();
+  return String(idOrAbbr || "")
+    .replace("nba-", "")
+    .replace("nhl-", "")
+    .replace("ncaam-", "")
+    .toUpperCase();
 }
 
-/** Normalize "games" payload (NBA + NHL) into one shape for rendering */
-function normalizeGame(_activeLeague, g) {
-  const homeTeam = g?.homeTeam || null;
-  const awayTeam = g?.awayTeam || null;
+function normalizeGame(activeLeague, g) {
+  const homeTeam = g?.homeTeam || g?.home_team || null;
+  const awayTeam = g?.awayTeam || g?.away_team || null;
 
-  const homeTeamId = homeTeam?.id || g?.homeTeamId || "";
-  const awayTeamId = awayTeam?.id || g?.awayTeamId || "";
+  const homeTeamId = homeTeam?.id || g?.homeTeamId || g?.home_team_id || "";
+  const awayTeamId = awayTeam?.id || g?.awayTeamId || g?.away_team_id || "";
 
-  const homeAbbr = homeTeam?.abbr || stripPrefix(homeTeamId);
-  const awayAbbr = awayTeam?.abbr || stripPrefix(awayTeamId);
+  const homeAbbr = homeTeam?.abbr || homeTeam?.abbreviation || homeTeam?.code || homeTeam?.short_name || stripPrefix(homeTeamId);
+  const awayAbbr = awayTeam?.abbr || awayTeam?.abbreviation || awayTeam?.code || awayTeam?.short_name || stripPrefix(awayTeamId);
 
-  const homeName = homeTeam?.name || homeAbbr || homeTeamId || "HOME";
-  const awayName = awayTeam?.name || awayAbbr || awayTeamId || "AWAY";
+  const homeName = homeTeam?.name || homeTeam?.full_name || homeTeam?.display_name || homeAbbr || "HOME";
+  const awayName = awayTeam?.name || awayTeam?.full_name || awayTeam?.display_name || awayAbbr || "AWAY";
 
   const homeScore =
-    typeof homeTeam?.score === "number"
-      ? homeTeam.score
-      : typeof g?.homeScore === "number"
-        ? g.homeScore
-        : null;
+    typeof homeTeam?.score === "number" ? homeTeam.score :
+    typeof g?.homeScore === "number" ? g.homeScore :
+    typeof g?.home_team_score === "number" ? g.home_team_score :
+    typeof g?.home_score === "number" ? g.home_score : null;
 
   const awayScore =
-    typeof awayTeam?.score === "number"
-      ? awayTeam.score
-      : typeof g?.awayScore === "number"
-        ? g.awayScore
-        : null;
+    typeof awayTeam?.score === "number" ? awayTeam.score :
+    typeof g?.awayScore === "number" ? g.awayScore :
+    typeof g?.away_team_score === "number" ? g.away_team_score :
+    typeof g?.away_score === "number" ? g.away_score : null;
+
+  const date = g?.date || g?.start_time || g?.startTime || "";
+  const status = g?.status || g?.state || "";
 
   return {
-    id: g?.id || g?.gameId || `${awayAbbr}-${homeAbbr}-${g?.date || ""}`,
-    date: g?.date || "",
-    status: g?.status || "",
-    home: { teamId: homeTeamId, abbr: homeAbbr, name: homeName, score: homeScore },
-    away: { teamId: awayTeamId, abbr: awayAbbr, name: awayName, score: awayScore },
+    id: g?.id || g?.gameId || `${awayAbbr}-${homeAbbr}-${date || ""}`,
+    date,
+    status,
+    home: { teamId: homeTeamId, abbr: String(homeAbbr || "").toUpperCase(), name: homeName, score: homeScore },
+    away: { teamId: awayTeamId, abbr: String(awayAbbr || "").toUpperCase(), name: awayName, score: awayScore },
+  };
+}
+
+function normalizePredictionRow(p) {
+  const home = p?.home || {};
+  const away = p?.away || {};
+  const pred = p?.prediction || p || {};
+  const conf = pred?.confidence ?? p?.confidence ?? null;
+
+  return {
+    gameId: p?.gameId || p?.id || `${away.abbr}-${home.abbr}-${p?.date || ""}`,
+    status: p?.status || "",
+    date: p?.date || "",
+    home: {
+      id: home?.id || p?.homeTeamId || "",
+      abbr: home?.abbr || stripPrefix(home?.id || p?.homeTeamId || ""),
+      name: home?.name || home?.abbr || "",
+    },
+    away: {
+      id: away?.id || p?.awayTeamId || "",
+      abbr: away?.abbr || stripPrefix(away?.id || p?.awayTeamId || ""),
+      name: away?.name || away?.abbr || "",
+    },
+    winnerTeamId: pred?.winnerTeamId || "",
+    winnerName: pred?.winnerName || "",
+    confidence: conf,
   };
 }
 
 export default function Predict({ league = "nba" }) {
   const { league: routeLeague } = useParams();
   const activeLeague = String(routeLeague || league || "nba").toLowerCase();
+  const isNcaam = activeLeague === "ncaam";
 
   const [date, setDate] = useState(() => todayUTCYYYYMMDD());
   const [windowDays, setWindowDays] = useState(() => {
@@ -258,7 +288,11 @@ export default function Predict({ league = "nba" }) {
 
   const leagueLabel = useMemo(() => String(activeLeague).toUpperCase(), [activeLeague]);
 
-  // Load predictions OR games depending on tab
+  useEffect(() => {
+    if (isNcaam && view === "predictions") setView("games");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNcaam]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -268,65 +302,52 @@ export default function Predict({ league = "nba" }) {
 
       try {
         if (view === "games") {
-          // ✅ clear stale predictions state
           setPredPayload(null);
 
-          const url = `/api/${activeLeague}/games?date=${encodeURIComponent(date)}&expand=teams`;
-          const res = await fetch(url);
+          const url = isNcaam
+            ? `/api/ncaam/games?date=${encodeURIComponent(date)}&expand=teams`
+            : `/api/${activeLeague}/games?date=${encodeURIComponent(date)}&expand=teams`;
 
+          const res = await fetch(url);
           if (!res.ok) {
-            let extra = "";
-            try {
-              const j = await res.json();
-              if (j?.error) extra = ` — ${j.error}`;
-            } catch {}
+            const text = await res.text().catch(() => "");
             if (!cancelled) {
-              setError(`API error: ${res.status}${extra}`);
+              setError(`API error: ${res.status}${text ? ` — ${text}` : ""}`);
               setGamesPayload(null);
             }
             return;
           }
 
           const data = await res.json();
-          const normalized = Array.isArray(data) ? data : [];
+          const normalized = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
           if (!cancelled) setGamesPayload(normalized);
           return;
         }
 
-        // view === "predictions"
-        // ✅ clear stale games state
         setGamesPayload(null);
 
-        const url = `/api/${activeLeague}/predict?date=${encodeURIComponent(date)}&window=${encodeURIComponent(
-          windowDays
-        )}`;
+        if (isNcaam) {
+          if (!cancelled) {
+            setPredPayload({ meta: { league: activeLeague, date, windowDays }, predictions: [] });
+            setError("Predictions are not available for NCAAM yet. Switch to Games for the slate.");
+          }
+          return;
+        }
+
+        const url = `/api/${activeLeague}/predict?date=${encodeURIComponent(date)}&window=${encodeURIComponent(windowDays)}`;
         const res = await fetch(url);
 
         if (!res.ok) {
-          let extra = "";
-          try {
-            const j = await res.json();
-            if (j?.error) extra = ` — ${j.error}`;
-          } catch {}
+          const text = await res.text().catch(() => "");
           if (!cancelled) {
-            setError(`API error: ${res.status}${extra}`);
+            setError(`API error: ${res.status}${text ? ` — ${text}` : ""}`);
             setPredPayload(null);
           }
           return;
         }
 
         const data = await res.json();
-
-        let normalized;
-        if (Array.isArray(data)) {
-          normalized = { meta: { league: activeLeague, date, windowDays }, predictions: data };
-        } else if (data && typeof data === "object") {
-          normalized = data;
-        } else {
-          normalized = { meta: { league: activeLeague, date, windowDays }, predictions: [] };
-        }
-
-        if (!cancelled) setPredPayload(normalized);
+        if (!cancelled) setPredPayload(data);
       } catch (e) {
         if (!cancelled) {
           setError(e?.message || "Failed to load");
@@ -342,55 +363,28 @@ export default function Predict({ league = "nba" }) {
     return () => {
       cancelled = true;
     };
-  }, [activeLeague, date, windowDays, view]);
+  }, [activeLeague, date, windowDays, view, isNcaam]);
 
-  // Predictions derived
-  const meta = predPayload?.meta ?? predPayload ?? {};
-  const predictions = Array.isArray(predPayload?.predictions)
-    ? predPayload.predictions
-    : Array.isArray(predPayload?.data)
-      ? predPayload.data
-      : [];
-
-  const model = meta?.model ?? "Elo";
-  const note = meta?.note ?? "";
-
-  const historyFetched =
-    meta?.historyGamesFetched ??
-    meta?.historyMatchupsFetched ??
-    meta?.historyFetched ??
-    null;
-
-  const withScores =
-    meta?.historyGamesWithScores ??
-    meta?.matchupsWithScores ??
-    meta?.historyWithScores ??
-    null;
+  const meta = predPayload?.meta ?? {};
+  const predictionsRaw = Array.isArray(predPayload?.predictions) ? predPayload.predictions : [];
+  const predictions = useMemo(() => predictionsRaw.map(normalizePredictionRow), [predictionsRaw]);
 
   const sorted = useMemo(() => {
     const arr = [...predictions];
-    arr.sort((a, b) => {
-      const ac = Number(a?.prediction?.confidence ?? a?.confidence);
-      const bc = Number(b?.prediction?.confidence ?? b?.confidence);
-      return (Number.isFinite(bc) ? bc : -1) - (Number.isFinite(ac) ? ac : -1);
-    });
+    arr.sort((a, b) => (Number(b.confidence) || -1) - (Number(a.confidence) || -1));
     return arr;
   }, [predictions]);
 
   const top3 = sorted.slice(0, 3);
 
-  // Games derived
   const games = useMemo(() => {
     const rows = Array.isArray(gamesPayload) ? gamesPayload : [];
     const normalized = rows.map((g) => normalizeGame(activeLeague, g));
-
-    // sort by tip time if present; otherwise by date
     normalized.sort((a, b) => {
       const ad = new Date(a.status || a.date || 0).getTime();
       const bd = new Date(b.status || b.date || 0).getTime();
       return ad - bd;
     });
-
     return normalized;
   }, [gamesPayload, activeLeague]);
 
@@ -402,10 +396,7 @@ export default function Predict({ league = "nba" }) {
     color: "rgba(255,255,255,0.92)",
   };
 
-  const shell = {
-    maxWidth: 1120,
-    margin: "0 auto",
-  };
+  const shell = { maxWidth: 1120, margin: "0 auto" };
 
   const card = {
     borderRadius: 16,
@@ -420,27 +411,20 @@ export default function Predict({ league = "nba" }) {
     background: "rgba(255,255,255,0.03)",
   };
 
-  const linkStyle = {
-    textDecoration: "none",
-    color: "inherit",
-  };
-
-  // ✅ RECOMMENDED: canonical hub link (optional but useful)
   const hubUrl = `/league/${activeLeague}/hub`;
+
+  const segmentedOptions = isNcaam
+    ? [{ value: "games", label: "Games" }]
+    : [
+        { value: "games", label: "Games" },
+        { value: "predictions", label: "Predictions" },
+      ];
 
   return (
     <div style={pageBg}>
       <div style={shell}>
         {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 14,
-            alignItems: "flex-end",
-            flexWrap: "wrap",
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
               <span
@@ -448,15 +432,17 @@ export default function Predict({ league = "nba" }) {
                   width: 10,
                   height: 10,
                   borderRadius: 999,
-                  background: activeLeague === "nhl" ? "rgba(64,195,138,0.9)" : "rgba(80,180,220,0.9)",
+                  background:
+                    activeLeague === "nhl"
+                      ? "rgba(64,195,138,0.9)"
+                      : activeLeague === "ncaam"
+                        ? "rgba(255, 107, 107, 0.9)"
+                        : "rgba(80,180,220,0.9)",
                   boxShadow: "0 0 0 6px rgba(255,255,255,0.04)",
                 }}
               />
-              <div style={{ fontSize: 12, letterSpacing: 0.2, opacity: 0.75, fontWeight: 800 }}>
-                {leagueLabel}
-              </div>
+              <div style={{ fontSize: 12, letterSpacing: 0.2, opacity: 0.75, fontWeight: 800 }}>{leagueLabel}</div>
 
-              {/* ✅ tiny hub shortcut so the hub is discoverable */}
               <Link
                 to={hubUrl}
                 style={{
@@ -479,37 +465,22 @@ export default function Predict({ league = "nba" }) {
             <h1 style={{ margin: 0, fontSize: 26, letterSpacing: 0.2 }}>Games & Predictions</h1>
 
             <div style={{ fontSize: 13, opacity: 0.70 }}>
-              {view === "games"
-                ? "Date-based slate (clean games list)."
-                : "Date-based slate + model picks (future dates supported)."}
+              {view === "games" ? "Date-based slate (clean games list)." : "Date-based slate + model picks."}
             </div>
           </div>
 
-          <Segmented
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "games", label: "Games" },
-              { value: "predictions", label: "Predictions" },
-            ]}
-          />
+          <Segmented value={view} onChange={setView} options={segmentedOptions} />
         </div>
 
         {/* Controls */}
         <div style={{ marginTop: 16, ...card, padding: 14 }}>
-          <div
-            style={{
-              display: "flex",
-              gap: 12,
-              flexWrap: "wrap",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <label htmlFor="predict-date" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ fontSize: 12, opacity: 0.70, fontWeight: 800 }}>Date</span>
                 <input
+                  id="predict-date"
+                  name="predictDate"
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
@@ -523,11 +494,12 @@ export default function Predict({ league = "nba" }) {
                 />
               </label>
 
-              {/* Window only matters for Predictions */}
-              {view === "predictions" && (
-                <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {!isNcaam && view === "predictions" && (
+                <label htmlFor="predict-window" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 12, opacity: 0.70, fontWeight: 800 }}>Window</span>
                   <select
+                    id="predict-window"
+                    name="predictWindow"
                     value={windowDays}
                     onChange={(e) => setWindowDays(Number(e.target.value))}
                     style={{
@@ -554,15 +526,7 @@ export default function Predict({ league = "nba" }) {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.60 }}>
-              {loading
-                ? "Loading…"
-                : view === "games"
-                  ? games.length
-                    ? `${games.length} games`
-                    : "—"
-                  : sorted.length
-                    ? `${sorted.length} games`
-                    : "—"}
+              {loading ? "Loading…" : view === "games" ? (games.length ? `${games.length} games` : "—") : (sorted.length ? `${sorted.length} picks` : "—")}
             </div>
           </div>
         </div>
@@ -576,15 +540,10 @@ export default function Predict({ league = "nba" }) {
 
         {/* CONTENT */}
         {view === "games" ? (
-          // =========================
-          // GAMES VIEW (premium list)
-          // =========================
           <div style={{ marginTop: 16, ...card, padding: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
               <div style={{ fontWeight: 900 }}>Games</div>
-              <div style={{ fontSize: 12, opacity: 0.60 }}>
-                {games.length ? `${games.length} scheduled` : ""}
-              </div>
+              <div style={{ fontSize: 12, opacity: 0.60 }}>{games.length ? `${games.length} scheduled` : ""}</div>
             </div>
 
             {!loading && !error && games.length === 0 && (
@@ -595,7 +554,6 @@ export default function Predict({ league = "nba" }) {
 
             <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
               {games.map((g) => {
-                // ✅ NHL "FUT" won't parse; status time only if it parses, else fall back to date
                 const tip = formatTipTime(g.status) || formatTipTime(g.date);
                 const hasScores = typeof g.home.score === "number" || typeof g.away.score === "number";
 
@@ -603,12 +561,12 @@ export default function Predict({ league = "nba" }) {
                 const homeUrl = teamHref(activeLeague, g.home.teamId);
 
                 return (
-                  <div key={g.id} style={{ ...subcard, padding: 12 }}>
+                  <div key={g.id} style={{ borderRadius: 14, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.03)", padding: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
                       <div style={{ display: "grid", gap: 6 }}>
                         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                           {awayUrl ? (
-                            <Link to={awayUrl} style={linkStyle} title="Open team page">
+                            <Link to={awayUrl} style={{ textDecoration: "none", color: "inherit" }} title="Open team page">
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <TeamAvatar league={activeLeague} abbr={g.away.abbr} name={g.away.name} />
                                 <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{g.away.abbr}</div>
@@ -624,7 +582,7 @@ export default function Predict({ league = "nba" }) {
                           <div style={{ opacity: 0.65, fontWeight: 800 }}>@</div>
 
                           {homeUrl ? (
-                            <Link to={homeUrl} style={linkStyle} title="Open team page">
+                            <Link to={homeUrl} style={{ textDecoration: "none", color: "inherit" }} title="Open team page">
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{g.home.abbr}</div>
                                 <TeamAvatar league={activeLeague} abbr={g.home.abbr} name={g.home.name} />
@@ -677,17 +635,7 @@ export default function Predict({ league = "nba" }) {
             </div>
           </div>
         ) : (
-          // =========================
-          // PREDICTIONS VIEW (premium layout)
-          // =========================
-          <div
-            style={{
-              marginTop: 16,
-              display: "grid",
-              gridTemplateColumns: "1fr 340px",
-              gap: 14,
-            }}
-          >
+          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 340px", gap: 14 }}>
             {/* LEFT */}
             <div style={{ display: "grid", gap: 14 }}>
               {/* Top Picks */}
@@ -704,194 +652,81 @@ export default function Predict({ league = "nba" }) {
                 )}
 
                 <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                  {top3.map((p, idx) => {
-                    const homeAbbr = p.home?.abbr || p.homeTeam?.abbr || stripPrefix(p.homeTeamId);
-                    const awayAbbr = p.away?.abbr || p.awayTeam?.abbr || stripPrefix(p.awayTeamId);
-
-                    const homeTeamId = p.home?.id || p.homeTeamId || "";
-                    const awayTeamId = p.away?.id || p.awayTeamId || "";
-
-                    const homeName = p.home?.name || homeAbbr;
-                    const awayName = p.away?.name || awayAbbr;
-
-                    const winnerName = p.prediction?.winnerName || "—";
-                    const conf = p.prediction?.confidence ?? p.confidence;
-
-                    const awayUrl = teamHref(activeLeague, awayTeamId);
-                    const homeUrl = teamHref(activeLeague, homeTeamId);
-
-                    return (
-                      <div key={p.gameId || `${awayAbbr}-${homeAbbr}-${p.date}-${idx}`} style={{ ...subcard, padding: 12 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                          <div style={{ display: "grid", gap: 6 }}>
-                            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                              <span
-                                style={{
-                                  fontSize: 12,
-                                  fontWeight: 900,
-                                  padding: "3px 10px",
-                                  borderRadius: 999,
-                                  border: "1px solid rgba(255,255,255,0.12)",
-                                  background: "rgba(80,180,220,0.12)",
-                                  opacity: 0.95,
-                                }}
-                              >
-                                #{idx + 1}
-                              </span>
-
-                              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                                {awayUrl ? (
-                                  <Link to={awayUrl} style={linkStyle} title="Open team page">
-                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                      <TeamAvatar league={activeLeague} abbr={awayAbbr} name={awayName} />
-                                      <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{awayAbbr}</div>
-                                    </div>
-                                  </Link>
-                                ) : (
-                                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                    <TeamAvatar league={activeLeague} abbr={awayAbbr} name={awayName} />
-                                    <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{awayAbbr}</div>
-                                  </div>
-                                )}
-
-                                <div style={{ opacity: 0.65, fontWeight: 800 }}>@</div>
-
-                                {homeUrl ? (
-                                  <Link to={homeUrl} style={linkStyle} title="Open team page">
-                                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                      <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{homeAbbr}</div>
-                                      <TeamAvatar league={activeLeague} abbr={homeAbbr} name={homeName} />
-                                    </div>
-                                  </Link>
-                                ) : (
-                                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                                    <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{homeAbbr}</div>
-                                    <TeamAvatar league={activeLeague} abbr={homeAbbr} name={homeName} />
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            <div style={{ fontSize: 12, opacity: 0.65 }}>
-                              {formatTipTime(p.status) || formatTipTime(p.date)} {p.status ? `• ${p.status}` : ""}
-                            </div>
-
-                            <div style={{ fontSize: 13, opacity: 0.90 }}>
-                              <b>Pick:</b>{" "}
-                              <span
-                                style={{
-                                  padding: "3px 10px",
-                                  borderRadius: 999,
-                                  border: "1px solid rgba(255,255,255,0.10)",
-                                  background: "rgba(0,0,0,0.20)",
-                                }}
-                              >
-                                {winnerName}
-                              </span>
-                            </div>
+                  {top3.map((p) => (
+                    <div key={p.gameId} style={{ ...subcard, padding: 12, display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <TeamAvatar league={activeLeague} abbr={p.away.abbr} name={p.away.name} />
+                            <div style={{ fontWeight: 950 }}>{p.away.abbr}</div>
                           </div>
+                          <div style={{ opacity: 0.65, fontWeight: 800 }}>@</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ fontWeight: 950 }}>{p.home.abbr}</div>
+                            <TeamAvatar league={activeLeague} abbr={p.home.abbr} name={p.home.name} />
+                          </div>
+                        </div>
 
-                          <Meter conf={conf} />
+                        <div style={{ fontSize: 12, opacity: 0.70 }}>
+                          Pick:{" "}
+                          <b style={{ opacity: 0.95 }}>
+                            {p.winnerName || (p.winnerTeamId === p.home.id ? p.home.abbr : p.away.abbr)}
+                          </b>
+                          {p.status ? <span style={{ opacity: 0.7 }}> • {String(p.status)}</span> : null}
                         </div>
                       </div>
-                    );
-                  })}
+
+                      <Meter conf={p.confidence} />
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              {/* All Predictions */}
+              {/* All Picks */}
               <div style={{ ...card, padding: 14 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                  <div style={{ fontWeight: 900 }}>All Predictions</div>
+                  <div style={{ fontWeight: 900 }}>All Picks</div>
                   <div style={{ fontSize: 12, opacity: 0.60 }}>{sorted.length ? `${sorted.length} games` : ""}</div>
                 </div>
 
                 <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                  {sorted.map((p, idx) => {
-                    const homeAbbr = p.home?.abbr || p.homeTeam?.abbr || stripPrefix(p.homeTeamId);
-                    const awayAbbr = p.away?.abbr || p.awayTeam?.abbr || stripPrefix(p.awayTeamId);
-
-                    const homeTeamId = p.home?.id || p.homeTeamId || "";
-                    const awayTeamId = p.away?.id || p.awayTeamId || "";
-
-                    const homeName = p.home?.name || homeAbbr;
-                    const awayName = p.away?.name || awayAbbr;
-
-                    const winnerName = p.prediction?.winnerName || "—";
-                    const conf = p.prediction?.confidence ?? p.confidence;
-
-                    const awayUrl = teamHref(activeLeague, awayTeamId);
-                    const homeUrl = teamHref(activeLeague, homeTeamId);
-
-                    return (
-                      <div key={p.gameId || `${awayAbbr}-${homeAbbr}-${p.date}-${idx}`} style={{ ...subcard, padding: 12 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                            {awayUrl ? (
-                              <Link to={awayUrl} style={linkStyle} title="Open team page">
-                                <TeamAvatar league={activeLeague} abbr={awayAbbr} name={awayName} />
-                              </Link>
-                            ) : (
-                              <TeamAvatar league={activeLeague} abbr={awayAbbr} name={awayName} />
-                            )}
-
-                            <div style={{ display: "grid", gap: 4 }}>
-                              <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>
-                                {awayAbbr} <span style={{ opacity: 0.65 }}>@</span> {homeAbbr}
-                              </div>
-                              <div style={{ fontSize: 12, opacity: 0.65 }}>
-                                {formatTipTime(p.status) || formatTipTime(p.date)} {p.status ? `• ${p.status}` : ""}
-                              </div>
-                            </div>
-
-                            {homeUrl ? (
-                              <Link to={homeUrl} style={linkStyle} title="Open team page">
-                                <TeamAvatar league={activeLeague} abbr={homeAbbr} name={homeName} />
-                              </Link>
-                            ) : (
-                              <TeamAvatar league={activeLeague} abbr={homeAbbr} name={homeName} />
-                            )}
+                  {sorted.map((p) => (
+                    <div key={p.gameId} style={{ ...subcard, padding: 12, display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
+                      <div style={{ display: "grid", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <TeamAvatar league={activeLeague} abbr={p.away.abbr} name={p.away.name} />
+                            <div style={{ fontWeight: 950 }}>{p.away.abbr}</div>
                           </div>
-
-                          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                            <span
-                              style={{
-                                fontSize: 12,
-                                fontWeight: 900,
-                                padding: "6px 10px",
-                                borderRadius: 999,
-                                border: "1px solid rgba(255,255,255,0.10)",
-                                background: "rgba(0,0,0,0.20)",
-                              }}
-                            >
-                              Pick {winnerName?.split(" ")?.[0] || winnerName}
-                            </span>
-                            <Meter conf={conf} />
+                          <div style={{ opacity: 0.65, fontWeight: 800 }}>@</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ fontWeight: 950 }}>{p.home.abbr}</div>
+                            <TeamAvatar league={activeLeague} abbr={p.home.abbr} name={p.home.name} />
                           </div>
                         </div>
 
-                        {p.prediction?.factors && (
-                          <details style={{ marginTop: 10, opacity: 0.95 }}>
-                            <summary style={{ cursor: "pointer", opacity: 0.85 }}>Why (factors)</summary>
-                            <pre style={{ marginTop: 8, fontSize: 12, whiteSpace: "pre-wrap", opacity: 0.9 }}>
-                              {JSON.stringify(p.prediction.factors, null, 2)}
-                            </pre>
-                          </details>
-                        )}
+                        <div style={{ fontSize: 12, opacity: 0.70 }}>
+                          Pick:{" "}
+                          <b style={{ opacity: 0.95 }}>
+                            {p.winnerName || (p.winnerTeamId === p.home.id ? p.home.abbr : p.away.abbr)}
+                          </b>
+                        </div>
                       </div>
-                    );
-                  })}
+
+                      <Meter conf={p.confidence} />
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
 
-            {/* RIGHT: Model panel */}
+            {/* RIGHT */}
             <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
               <div style={{ ...card, padding: 14, position: "sticky", top: 16 }}>
                 <div style={{ fontWeight: 950 }}>Model</div>
                 <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
                   <div>
-                    <b>Model:</b> {model}
+                    <b>Model:</b> {meta?.model ?? "Elo"}
                   </div>
                   <div>
                     <b>League:</b> {leagueLabel}
@@ -899,28 +734,17 @@ export default function Predict({ league = "nba" }) {
                   <div>
                     <b>Window:</b> {windowDays}d
                   </div>
-                  {historyFetched != null && (
+                  {meta?.historyGamesFetched != null && (
                     <div>
-                      <b>Samples:</b> {historyFetched}
+                      <b>Samples:</b> {meta.historyGamesFetched}
                     </div>
                   )}
-                  {withScores != null && (
+                  {meta?.historyGamesWithScores != null && (
                     <div>
-                      <b>With scores:</b> {withScores}
+                      <b>With scores:</b> {meta.historyGamesWithScores}
                     </div>
                   )}
-                  {note && <div style={{ marginTop: 10, opacity: 0.75 }}>{note}</div>}
-                </div>
-
-                <div style={{ marginTop: 12, ...subcard, padding: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.85 }}>Future date behavior</div>
-                  <div style={{ fontSize: 12, opacity: 0.70, marginTop: 6 }}>
-                    Predictions for <b>{leagueLabel}</b> on <b>{date}</b> use history from the prior <b>{windowDays}d</b>.
-                  </div>
-                </div>
-
-                <div style={{ marginTop: 12, fontSize: 12, opacity: 0.60 }}>
-                  Tip: if a logo doesn’t load, ESPN may not match the abbreviation. We can add a local override map next.
+                  {meta?.note && <div style={{ marginTop: 10, opacity: 0.75 }}>{meta.note}</div>}
                 </div>
               </div>
             </div>

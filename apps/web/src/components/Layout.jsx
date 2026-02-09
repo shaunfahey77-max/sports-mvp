@@ -1,7 +1,7 @@
 // apps/web/src/components/Layout.jsx
 import { NavLink } from "react-router-dom";
 
-export default function Layout({ children, showSuperBowl = false }) {
+export default function Layout({ children }) {
   return (
     <div className="app">
       <header className="topbar">
@@ -10,7 +10,7 @@ export default function Layout({ children, showSuperBowl = false }) {
             <span className="logoDot" aria-hidden="true" />
             <div className="brandText">
               <div className="brandName">Sports MVP</div>
-              <div className="brandTag">NBA • NHL predictions</div>
+              <div className="brandTag">NBA • NHL • NCAAM</div>
             </div>
           </div>
 
@@ -27,6 +27,10 @@ export default function Layout({ children, showSuperBowl = false }) {
               NHL
             </NavLink>
 
+            <NavLink to="/league/ncaam" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
+              NCAAM
+            </NavLink>
+
             <NavLink to="/parlay-lab" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
               Parlay Lab
             </NavLink>
@@ -34,12 +38,6 @@ export default function Layout({ children, showSuperBowl = false }) {
             <NavLink to="/upsets" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
               Upset Watch
             </NavLink>
-
-            {showSuperBowl ? (
-              <NavLink to="/superbowl" className={({ isActive }) => `navLink ${isActive ? "active" : ""}`}>
-                Super Bowl
-              </NavLink>
-            ) : null}
           </nav>
         </div>
       </header>
