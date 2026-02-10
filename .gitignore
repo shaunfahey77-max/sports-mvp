@@ -15,3 +15,7 @@ node_modules/
 dist/
 build/
 .vite/
+
+# WIP (do not commit yet)
+apps/api/src/core/
+apps/api/src/engines/
