@@ -212,23 +212,43 @@ function normalizeGame(activeLeague, g) {
   const homeTeamId = homeTeam?.id || g?.homeTeamId || g?.home_team_id || "";
   const awayTeamId = awayTeam?.id || g?.awayTeamId || g?.away_team_id || "";
 
-  const homeAbbr = homeTeam?.abbr || homeTeam?.abbreviation || homeTeam?.code || homeTeam?.short_name || stripPrefix(homeTeamId);
-  const awayAbbr = awayTeam?.abbr || awayTeam?.abbreviation || awayTeam?.code || awayTeam?.short_name || stripPrefix(awayTeamId);
+  const homeAbbr =
+    homeTeam?.abbr ||
+    homeTeam?.abbreviation ||
+    homeTeam?.code ||
+    homeTeam?.short_name ||
+    stripPrefix(homeTeamId);
+  const awayAbbr =
+    awayTeam?.abbr ||
+    awayTeam?.abbreviation ||
+    awayTeam?.code ||
+    awayTeam?.short_name ||
+    stripPrefix(awayTeamId);
 
   const homeName = homeTeam?.name || homeTeam?.full_name || homeTeam?.display_name || homeAbbr || "HOME";
   const awayName = awayTeam?.name || awayTeam?.full_name || awayTeam?.display_name || awayAbbr || "AWAY";
 
   const homeScore =
-    typeof homeTeam?.score === "number" ? homeTeam.score :
-    typeof g?.homeScore === "number" ? g.homeScore :
-    typeof g?.home_team_score === "number" ? g.home_team_score :
-    typeof g?.home_score === "number" ? g.home_score : null;
+    typeof homeTeam?.score === "number"
+      ? homeTeam.score
+      : typeof g?.homeScore === "number"
+        ? g.homeScore
+        : typeof g?.home_team_score === "number"
+          ? g.home_team_score
+          : typeof g?.home_score === "number"
+            ? g.home_score
+            : null;
 
   const awayScore =
-    typeof awayTeam?.score === "number" ? awayTeam.score :
-    typeof g?.awayScore === "number" ? g.awayScore :
-    typeof g?.away_team_score === "number" ? g.away_team_score :
-    typeof g?.away_score === "number" ? g.away_score : null;
+    typeof awayTeam?.score === "number"
+      ? awayTeam.score
+      : typeof g?.awayScore === "number"
+        ? g.awayScore
+        : typeof g?.away_team_score === "number"
+          ? g.away_team_score
+          : typeof g?.away_score === "number"
+            ? g.away_score
+            : null;
 
   const date = g?.date || g?.start_time || g?.startTime || "";
   const status = g?.status || g?.state || "";
@@ -271,12 +291,11 @@ function normalizePredictionRow(p) {
 export default function Predict({ league = "nba" }) {
   const { league: routeLeague } = useParams();
   const activeLeague = String(routeLeague || league || "nba").toLowerCase();
-  const isNcaam = activeLeague === "ncaam";
 
   const [date, setDate] = useState(() => todayUTCYYYYMMDD());
   const [windowDays, setWindowDays] = useState(() => {
     const env = Number(import.meta?.env?.VITE_PREDICTIONS_WINDOW);
-    return Number.isFinite(env) ? env : 5;
+    return Number.isFinite(env) ? env : 14; // ✅ better default for premium models
   });
   const [view, setView] = useState("predictions"); // "games" | "predictions"
 
@@ -289,11 +308,6 @@ export default function Predict({ league = "nba" }) {
   const leagueLabel = useMemo(() => String(activeLeague).toUpperCase(), [activeLeague]);
 
   useEffect(() => {
-    if (isNcaam && view === "predictions") setView("games");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isNcaam]);
-
-  useEffect(() => {
     let cancelled = false;
 
     async function load() {
@@ -304,9 +318,10 @@ export default function Predict({ league = "nba" }) {
         if (view === "games") {
           setPredPayload(null);
 
-          const url = isNcaam
-            ? `/api/ncaam/games?date=${encodeURIComponent(date)}&expand=teams`
-            : `/api/${activeLeague}/games?date=${encodeURIComponent(date)}&expand=teams`;
+          const url =
+            activeLeague === "ncaam"
+              ? `/api/ncaam/games?date=${encodeURIComponent(date)}&expand=teams`
+              : `/api/${activeLeague}/games?date=${encodeURIComponent(date)}&expand=teams`;
 
           const res = await fetch(url);
           if (!res.ok) {
@@ -324,15 +339,8 @@ export default function Predict({ league = "nba" }) {
           return;
         }
 
+        // ✅ Predictions now supported for ALL leagues (including NCAAM)
         setGamesPayload(null);
-
-        if (isNcaam) {
-          if (!cancelled) {
-            setPredPayload({ meta: { league: activeLeague, date, windowDays }, predictions: [] });
-            setError("Predictions are not available for NCAAM yet. Switch to Games for the slate.");
-          }
-          return;
-        }
 
         const url = `/api/${activeLeague}/predict?date=${encodeURIComponent(date)}&window=${encodeURIComponent(windowDays)}`;
         const res = await fetch(url);
@@ -363,7 +371,7 @@ export default function Predict({ league = "nba" }) {
     return () => {
       cancelled = true;
     };
-  }, [activeLeague, date, windowDays, view, isNcaam]);
+  }, [activeLeague, date, windowDays, view]);
 
   const meta = predPayload?.meta ?? {};
   const predictionsRaw = Array.isArray(predPayload?.predictions) ? predPayload.predictions : [];
@@ -413,12 +421,11 @@ export default function Predict({ league = "nba" }) {
 
   const hubUrl = `/league/${activeLeague}/hub`;
 
-  const segmentedOptions = isNcaam
-    ? [{ value: "games", label: "Games" }]
-    : [
-        { value: "games", label: "Games" },
-        { value: "predictions", label: "Predictions" },
-      ];
+  // ✅ Always show Predictions toggle (NCAAM now supported)
+  const segmentedOptions = [
+    { value: "games", label: "Games" },
+    { value: "predictions", label: "Predictions" },
+  ];
 
   return (
     <div style={pageBg}>
@@ -465,7 +472,7 @@ export default function Predict({ league = "nba" }) {
             <h1 style={{ margin: 0, fontSize: 26, letterSpacing: 0.2 }}>Games & Predictions</h1>
 
             <div style={{ fontSize: 13, opacity: 0.70 }}>
-              {view === "games" ? "Date-based slate (clean games list)." : "Date-based slate + model picks."}
+              {view === "games" ? "Date-based slate (clean games list)." : "Date-based slate + premium model picks (PASS discipline)."}
             </div>
           </div>
 
@@ -494,7 +501,7 @@ export default function Predict({ league = "nba" }) {
                 />
               </label>
 
-              {!isNcaam && view === "predictions" && (
+              {view === "predictions" && (
                 <label htmlFor="predict-window" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 12, opacity: 0.70, fontWeight: 800 }}>Window</span>
                   <select
@@ -511,7 +518,7 @@ export default function Predict({ league = "nba" }) {
                       fontWeight: 800,
                     }}
                   >
-                    {[3, 5, 7, 10, 14].map((d) => (
+                    {[7, 10, 14, 21, 30, 45].map((d) => (
                       <option key={d} value={d}>
                         {d} days
                       </option>
@@ -526,10 +533,26 @@ export default function Predict({ league = "nba" }) {
             </div>
 
             <div style={{ fontSize: 12, opacity: 0.60 }}>
-              {loading ? "Loading…" : view === "games" ? (games.length ? `${games.length} games` : "—") : (sorted.length ? `${sorted.length} picks` : "—")}
+              {loading
+                ? "Loading…"
+                : view === "games"
+                  ? games.length
+                    ? `${games.length} games`
+                    : "—"
+                  : sorted.length
+                    ? `${sorted.length} picks`
+                    : "—"}
             </div>
           </div>
         </div>
+
+        {/* Meta note (e.g., NHL Olympics pause) */}
+        {view === "predictions" && meta?.note && (
+          <div style={{ marginTop: 14, ...card, padding: 14 }}>
+            <div style={{ fontWeight: 900 }}>Note</div>
+            <div style={{ marginTop: 6, opacity: 0.85 }}>{meta.note}</div>
+          </div>
+        )}
 
         {error && (
           <div style={{ marginTop: 14, ...card, padding: 14, borderColor: "rgba(255,107,107,0.30)" }}>
@@ -561,7 +584,15 @@ export default function Predict({ league = "nba" }) {
                 const homeUrl = teamHref(activeLeague, g.home.teamId);
 
                 return (
-                  <div key={g.id} style={{ borderRadius: 14, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.03)", padding: 12 }}>
+                  <div
+                    key={g.id}
+                    style={{
+                      borderRadius: 14,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: "rgba(255,255,255,0.03)",
+                      padding: 12,
+                    }}
+                  >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
                       <div style={{ display: "grid", gap: 6 }}>
                         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -653,7 +684,17 @@ export default function Predict({ league = "nba" }) {
 
                 <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                   {top3.map((p) => (
-                    <div key={p.gameId} style={{ ...subcard, padding: 12, display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
+                    <div
+                      key={p.gameId}
+                      style={{
+                        ...subcard,
+                        padding: 12,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 14,
+                        alignItems: "center",
+                      }}
+                    >
                       <div style={{ display: "grid", gap: 6 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -691,7 +732,17 @@ export default function Predict({ league = "nba" }) {
 
                 <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                   {sorted.map((p) => (
-                    <div key={p.gameId} style={{ ...subcard, padding: 12, display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center" }}>
+                    <div
+                      key={p.gameId}
+                      style={{
+                        ...subcard,
+                        padding: 12,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 14,
+                        alignItems: "center",
+                      }}
+                    >
                       <div style={{ display: "grid", gap: 6 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -726,7 +777,7 @@ export default function Predict({ league = "nba" }) {
                 <div style={{ fontWeight: 950 }}>Model</div>
                 <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85, lineHeight: 1.5 }}>
                   <div>
-                    <b>Model:</b> {meta?.model ?? "Elo"}
+                    <b>Model:</b> {meta?.model ?? "Premium"}
                   </div>
                   <div>
                     <b>League:</b> {leagueLabel}
@@ -739,9 +790,9 @@ export default function Predict({ league = "nba" }) {
                       <b>Samples:</b> {meta.historyGamesFetched}
                     </div>
                   )}
-                  {meta?.historyGamesWithScores != null && (
+                  {meta?.noPickCount != null && (
                     <div>
-                      <b>With scores:</b> {meta.historyGamesWithScores}
+                      <b>PASS:</b> {meta.noPickCount}
                     </div>
                   )}
                   {meta?.note && <div style={{ marginTop: 10, opacity: 0.75 }}>{meta.note}</div>}

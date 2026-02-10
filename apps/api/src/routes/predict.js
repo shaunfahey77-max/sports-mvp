@@ -18,7 +18,7 @@ const ESPN_NCAAM_PATH = "basketball/mens-college-basketball";
  * Cache
  */
 const CACHE_TTL_MS = 60_000;
-const HEAVY_CACHE_TTL_MS = 20 * 60_000; // heavier cache helps avoid repeat upstream hits
+const HEAVY_CACHE_TTL_MS = 20 * 60_000;
 const cache = new Map();
 
 function getCache(key) {
@@ -103,16 +103,17 @@ function safeNum(v) {
 }
 
 /**
- * Shared decision helpers (NO default-home)
+ * Premium decision helpers (NO default-home, PASS discipline)
+ * edge is a signed value where + means home lean.
  */
-function confidenceFromEdge(edge, edgeScale) {
+function confidenceFromEdge(edge, edgeScale, capLo = 0.52, capHi = 0.95) {
   if (!Number.isFinite(edge)) return 0.5;
   const p = 1 / (1 + Math.exp(-edge / edgeScale));
-  return clamp(p, 0.52, 0.97);
+  return clamp(p, capLo, capHi);
 }
-function pickFromEdge(edge, minEdgeForPick = 0.10) {
+function pickFromEdge(edge, minEdgeForPick) {
   if (!Number.isFinite(edge)) return { side: null, note: "invalid_edge" };
-  if (Math.abs(edge) < minEdgeForPick) return { side: null, note: "toss_up" };
+  if (Math.abs(edge) < minEdgeForPick) return { side: null, note: "pass_toss_up" };
   return { side: edge > 0 ? "home" : "away", note: "ok" };
 }
 
@@ -130,7 +131,8 @@ function toNcaamTeamId(espnTeamId) {
 }
 
 /* =========================================================
-   NBA — rate-limit safe: delay + retry + heavy cache
+   NBA — premium blended model (win% + margin + recent form + home adv)
+   Rate-limit safe: delay + retry + heavy cache
    ========================================================= */
 
 async function getNbaGamesByDate(dateYYYYMMDD) {
@@ -151,7 +153,7 @@ async function getNbaGamesByDate(dateYYYYMMDD) {
   });
 }
 
-// ✅ IMPORTANT: slow paging + multi retry on 429
+// slow paging + multi retry on 429
 const NBA_PAGE_DELAY_MS = 450;
 const NBA_429_RETRIES = 6;
 
@@ -166,8 +168,6 @@ async function fetchNbaPage(url) {
     } catch (e) {
       const msg = String(e?.message || e);
       if (!msg.includes("Upstream 429")) throw e;
-
-      // backoff: 0.6s, 1.2s, 2.4s, ...
       const backoff = 600 * Math.pow(2, attempt);
       await sleep(backoff);
     }
@@ -204,105 +204,153 @@ async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
   return all;
 }
 
-function buildNbaTeamStatsFromHistory(histRows, recentGames = 6) {
+function buildTeamStatsFromHistory_Generic(histRows, { recent5 = 5, recent10 = 10, idFn, scoreFn }) {
   const byTeamGames = new Map();
-
   function add(teamId, game) {
     if (!byTeamGames.has(teamId)) byTeamGames.set(teamId, []);
     byTeamGames.get(teamId).push(game);
   }
 
   for (const g of histRows) {
-    const hs = g?.home_team_score;
-    const as = g?.visitor_team_score;
-    if (typeof hs !== "number" || typeof as !== "number") continue;
-    if (hs === 0 && as === 0) continue;
+    const parsed = scoreFn(g);
+    if (!parsed) continue;
 
-    const homeAbbr = g?.home_team?.abbreviation;
-    const awayAbbr = g?.visitor_team?.abbreviation;
-    if (!homeAbbr || !awayAbbr) continue;
+    const { date, homeId, awayId, homeScore, awayScore } = parsed;
+    if (!homeId || !awayId) continue;
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+    if (homeScore === 0 && awayScore === 0) continue;
 
-    const homeId = toNbaTeamId(homeAbbr);
-    const awayId = toNbaTeamId(awayAbbr);
-    const date = String(g?.date || "").slice(0, 10);
-
-    add(homeId, { date, my: hs, opp: as });
-    add(awayId, { date, my: as, opp: hs });
+    add(homeId, { date, my: homeScore, opp: awayScore });
+    add(awayId, { date, my: awayScore, opp: homeScore });
   }
 
   const out = new Map();
-
   for (const [teamId, games] of byTeamGames.entries()) {
     games.sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
-    let played = 0, wins = 0, pf = 0, pa = 0;
+    const played = games.length;
+    if (!played) {
+      out.set(teamId, { ok: false });
+      continue;
+    }
+
+    let wins = 0, pf = 0, pa = 0;
     for (const g of games) {
-      played++;
       pf += g.my;
       pa += g.opp;
       if (g.my > g.opp) wins++;
     }
 
-    const recent = games.slice(0, recentGames);
-    let rPlayed = 0, rWins = 0;
-    for (const g of recent) {
-      rPlayed++;
-      if (g.my > g.opp) rWins++;
-    }
+    const recentN = (n) => {
+      const slice = games.slice(0, n);
+      if (!slice.length) return { played: 0, winPct: null, margin: null };
+      let w = 0, mp = 0;
+      for (const gg of slice) {
+        if (gg.my > gg.opp) w++;
+        mp += (gg.my - gg.opp);
+      }
+      return { played: slice.length, winPct: w / slice.length, margin: mp / slice.length };
+    };
 
-    if (played === 0) out.set(teamId, { ok: false });
-    else out.set(teamId, {
+    const r5 = recentN(recent5);
+    const r10 = recentN(recent10);
+
+    out.set(teamId, {
       ok: true,
+      played,
       winPct: wins / played,
       marginPerGame: (pf - pa) / played,
-      recentWinPct: rPlayed ? rWins / rPlayed : null,
-      withScores: played,
+      recent5: r5,
+      recent10: r10,
     });
   }
 
   return out;
 }
 
+// Premium blended edge for NBA: win% + season margin + recent 5/10 + small home adv
 function nbaEdge(home, away) {
   if (!home?.ok || !away?.ok) return NaN;
 
-  const wWin = 0.55;
-  const wMargin = 0.30;
-  const wRecent = 0.15;
+  // weights tuned to be stable + reduce bias
+  const wWin = 0.42;
+  const wMargin = 0.28;
+  const wR10 = 0.18;
+  const wR5 = 0.12;
 
   const winDiff = home.winPct - away.winPct;
-  const marginScaled = clamp((home.marginPerGame - away.marginPerGame) / 12, -1, 1);
-  const recentDiff = (safeNum(home.recentWinPct) ?? 0.5) - (safeNum(away.recentWinPct) ?? 0.5);
 
-  const homeAdv = 0.02;
-  return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
+  // scale margins to avoid extreme confidence (NBA typical +/-12 as a strong edge)
+  const marginScaled = clamp((home.marginPerGame - away.marginPerGame) / 12, -1, 1);
+
+  const r10Diff =
+    (safeNum(home.recent10?.winPct) ?? 0.5) - (safeNum(away.recent10?.winPct) ?? 0.5);
+
+  const r5MarginScaled = clamp(
+    ((safeNum(home.recent5?.margin) ?? 0) - (safeNum(away.recent5?.margin) ?? 0)) / 14,
+    -1,
+    1
+  );
+
+  const homeAdv = 0.018; // small — prevents “home bias”
+  return wWin * winDiff + wMargin * marginScaled + wR10 * r10Diff + wR5 * r5MarginScaled + homeAdv;
 }
 
 async function buildNbaPredictions(dateYYYYMMDD, windowDays) {
   const schedule = await getNbaGamesByDate(dateYYYYMMDD);
   if (!schedule.length) {
     return {
-      meta: { league: "nba", date: dateYYYYMMDD, windowDays, model: "NBA blended-v1", note: "No NBA games scheduled." },
+      meta: {
+        league: "nba",
+        date: dateYYYYMMDD,
+        windowDays,
+        model: "NBA premium-v2",
+        note: "No NBA games scheduled.",
+      },
       predictions: [],
     };
   }
 
+  // Use history ending yesterday to avoid partial-day games
   const end = addDaysUTC(dateYYYYMMDD, -1);
   const start = addDaysUTC(end, -(windowDays - 1));
 
   const histRows = await getNbaGamesInRange(start, end);
-  const teamStats = buildNbaTeamStatsFromHistory(histRows, 6);
+
+  const teamStats = buildTeamStatsFromHistory_Generic(histRows, {
+    recent5: 5,
+    recent10: 10,
+    idFn: null,
+    scoreFn: (g) => {
+      const hs = g?.home_team_score;
+      const as = g?.visitor_team_score;
+      if (typeof hs !== "number" || typeof as !== "number") return null;
+      const homeAbbr = g?.home_team?.abbreviation;
+      const awayAbbr = g?.visitor_team?.abbreviation;
+      if (!homeAbbr || !awayAbbr) return null;
+      return {
+        date: String(g?.date || "").slice(0, 10),
+        homeId: toNbaTeamId(homeAbbr),
+        awayId: toNbaTeamId(awayAbbr),
+        homeScore: hs,
+        awayScore: as,
+      };
+    },
+  });
 
   const predictions = [];
   let noPickCount = 0;
+
+  // PASS threshold: only publish if edge is meaningful
+  const MIN_EDGE_FOR_PICK = 0.075;
 
   for (const g of schedule) {
     const homeS = teamStats.get(g.home.id) || { ok: false };
     const awayS = teamStats.get(g.away.id) || { ok: false };
 
     const edge = nbaEdge(homeS, awayS);
-    const pick = pickFromEdge(edge, 0.07);
-    const conf = confidenceFromEdge(edge, 0.18);
+    const pick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
+    const conf = confidenceFromEdge(edge, 0.17, 0.53, 0.94);
 
     let winner = null;
     if (pick.side === "home") winner = g.home;
@@ -327,9 +375,11 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays) {
           awayWinPct: awayS.winPct ?? null,
           homeMarginPerGame: homeS.marginPerGame ?? null,
           awayMarginPerGame: awayS.marginPerGame ?? null,
-          homeRecentWinPct: homeS.recentWinPct ?? null,
-          awayRecentWinPct: awayS.recentWinPct ?? null,
-          note: "Blended: win% + margin + recent form (paged with delay+retry to avoid 429).",
+          homeRecent10WinPct: homeS.recent10?.winPct ?? null,
+          awayRecent10WinPct: awayS.recent10?.winPct ?? null,
+          homeRecent5Margin: homeS.recent5?.margin ?? null,
+          awayRecent5Margin: awayS.recent5?.margin ?? null,
+          note: "Premium blend: win% + margin + recent 10 + recent 5 margin + small home adv. PASS discipline enabled.",
         },
       },
     });
@@ -344,14 +394,14 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays) {
       historyEnd: end,
       historyGamesFetched: histRows.length,
       noPickCount,
-      model: "NBA blended-v1",
+      model: "NBA premium-v2",
     },
     predictions,
   };
 }
 
 /* =========================================================
-   NHL — standings model (stable)
+   NHL — stable standings model + Olympics pause behavior
    ========================================================= */
 
 async function getNhlGamesByDate(dateYYYYMMDD) {
@@ -407,22 +457,30 @@ function nhlEdge(home, away) {
   if (!Number.isFinite(home.pointPct) || !Number.isFinite(away.pointPct)) return NaN;
   if (!Number.isFinite(home.gdPerGame) || !Number.isFinite(away.gdPerGame)) return NaN;
 
-  const wPoint = 0.75, wGD = 0.20, wRecent = 0.05;
+  const wPoint = 0.72, wGD = 0.23, wRecent = 0.05;
   const pointDiff = home.pointPct - away.pointPct;
   const gdDiff = clamp((home.gdPerGame - away.gdPerGame) / 1.3, -1, 1);
   const recentDiff =
     (Number.isFinite(home.last10Pct) ? home.last10Pct : 0.5) -
     (Number.isFinite(away.last10Pct) ? away.last10Pct : 0.5);
 
-  const homeAdv = 0.02;
+  const homeAdv = 0.015;
   return wPoint * pointDiff + wGD * gdDiff + wRecent * recentDiff + homeAdv;
 }
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   const schedule = await getNhlGamesByDate(dateYYYYMMDD);
+
+  // ✅ Olympics pause behavior: no games -> return 0 with explicit note (not an error)
   if (!schedule.length) {
     return {
-      meta: { league: "nhl", date: dateYYYYMMDD, windowDays, model: "NHL blended-v1", note: "No NHL games scheduled." },
+      meta: {
+        league: "nhl",
+        date: dateYYYYMMDD,
+        windowDays,
+        model: "NHL premium-v2",
+        note: "NHL paused (Olympics) — no games scheduled.",
+      },
       predictions: [],
     };
   }
@@ -431,13 +489,15 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   const predictions = [];
   let noPickCount = 0;
 
+  const MIN_EDGE_FOR_PICK = 0.085;
+
   for (const g of schedule) {
     const homeRow = standings.get(String(g.home.name || "").toUpperCase());
     const awayRow = standings.get(String(g.away.name || "").toUpperCase());
 
     const edge = nhlEdge(homeRow, awayRow);
-    const pick = pickFromEdge(edge, 0.08);
-    const conf = confidenceFromEdge(edge, 0.20);
+    const pick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
+    const conf = confidenceFromEdge(edge, 0.19, 0.53, 0.93);
 
     let winner = null;
     if (pick.side === "home") winner = g.home;
@@ -454,16 +514,24 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
         winnerTeamId: winner ? winner.id : null,
         winnerName: winner ? winner.name : "",
         confidence: winner ? conf : 0.5,
-        factors: { windowDays, edge, pickNote: pick.note },
+        factors: {
+          windowDays,
+          edge,
+          pickNote: pick.note,
+          note: "Premium blend: point% + goal diff/game + last10 + small home adv. PASS discipline enabled.",
+        },
       },
     });
   }
 
-  return { meta: { league: "nhl", date: dateYYYYMMDD, windowDays, noPickCount, model: "NHL blended-v1" }, predictions };
+  return {
+    meta: { league: "nhl", date: dateYYYYMMDD, windowDays, noPickCount, model: "NHL premium-v2" },
+    predictions,
+  };
 }
 
 /* =========================================================
-   NCAAM — FIXED: loop single-day scoreboards (no range, no 404)
+   NCAAM — premium blended model using ESPN scoreboard history loop
    ========================================================= */
 
 function normalizeEspnEventToGame(event) {
@@ -507,25 +575,24 @@ async function getNcaamSlate(dateYYYYMMDD) {
   return rows.filter((g) => g.homeTeamId && g.awayTeamId);
 }
 
-// ✅ history = loop days (cached) — stable across ESPN weirdness
 async function getNcaamHistory(endDateYYYYMMDD, historyDays) {
   const out = [];
   for (let i = historyDays; i >= 1; i--) {
     const d = addDaysUTC(endDateYYYYMMDD, -i);
     const dayRows = await getNcaamScoreboardByDate(d);
     out.push(...dayRows);
-    await sleep(60); // gentle pacing
+    await sleep(60);
   }
   return out.filter((g) => g.homeTeamId && g.awayTeamId);
 }
 
-function buildNcaamTeamStatsFromHistory(history, endDateYYYYMMDD) {
+function buildNcaamTeamStatsFromHistory(history, endDateYYYYMMDD, recentN = 10) {
   const cutoff = Date.parse(`${endDateYYYYMMDD}T00:00:00Z`);
-  const byTeam = new Map();
+  const byTeamGames = new Map();
 
-  function ensure(id) {
-    if (!byTeam.has(id)) byTeam.set(id, { played: 0, wins: 0, pf: 0, pa: 0 });
-    return byTeam.get(id);
+  function add(teamId, game) {
+    if (!byTeamGames.has(teamId)) byTeamGames.set(teamId, []);
+    byTeamGames.get(teamId).push(game);
   }
 
   for (const g of history) {
@@ -533,62 +600,97 @@ function buildNcaamTeamStatsFromHistory(history, endDateYYYYMMDD) {
     const t = g.date ? Date.parse(g.date) : null;
     if (!t || t >= cutoff) continue;
 
-    const h = ensure(g.homeTeamId);
-    const a = ensure(g.awayTeamId);
-
-    h.played++; a.played++;
-    h.pf += g.homeScore; h.pa += g.awayScore;
-    a.pf += g.awayScore; a.pa += g.homeScore;
-
-    if (g.homeScore > g.awayScore) h.wins++;
-    else if (g.awayScore > g.homeScore) a.wins++;
+    add(g.homeTeamId, { date: g.date?.slice(0, 10) || "", my: g.homeScore, opp: g.awayScore });
+    add(g.awayTeamId, { date: g.date?.slice(0, 10) || "", my: g.awayScore, opp: g.homeScore });
   }
 
   const out = new Map();
-  for (const [id, s] of byTeam.entries()) {
-    if (s.played === 0) out.set(id, { ok: false });
-    else out.set(id, { ok: true, winPct: s.wins / s.played, marginPerGame: (s.pf - s.pa) / s.played });
+  for (const [id, games] of byTeamGames.entries()) {
+    games.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const played = games.length;
+    if (!played) {
+      out.set(id, { ok: false });
+      continue;
+    }
+
+    let wins = 0, pf = 0, pa = 0;
+    for (const g of games) {
+      pf += g.my;
+      pa += g.opp;
+      if (g.my > g.opp) wins++;
+    }
+
+    const recent = games.slice(0, recentN);
+    let rWins = 0, rMargin = 0;
+    for (const g of recent) {
+      if (g.my > g.opp) rWins++;
+      rMargin += (g.my - g.opp);
+    }
+
+    out.set(id, {
+      ok: true,
+      played,
+      winPct: wins / played,
+      marginPerGame: (pf - pa) / played,
+      recentWinPct: recent.length ? rWins / recent.length : null,
+      recentMargin: recent.length ? rMargin / recent.length : null,
+    });
   }
+
   return out;
 }
 
+// College is noisy, so conservative weights + more PASS
 function ncaamEdge(home, away, neutralSite) {
   if (!home?.ok || !away?.ok) return NaN;
 
-  const wWin = 0.65;
-  const wMargin = 0.35;
+  const wWin = 0.50;
+  const wMargin = 0.30;
+  const wRecent = 0.20;
 
   const winDiff = home.winPct - away.winPct;
   const marginScaled = clamp((home.marginPerGame - away.marginPerGame) / 14, -1, 1);
 
-  const homeAdv = neutralSite ? 0 : 0.02;
-  return wWin * winDiff + wMargin * marginScaled + homeAdv;
+  const recentDiff =
+    (Number.isFinite(home.recentWinPct) ? home.recentWinPct : 0.5) -
+    (Number.isFinite(away.recentWinPct) ? away.recentWinPct : 0.5);
+
+  const homeAdv = neutralSite ? 0 : 0.018;
+  return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
 }
 
 async function buildNcaamPredictions(dateYYYYMMDD, windowDays) {
-  const historyDays = clamp(Number(windowDays) || 60, 14, 90);
+  const historyDays = clamp(Number(windowDays) || 45, 14, 90);
 
   const slate = await getNcaamSlate(dateYYYYMMDD);
   if (!slate.length) {
     return {
-      meta: { league: "ncaam", date: dateYYYYMMDD, windowDays: historyDays, model: "NCAAM blended-v1", note: "No NCAAM games scheduled." },
+      meta: {
+        league: "ncaam",
+        date: dateYYYYMMDD,
+        windowDays: historyDays,
+        model: "NCAAM premium-v2",
+        note: "No NCAAM games scheduled.",
+      },
       predictions: [],
     };
   }
 
   const history = await getNcaamHistory(dateYYYYMMDD, historyDays);
-  const teamStats = buildNcaamTeamStatsFromHistory(history, dateYYYYMMDD);
+  const teamStats = buildNcaamTeamStatsFromHistory(history, dateYYYYMMDD, 10);
 
   const predictions = [];
   let noPickCount = 0;
+
+  const MIN_EDGE_FOR_PICK = 0.095;
 
   for (const g of slate) {
     const homeS = teamStats.get(g.homeTeamId) || { ok: false };
     const awayS = teamStats.get(g.awayTeamId) || { ok: false };
 
     const edge = ncaamEdge(homeS, awayS, g.neutralSite);
-    const pick = pickFromEdge(edge, 0.09);
-    const conf = confidenceFromEdge(edge, 0.22);
+    const pick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
+    const conf = confidenceFromEdge(edge, 0.22, 0.53, 0.92);
 
     const homeObj = { id: toNcaamTeamId(g.homeTeamId), name: g.homeName || "" };
     const awayObj = { id: toNcaamTeamId(g.awayTeamId), name: g.awayName || "" };
@@ -608,12 +710,27 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays) {
         winnerTeamId: winner ? winner.id : null,
         winnerName: winner ? winner.name : "",
         confidence: winner ? conf : 0.5,
-        factors: { windowDays: historyDays, edge, pickNote: pick.note, neutralSite: Boolean(g.neutralSite) },
+        factors: {
+          windowDays: historyDays,
+          edge,
+          pickNote: pick.note,
+          neutralSite: Boolean(g.neutralSite),
+          homeWinPct: homeS.winPct ?? null,
+          awayWinPct: awayS.winPct ?? null,
+          homeMarginPerGame: homeS.marginPerGame ?? null,
+          awayMarginPerGame: awayS.marginPerGame ?? null,
+          homeRecentWinPct: homeS.recentWinPct ?? null,
+          awayRecentWinPct: awayS.recentWinPct ?? null,
+          note: "Premium blend (conservative): win% + margin + recent 10 + small home adv. PASS discipline enabled.",
+        },
       },
     });
   }
 
-  return { meta: { league: "ncaam", date: dateYYYYMMDD, windowDays: historyDays, noPickCount, model: "NCAAM blended-v1" }, predictions };
+  return {
+    meta: { league: "ncaam", date: dateYYYYMMDD, windowDays: historyDays, noPickCount, model: "NCAAM premium-v2" },
+    predictions,
+  };
 }
 
 /**
@@ -621,12 +738,14 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays) {
  */
 router.get("/nba/predict", async (req, res) => {
   const date = readDateFromReq(req);
-  // ✅ lower default to reduce paging volume + 429 risk
   const windowDays = readWindowFromReq(req, 14, 3, 30);
   try {
     res.json(await buildNbaPredictions(date, windowDays));
   } catch (e) {
-    res.json({ meta: { league: "nba", date, windowDays, model: "NBA blended-v1", error: String(e?.message || e) }, predictions: [] });
+    res.json({
+      meta: { league: "nba", date, windowDays, model: "NBA premium-v2", error: String(e?.message || e) },
+      predictions: [],
+    });
   }
 });
 
@@ -636,7 +755,10 @@ router.get("/nhl/predict", async (req, res) => {
   try {
     res.json(await buildNhlPredictions(date, windowDays));
   } catch (e) {
-    res.json({ meta: { league: "nhl", date, windowDays, model: "NHL blended-v1", error: String(e?.message || e) }, predictions: [] });
+    res.json({
+      meta: { league: "nhl", date, windowDays, model: "NHL premium-v2", error: String(e?.message || e) },
+      predictions: [],
+    });
   }
 });
 
@@ -646,7 +768,10 @@ router.get("/ncaam/predict", async (req, res) => {
   try {
     res.json(await buildNcaamPredictions(date, windowDays));
   } catch (e) {
-    res.json({ meta: { league: "ncaam", date, windowDays, model: "NCAAM blended-v1", error: String(e?.message || e) }, predictions: [] });
+    res.json({
+      meta: { league: "ncaam", date, windowDays, model: "NCAAM premium-v2", error: String(e?.message || e) },
+      predictions: [],
+    });
   }
 });
 
