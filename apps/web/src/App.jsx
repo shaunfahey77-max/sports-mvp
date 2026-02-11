@@ -17,7 +17,6 @@ function normalizeLeague(raw) {
   if (l === "nba") return "nba";
   if (l === "nhl") return "nhl";
   if (l === "ncaam") return "ncaam";
-  // If someone types /league/foo, keep UX stable but avoid crashing.
   return "nba";
 }
 
@@ -42,6 +41,14 @@ function HubLegacyRedirect() {
   return <Navigate to={`/league/${l}/hub`} replace />;
 }
 
+/**
+ * Nice URL alias:
+ * /league/ncaam/tournament -> /league/ncaam?mode=tournament
+ */
+function NcaamTournamentRedirect() {
+  return <Navigate to="/league/ncaam?mode=tournament" replace />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -61,15 +68,18 @@ export default function App() {
           <Route path="/upset" element={<Navigate to="/upsets" replace />} />
 
           {/*
-  Primary league route:
-  - /league/nba   -> Predict (Games/Predictions)
-  - /league/nhl   -> Predict (Games/Predictions)
-  - /league/ncaam -> Predict (Games + Top25, predictions disabled for now)
-*/}
-<Route path="/league/:league" element={<Predict />} />
+            Primary league route:
+            - /league/nba   -> Predict
+            - /league/nhl   -> Predict
+            - /league/ncaam -> Predict (+ tournament via query)
+          */}
+          <Route path="/league/:league" element={<Predict />} />
 
-          {/* Optional explicit alias (safe to have, makes linking clearer) */}
+          {/* Optional explicit alias (safe, clearer linking) */}
           <Route path="/league/:league/predict" element={<Predict />} />
+
+          {/* ✅ Tournament alias */}
+          <Route path="/league/ncaam/tournament" element={<NcaamTournamentRedirect />} />
 
           {/* Hub */}
           <Route path="/league/:league/hub" element={<LeagueHub />} />

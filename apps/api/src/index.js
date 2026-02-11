@@ -3,8 +3,11 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 
-// ✅ NEW: mount predictor router (single source of truth)
+// ✅ Existing: mount predictor router (single source of truth)
 import predictRouter from "./routes/predict.js";
+
+// ✅ Premium NBA router (pregame-only picks + bayes shrink + vegas compare + calibration)
+import nbaPremiumRouter from "./routes/nbaPremium.js";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -53,33 +56,59 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function fetchJson(url, { headers } = {}, { cacheTtlMs = CACHE_TTL_MS } = {}) {
+/**
+ * ✅ fetchJson w/ smarter 429 handling + small retry
+ * - prevents "regressions" where a single 429 kills the slate
+ */
+async function fetchJson(url, { headers } = {}, { cacheTtlMs = CACHE_TTL_MS, retries = 2 } = {}) {
   const auth = headers?.Authorization ? String(headers.Authorization) : "";
   const cacheKey = `GET:${url}:AUTH=${auth}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  const res = await fetch(url, { headers });
+  let lastErr = null;
 
-  if (res.status === 429) {
-    const text = await res.text().catch(() => "");
-    const err = new Error(
-      `Upstream 429 for ${url}${text ? ` — ${text}` : ""} — Too many requests, please try again later.`
-    );
-    err.status = 429;
-    throw err;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, { headers });
+
+    // Handle 429 with retry/backoff
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("retry-after");
+      const retryAfterMs = retryAfter ? Math.max(0, Number(retryAfter) * 1000) : 0;
+      const text = await res.text().catch(() => "");
+      const err = new Error(
+        `Upstream 429 for ${url}${text ? ` — ${text}` : ""} — Too many requests, please try again later.`
+      );
+      err.status = 429;
+      lastErr = err;
+
+      if (attempt < retries) {
+        // jittered exponential backoff
+        const base = 350 * Math.pow(2, attempt);
+        const jitter = Math.floor(Math.random() * 200);
+        const wait = Math.max(retryAfterMs, base + jitter);
+        await sleep(wait);
+        continue;
+      }
+
+      throw err;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      const err = new Error(`Upstream error ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
+      err.status = res.status;
+      lastErr = err;
+      throw err;
+    }
+
+    const data = await res.json();
+    setCache(cacheKey, data, cacheTtlMs);
+    return data;
   }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    const err = new Error(`Upstream error ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
-    err.status = res.status;
-    throw err;
-  }
-
-  const data = await res.json();
-  setCache(cacheKey, data, cacheTtlMs);
-  return data;
+  // should never reach, but safe fallback
+  throw lastErr || new Error(`fetchJson failed for ${url}`);
 }
 
 /**
@@ -825,14 +854,185 @@ async function buildNhlPredictPayload(date, windowDays = 5) {
 }
 
 /**
+ * =========================================
+ * ✅ NEW: Performance endpoint
+ * =========================================
+ * GET /api/performance?league=nba|nhl|ncaam&days=30&end=YYYY-MM-DD&mode=tournament
+ *
+ * This calls your existing /api/:league/predict output (predictRouter)
+ * and computes rolling accuracy + tier stats.
+ */
+function isFinalStatus(status) {
+  const s = String(status || "").toLowerCase();
+  return s === "final" || s === "post" || s === "completed";
+}
+
+function tierKey(tier) {
+  const v = String(tier || "PASS").toUpperCase();
+  if (v === "ELITE") return "ELITE";
+  if (v === "STRONG") return "STRONG";
+  if (v === "LEAN") return "LEAN";
+  return "PASS";
+}
+
+function num(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+function perfInit() {
+  return {
+    scored: 0,
+    wins: 0,
+    losses: 0,
+    picks: 0,
+    pass: 0,
+    avgAbsEdge: null,
+    _sumAbsEdge: 0,
+    _nEdge: 0,
+  };
+}
+
+function perfAddAgg(agg, game) {
+  const pick = game?.market?.pick || null;
+  if (pick) agg.picks += 1;
+  else agg.pass += 1;
+
+  const edge = num(game?.market?.edge);
+  if (edge != null) {
+    agg._sumAbsEdge += Math.abs(edge);
+    agg._nEdge += 1;
+  }
+
+  if (!isFinalStatus(game?.status)) return;
+  if (!pick) return;
+
+  const predicted = game?.market?.recommendedTeamId || null;
+  const winner = game?.result?.winnerTeamId || null;
+  if (!predicted || !winner) return;
+
+  agg.scored += 1;
+  if (predicted === winner) agg.wins += 1;
+  else agg.losses += 1;
+}
+
+function perfFinalize(agg) {
+  const denom = agg.wins + agg.losses;
+  agg.accuracy = denom ? agg.wins / denom : null;
+  agg.pickRate = (agg.picks + agg.pass) ? agg.picks / (agg.picks + agg.pass) : null;
+  agg.avgAbsEdge = agg._nEdge ? agg._sumAbsEdge / agg._nEdge : null;
+  delete agg._sumAbsEdge;
+  delete agg._nEdge;
+  return agg;
+}
+
+async function fetchLocalJson(path) {
+  const url = `http://127.0.0.1:${PORT}${path}`;
+  const res = await fetch(url);
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    const err = new Error(`Local fetch failed ${res.status} for ${path}${text ? ` — ${text}` : ""}`);
+    err.status = res.status;
+    throw err;
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+/**
  * Routes
  */
 app.get("/api/health", (_req, res) =>
-  res.json({ ok: true, service: "sports-mvp-api", time: new Date().toISOString() })
+  res.json({
+    ok: true,
+    service: "sports-mvp-api",
+    time: new Date().toISOString(),
+    version: "api-index-v4",
+  })
 );
 
-// ✅ Mount predictor router AFTER /api/health, before other /api routes is fine either way.
-// This makes: /api/nba/predict, /api/nhl/predict, /api/ncaam/predict come from src/routes/predict.js
+// ✅ NEW: rolling performance
+app.get("/api/performance", async (req, res, next) => {
+  try {
+    const league = String(req.query.league || "nba").toLowerCase();
+    if (!["nba", "nhl", "ncaam"].includes(league)) {
+      return res.status(400).json({ ok: false, error: "Invalid league. Use nba, nhl, or ncaam." });
+    }
+
+    const days = clamp(Number(req.query.days || 30), 1, 180);
+    const end = normalizeDateParam(req.query.end) || new Date().toISOString().slice(0, 10);
+    const mode = String(req.query.mode || "regular").toLowerCase();
+
+    const cacheKey = `PERF:${league}:${days}:${end}:${mode}`;
+    const cached = getCache(cacheKey);
+    if (cached) return res.json(cached);
+
+    const start = addDays(end, -(days - 1));
+    const tiers = { ELITE: perfInit(), STRONG: perfInit(), LEAN: perfInit(), PASS: perfInit() };
+    const overall = perfInit();
+
+    let cursor = start;
+    const dateList = [];
+    for (let i = 0; i < days; i++) {
+      dateList.push(cursor);
+      if (cursor === end) break;
+      cursor = addDays(cursor, 1);
+    }
+
+    // Pull each day’s slate via the existing predict router
+    for (const d of dateList) {
+      const qs = new URLSearchParams({ date: d });
+      if (league === "ncaam" && mode === "tournament") qs.set("mode", "tournament");
+
+      const j = await fetchLocalJson(`/api/${league}/predict?${qs.toString()}`);
+      const games = Array.isArray(j?.games) ? j.games : Array.isArray(j?.predictions) ? j.predictions : [];
+
+      for (const g of games) {
+        // Your unified contract uses { market, result } on games
+        const t = tierKey(g?.market?.tier);
+        perfAddAgg(overall, g);
+        perfAddAgg(tiers[t], g);
+      }
+    }
+
+    const payload = {
+      ok: true,
+      meta: {
+        league,
+        days: dateList.length,
+        start,
+        end,
+        mode: league === "ncaam" ? mode : "regular",
+        note: "Accuracy is computed from games where status is Final/Completed and result.winnerTeamId is present.",
+      },
+      overall: perfFinalize(overall),
+      byTier: {
+        ELITE: perfFinalize(tiers.ELITE),
+        STRONG: perfFinalize(tiers.STRONG),
+        LEAN: perfFinalize(tiers.LEAN),
+        PASS: perfFinalize(tiers.PASS),
+      },
+    };
+
+    // cache briefly (avoid hammering predict endpoints)
+    setCache(cacheKey, payload, 5 * 60_000);
+    res.json(payload);
+  } catch (e) {
+    next(e);
+  }
+});
+
+// apps/api/src/index.js
+import performanceRoutes from "./routes/performance.js";
+
+// ...after app is created
+app.use("/api", performanceRoutes);
+
+
+// ✅ Premium NBA endpoints (must be mounted BEFORE other /api/nba/* routes)
+app.use("/api/nba", nbaPremiumRouter);
+
+// ✅ Existing predictor router
+// Makes: /api/nba/predict, /api/nhl/predict, /api/ncaam/predict and /api/predictions
 app.use("/api", predictRouter);
 
 app.get("/api/nba/teams", async (_req, res) => {
@@ -864,9 +1064,6 @@ app.get("/api/nhl/games", async (req, res) => {
 
 /**
  * ✅ NCAAM (ESPN)
- *   /api/ncaam/games?date=YYYY-MM-DD&expand=teams
- *   /api/ncaam/games?dates[]=YYYY-MM-DD&expand=teams
- *   /api/ncaam/top25
  */
 app.get("/api/ncaam/games", async (req, res) => {
   try {
@@ -890,8 +1087,6 @@ app.get("/api/ncaam/top25", async (_req, res) => {
 
 /**
  * ✅ Upset Watch (INLINE — single source of truth)
- * Query:
- *   /api/upsets?league=nba|nhl&date=YYYY-MM-DD&window=5&minGap=15&limit=12
  */
 app.get("/api/upsets", async (req, res) => {
   try {
@@ -1011,6 +1206,18 @@ app.get("/api/games", async (req, res) => {
     counts: { total: nbaGames.length + nhlGames.length, nba: nbaGames.length, nhl: nhlGames.length },
     games: [...nbaGames, ...nhlGames],
     errors: { nba: nbaError, nhl: nhlError },
+  });
+});
+
+/**
+ * ✅ Central error handler (clean JSON, preserves status)
+ */
+app.use((err, _req, res, _next) => {
+  const status = Number(err?.status) || 500;
+  res.status(status).json({
+    ok: false,
+    error: String(err?.message || err),
+    status,
   });
 });
 

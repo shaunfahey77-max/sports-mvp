@@ -1,2 +1,5 @@
+/* apps/web/src/index.css */
 /* Minimal base layer. Visual design lives in styles/app.css */
+* { box-sizing: border-box; }
 html, body { height: 100%; }
+body { margin: 0; }

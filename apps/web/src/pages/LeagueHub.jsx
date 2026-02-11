@@ -18,7 +18,7 @@ function pct(n) {
 function asTeamAbbr(idOrAbbr) {
   if (!idOrAbbr) return "";
   const s = String(idOrAbbr);
-  return s.replace("nba-", "").replace("nhl-", "").toUpperCase();
+  return s.replace("nba-", "").replace("nhl-", "").replace("ncaam-", "").toUpperCase();
 }
 
 function classifyPick(conf) {
@@ -36,11 +36,80 @@ function teamHref(leagueLower, teamId) {
   return `/league/${leagueLower}/team/${teamId}`;
 }
 
+/**
+ * Logo helpers
+ * - NCAAM: ESPN team id -> https://a.espncdn.com/i/teamlogos/ncaa/500/158.png
+ * - NBA/NHL fallback: ESPN by abbr -> https://a.espncdn.com/i/teamlogos/nba/500/bos.png
+ */
+function teamLogoUrl({ leagueLower, team }) {
+  if (!team) return "";
+
+  // Prefer explicit logo if backend provides it later
+  if (team.logo) return team.logo;
+
+  const l = String(leagueLower || "").toLowerCase();
+
+  // NCAAM uses numeric ESPN team ids
+  const espnId = team.espnId || team.espnID || team.teamEspnId;
+  if (l === "ncaam" && espnId) {
+    return `https://a.espncdn.com/i/teamlogos/ncaa/500/${String(espnId).trim()}.png`;
+  }
+
+  // NBA/NHL use abbr-based ESPN urls
+  const abbr = String(team.abbr || asTeamAbbr(team.id) || "").toLowerCase();
+  if (!abbr) return "";
+
+  const sport = l === "nhl" ? "nhl" : "nba";
+  return `https://a.espncdn.com/i/teamlogos/${sport}/500/${abbr}.png`;
+}
+
+function TeamAvatar({ leagueLower, team, size = 22 }) {
+  const [ok, setOk] = useState(true);
+
+  const url = teamLogoUrl({ leagueLower, team });
+  const fallback = String(team?.abbr || asTeamAbbr(team?.id) || team?.name || "?")
+    .slice(0, 3)
+    .toUpperCase();
+
+  useEffect(() => setOk(true), [leagueLower, team?.id, team?.abbr, team?.espnId, team?.logo]);
+
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 999,
+        overflow: "hidden",
+        background: "rgba(255,255,255,0.06)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        display: "grid",
+        placeItems: "center",
+        flex: "0 0 auto",
+      }}
+      title={team?.name || team?.abbr || ""}
+    >
+      {url && ok ? (
+        <img
+          src={url}
+          alt={team?.abbr || team?.name || "team"}
+          width={size}
+          height={size}
+          loading="lazy"
+          onError={() => setOk(false)}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      ) : (
+        <span style={{ fontSize: 10, opacity: 0.85, fontWeight: 900 }}>{fallback}</span>
+      )}
+    </div>
+  );
+}
+
 export default function LeagueHub() {
-  const { league } = useParams(); // "nba" | "nhl"
+  const { league } = useParams(); // "nba" | "nhl" | "ncaam"
   const leagueLower = String(league || "").toLowerCase();
   const leagueUpper = leagueLower.toUpperCase();
-  const accent = leagueLower === "nhl" ? "var(--nhl)" : "var(--nba)";
+  const accent = leagueLower === "nhl" ? "var(--nhl)" : leagueLower === "ncaam" ? "var(--ncaam)" : "var(--nba)";
 
   const [date, setDate] = useState(todayUTC());
   const [windowDays, setWindowDays] = useState(5);
@@ -96,8 +165,6 @@ export default function LeagueHub() {
       setErr("");
 
       try {
-        // ✅ Only fetch what you need based on the active tab.
-        // This keeps it fast + avoids unnecessary endpoint churn.
         if (tab === "games") {
           const g = await getLeagueGames(leagueLower, date);
           if (!alive) return;
@@ -105,7 +172,6 @@ export default function LeagueHub() {
           return;
         }
 
-        // predictions tab
         const p = await getPredictions({ league: leagueLower, date, windowDays });
         if (!alive) return;
 
@@ -137,7 +203,7 @@ export default function LeagueHub() {
         </span>
         <span style={{ marginLeft: 10 }}>Games & Predictions</span>
       </h1>
-      <p className="sub">Date-based slate + model picks (same endpoint for NBA/NHL).</p>
+      <p className="sub">Date-based slate + model picks.</p>
 
       <div className="panel">
         <div className="panelHead">
@@ -161,10 +227,7 @@ export default function LeagueHub() {
             <button className={`tab ${tab === "games" ? "active" : ""}`} onClick={() => setTab("games")}>
               Games
             </button>
-            <button
-              className={`tab ${tab === "predictions" ? "active" : ""}`}
-              onClick={() => setTab("predictions")}
-            >
+            <button className={`tab ${tab === "predictions" ? "active" : ""}`} onClick={() => setTab("predictions")}>
               Predictions
             </button>
           </div>
@@ -179,7 +242,6 @@ export default function LeagueHub() {
             </div>
           ) : null}
 
-          {/* Model card only makes sense on predictions */}
           {!loading && tab === "predictions" && meta ? (
             <div className="card">
               <div className="row">
@@ -204,7 +266,7 @@ export default function LeagueHub() {
             </div>
           ) : null}
 
-          {/* PREMIUM PREDICTIONS LAYER */}
+          {/* Predictions UI unchanged */}
           {tab === "predictions" && !loading ? (
             <>
               {topPicks?.length ? (
@@ -296,24 +358,30 @@ export default function LeagueHub() {
             </>
           ) : null}
 
-          {/* GAMES TAB (league-native endpoint) */}
+          {/* ✅ GAMES TAB — add team avatars */}
           {tab === "games" && !loading ? (
             filteredGames.length ? (
               filteredGames.map((g) => {
-                const home = g.homeTeam?.abbr || asTeamAbbr(g.homeTeamId);
-                const away = g.awayTeam?.abbr || asTeamAbbr(g.awayTeamId);
+                const homeTeam = g.homeTeam || { id: g.homeTeamId, abbr: asTeamAbbr(g.homeTeamId), espnId: g.homeTeamEspnId };
+                const awayTeam = g.awayTeam || { id: g.awayTeamId, abbr: asTeamAbbr(g.awayTeamId), espnId: g.awayTeamEspnId };
+
+                const home = homeTeam?.abbr || asTeamAbbr(g.homeTeamId);
+                const away = awayTeam?.abbr || asTeamAbbr(g.awayTeamId);
+
                 const hs = typeof g.homeScore === "number" ? g.homeScore : "-";
                 const as = typeof g.awayScore === "number" ? g.awayScore : "-";
 
                 return (
                   <div className="card" key={g.id}>
-                    <div className="row">
-                      <div style={{ fontWeight: 720 }}>
-                        <Link to={teamHref(leagueLower, g.awayTeamId)} style={{ color: "inherit" }}>
+                    <div className="row" style={{ alignItems: "center" }}>
+                      <div style={{ fontWeight: 720, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <Link to={teamHref(leagueLower, g.awayTeamId)} style={{ color: "inherit", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <TeamAvatar leagueLower={leagueLower} team={awayTeam} />
                           {away}
                         </Link>{" "}
-                        @{" "}
-                        <Link to={teamHref(leagueLower, g.homeTeamId)} style={{ color: "inherit" }}>
+                        <span className="muted">@</span>{" "}
+                        <Link to={teamHref(leagueLower, g.homeTeamId)} style={{ color: "inherit", display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          <TeamAvatar leagueLower={leagueLower} team={homeTeam} />
                           {home}
                         </Link>
                       </div>
