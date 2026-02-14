@@ -3,161 +3,271 @@ import express from "express";
 
 const router = express.Router();
 
+/**
+ * Upsets v7 — winProb-aware
+ * - Source: /api/predictions (premium model output)
+ * - leagues: nba | nhl | ncaam
+ * - query aliases:
+ *   - windowDays OR window
+ *   - minWin OR minProb
+ *   - limit
+ *   - mode: watch | strict
+ *   - model: v1 | v2  (forwarded to /api/predictions)
+ *
+ * Response:
+ *  - rows[] (for web UI)
+ *  - candidates[] (back-compat)
+ *  - meta.strictUnderdogPicks is ALWAYS a number
+ */
+
+const VERSION = "upsets-v7-winprob";
+
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-const logistic = (z) => 1 / (1 + Math.exp(-z));
 
-function addDays(dateStr, n) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + n);
-  return iso(d);
+function asInt(x, fallback) {
+  const n = Number(x);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+function asFloat(x, fallback) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function getTeamIds(g) {
-  const home = g.home_team?.id ?? g.homeTeam?.id ?? g.home_team_id ?? g.homeTeamId;
-  const away = g.visitor_team?.id ?? g.awayTeam?.id ?? g.visitor_team_id ?? g.awayTeamId;
-  return { home, away };
+function pickSideToIsAwayPick(pick) {
+  const p = String(pick || "").toLowerCase();
+  if (p === "away") return true;
+  if (p === "home") return false;
+  return null;
 }
 
-function getScores(g) {
-  const hs = g.home_team_score ?? g.homeScore ?? g.home_score ?? g.homeTeamScore;
-  const as = g.visitor_team_score ?? g.awayScore ?? g.away_score ?? g.awayTeamScore;
-  return { hs, as };
+// “Elo-ish” gap derived from factors (not true Elo).
+// Positive => home favored, negative => away favored.
+function computeGapFromFactors(factors) {
+  const homeWin = Number(factors?.homeWinPct);
+  const awayWin = Number(factors?.awayWinPct);
+  const homeMargin = Number(factors?.homeMarginPerGame);
+  const awayMargin = Number(factors?.awayMarginPerGame);
+  const homeRecent = Number(factors?.homeRecentWinPct ?? factors?.homeRecent10WinPct);
+  const awayRecent = Number(factors?.awayRecentWinPct ?? factors?.awayRecent10WinPct);
+
+  const winDiff = Number.isFinite(homeWin) && Number.isFinite(awayWin) ? homeWin - awayWin : 0;
+  const marginDiff =
+    Number.isFinite(homeMargin) && Number.isFinite(awayMargin) ? homeMargin - awayMargin : 0;
+  const recentDiff =
+    Number.isFinite(homeRecent) && Number.isFinite(awayRecent) ? homeRecent - awayRecent : 0;
+
+  // Scale into a ~“gap points” number that feels like Elo-ish magnitude.
+  const gapPoints = winDiff * 220 + marginDiff * 10 + recentDiff * 160;
+  return gapPoints; // + = home favored
 }
 
-function buildRecentWinPct(games) {
-  const rec = new Map(); // teamId -> {w,l,g}
-  const bump = (teamId, didWin) => {
-    const cur = rec.get(teamId) || { w: 0, l: 0, g: 0 };
-    cur.g += 1;
-    if (didWin) cur.w += 1;
-    else cur.l += 1;
-    rec.set(teamId, cur);
-  };
+function makeMatchup(away, home) {
+  const a = away?.abbr || away?.name || "AWAY";
+  const h = home?.abbr || home?.name || "HOME";
+  return `${a} @ ${h}`;
+}
 
-  for (const g of games) {
-    const { home, away } = getTeamIds(g);
-    const { hs, as } = getScores(g);
-    if (home == null || away == null) continue;
-    if (typeof hs !== "number" || typeof as !== "number") continue;
-
-    const homeWin = hs > as;
-    bump(home, homeWin);
-    bump(away, !homeWin);
+async function fetchJson(url) {
+  const r = await fetch(url);
+  const j = await r.json().catch(() => null);
+  if (!r.ok) {
+    const msg = j?.error || `Request failed (${r.status})`;
+    throw new Error(msg);
   }
-
-  const winPct = new Map();
-  for (const [teamId, v] of rec.entries()) {
-    winPct.set(teamId, v.g ? v.w / v.g : 0.5);
-  }
-  return winPct;
+  return j;
 }
 
-function computeWinProb(underdogForm, favoriteForm, underdogIsHome) {
-  const formDiff = underdogForm - favoriteForm; // usually negative
-  const homeBoost = underdogIsHome ? 0.08 : 0.0;
-  const z = (formDiff * 3.5) + homeBoost;
-  return clamp(logistic(z), 0.05, 0.95);
+// ✅ strict validation: must be a real prob between (0,1)
+function isRealProb(p) {
+  return Number.isFinite(p) && p > 0 && p < 1;
 }
 
-// Pull games day-by-day using your existing /api/{league}/games?date=YYYY-MM-DD route
-async function fetchGamesRange({ league, from, to, base }) {
-  const out = [];
-  let d = from;
-  while (d <= to) {
-    const url = `${base}/api/${league}/games?date=${d}&expand=teams`;
-    const r = await fetch(url);
-    const j = await r.json();
-    const games = j?.games || j || [];
-    out.push(...games);
-    d = addDays(d, 1);
-  }
-  return out;
-}
+router.get("/ping", (_req, res) => {
+  res.json({ ok: true, route: "upsets", version: VERSION });
+});
 
 router.get("/", async (req, res) => {
+  const t0 = Date.now();
   try {
-    const league = (req.query.league || "nba").toLowerCase(); // nba|nhl
-    const date = req.query.date || iso(new Date());
-    const windowDays = Number(req.query.windowDays || 14);
-    const minProb = Number(req.query.minProb || 0.40);
+    const league = String(req.query.league || "nba").trim().toLowerCase();
+    const date = String(req.query.date || iso(new Date())).slice(0, 10);
 
-    const port = process.env.PORT || 3001;
-    const base = `http://127.0.0.1:${port}`;
+    const windowDays = clamp(asInt(req.query.windowDays ?? req.query.window, 14), 3, 90);
 
-    // Today’s slate
-    const scheduleResp = await fetch(`${base}/api/${league}/games?date=${date}&expand=teams`);
-    const scheduleJson = await scheduleResp.json();
-    const todaysGames = scheduleJson?.games || scheduleJson || [];
+    // minWin is “underdog win equity” threshold
+    const minWin = clamp(asFloat(req.query.minWin ?? req.query.minProb, 0.3), 0.05, 0.95);
 
-    // History (range fetch, safe)
-    const from = addDays(date, -windowDays);
-    const histGames = await fetchGamesRange({ league, from, to: date, base });
+    const limit = clamp(asInt(req.query.limit, 20), 1, 50);
 
-    const winPct = buildRecentWinPct(histGames);
+    const mode = String(req.query.mode || "watch").trim().toLowerCase(); // watch | strict
 
-    const candidates = [];
+    // ✅ forward model to /api/predictions if provided (v1/v2)
+    const model = req.query.model != null ? String(req.query.model).trim().toLowerCase() : null;
 
-    for (const g of todaysGames) {
-      const homeTeam = g.home_team || g.homeTeam;
-      const awayTeam = g.visitor_team || g.awayTeam;
-      if (!homeTeam || !awayTeam) continue;
+    // Use the same host the request hit (works local + deploy)
+    const base = `${req.protocol}://${req.get("host")}`;
 
-      const homeForm = winPct.get(homeTeam.id) ?? 0.5;
-      const awayForm = winPct.get(awayTeam.id) ?? 0.5;
+    const predUrl =
+      `${base}/api/predictions?league=${encodeURIComponent(league)}` +
+      `&date=${encodeURIComponent(date)}` +
+      (model ? `&model=${encodeURIComponent(model)}` : "");
 
-      const underdogIsHome = homeForm < awayForm;
-      const underdog = underdogIsHome ? homeTeam : awayTeam;
-      const favorite = underdogIsHome ? awayTeam : homeTeam;
+    const pred = await fetchJson(predUrl);
 
-      const underForm = underdogIsHome ? homeForm : awayForm;
-      const favForm = underdogIsHome ? awayForm : homeForm;
+    const games = Array.isArray(pred?.games) ? pred.games : [];
+    const slateGames = games.length;
 
-      const winProb = computeWinProb(underForm, favForm, underdogIsHome);
-      if (winProb < minProb) continue;
+    let strictUnderdogPicks = 0;
+
+    const rows = [];
+
+    for (const g of games) {
+      const home = g?.home || g?.homeTeam || null;
+      const away = g?.away || g?.awayTeam || null;
+      if (!home || !away) continue;
+
+      const market = g?.market || {};
+      const pick = market?.pick; // "home" | "away" | null
+      const conf = Number(market?.confidence);
+
+      if (!pick) continue;
+
+      const isAwayPick = pickSideToIsAwayPick(pick);
+      if (isAwayPick == null) continue;
+
+      // Determine favorite from factor-derived gap (positive = home favored)
+      const baseGap = computeGapFromFactors(g?.factors);
+      const favoriteSide = baseGap >= 0 ? "home" : "away";
+      const underdogSide = favoriteSide === "home" ? "away" : "home";
+
+      const modelSide = isAwayPick ? "away" : "home";
+
+      // ✅ Prefer model-provided winProb ONLY if it's a real probability.
+      // IMPORTANT: we treat market.winProb as "picked side win probability".
+      const rawWinProb = market?.winProb;
+      const modelPickWinProb = isRealProb(rawWinProb) ? Number(rawWinProb) : null;
+
+      // Fallback: infer from confidence only if confidence is sane.
+      const modelPickWinProbFromConf = Number.isFinite(conf) ? clamp(conf, 0.05, 0.95) : null;
+
+      const useModelWinProb = modelPickWinProb != null;
+      const pPick = useModelWinProb ? modelPickWinProb : modelPickWinProbFromConf;
+
+      // If we still can't get a prob, skip (can’t score upset equity)
+      if (pPick == null) continue;
+
+      // Underdog win probability:
+      // If model picked underdog -> p(underdog)=pPick
+      // If model picked favorite -> p(underdog)=1-pPick
+      const modelPickedUnderdog = modelSide === underdogSide;
+      const underdogWinProb = modelPickedUnderdog ? pPick : 1 - pPick;
+
+      if (modelPickedUnderdog) strictUnderdogPicks += 1;
+      if (mode === "strict" && !modelPickedUnderdog) continue;
+
+      if (underdogWinProb < minWin) continue;
+
+      const underdogTeam = underdogSide === "home" ? home : away;
+      const favoriteTeam = underdogSide === "home" ? away : home;
 
       const why = [];
-      if (Math.abs(underForm - favForm) <= 0.10) why.push("Close recent form");
-      if (underdogIsHome) why.push("Home boost");
-      if (underForm >= 0.55) why.push("Underdog trending up");
+      why.push(`Underdog equity: ${(underdogWinProb * 100).toFixed(1)}%`);
+      why.push(`Favorite side (gap): ${favoriteSide.toUpperCase()} (${Math.round(Math.abs(baseGap))})`);
+      if (modelPickedUnderdog) why.push("Model already picked underdog");
+      why.push(useModelWinProb ? "Using model winProb" : "Using confidence fallback");
 
-      candidates.push({
-        id: `${league}-${g.id}-${date}`,
+      // Score for sorting: higher equity + closer matchup
+      const score = underdogWinProb * 100 - Math.abs(baseGap) * 0.04;
+
+      rows.push({
+        id: g?.gameId || `${league}-${date}-${makeMatchup(away, home)}`,
+        gameId: g?.gameId || null,
         league,
         date,
-        matchup: `${underdog.abbreviation || underdog.abbr || underdog.name} @ ${favorite.abbreviation || favorite.abbr || favorite.name}`,
+        matchup: makeMatchup(away, home),
+
+        home: {
+          id: home?.id,
+          name: home?.name,
+          abbr: home?.abbr,
+          logo: home?.logo,
+        },
+        away: {
+          id: away?.id,
+          name: away?.name,
+          abbr: away?.abbr,
+          logo: away?.logo,
+        },
+
         underdog: {
-          id: underdog.id,
-          name: underdog.full_name || underdog.name,
-          abbr: underdog.abbreviation || underdog.abbr,
-          isHome: underdogIsHome,
-          recentWinPct: underForm,
+          id: underdogTeam?.id,
+          name: underdogTeam?.name,
+          abbr: underdogTeam?.abbr,
+          isHome: underdogSide === "home",
         },
         favorite: {
-          id: favorite.id,
-          name: favorite.full_name || favorite.name,
-          abbr: favorite.abbreviation || favorite.abbr,
-          isHome: !underdogIsHome,
-          recentWinPct: favForm,
+          id: favoriteTeam?.id,
+          name: favoriteTeam?.name,
+          abbr: favoriteTeam?.abbr,
+          isHome: underdogSide !== "home",
         },
-        winProb,
+
+        // what the UI expects / might use
+        winProb: underdogWinProb,
+
+        pick: {
+          pickSide: modelSide,
+          recommendedTeamId: market?.recommendedTeamId ?? null,
+          recommendedTeamName: market?.recommendedTeamName ?? null,
+          edge: Number.isFinite(Number(market?.edge)) ? Number(market.edge) : null,
+          confidence: Number.isFinite(conf) ? conf : null,
+          // ✅ include picked-side win prob if we have it
+          winProb: pPick,
+        },
+
+        signals: {
+          baseGap,
+          isAwayPick: modelSide === "away",
+          score,
+          mode,
+          favoriteSide,
+          underdogSide,
+          usedModelWinProb: useModelWinProb,
+          model: model || null,
+        },
+
         why,
       });
     }
 
-    candidates.sort((a, b) => b.winProb - a.winProb);
+    rows.sort((a, b) => (b?.signals?.score ?? 0) - (a?.signals?.score ?? 0));
+    const trimmed = rows.slice(0, limit);
 
-    res.json({
+    return res.json({
       ok: true,
       league,
       date,
+      mode,
       windowDays,
-      minProb,
-      count: candidates.length,
-      candidates,
+      minWin,
+      count: trimmed.length,
+      rows: trimmed,
+      candidates: trimmed, // back-compat
+      meta: {
+        source: "premium-predictions",
+        slateGames,
+        rowsIn: trimmed.length,
+        strictUnderdogPicks, // ALWAYS a number
+        windowDaysUsed: windowDays,
+        minWinUsed: minWin,
+        limitUsed: limit,
+        modelForwarded: model || null,
+        elapsedMs: Date.now() - t0,
+      },
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
