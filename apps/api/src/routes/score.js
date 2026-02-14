@@ -1,142 +1,172 @@
 // apps/api/src/routes/score.js
 import express from "express";
-import { listPicks, updatePick } from "../store/picksStore.js";
-
-// NOTE: These three functions must return an array of games like:
-// [{ gameId, status, winnerTeamId, winnerTeamName }]
-// I’m giving you working NBA (balldontlie) and ESPN NCAAM;
-// NHL you can wire to your existing NHL fetch (or keep stub until ready).
 
 const router = express.Router();
 
-const NBA_API_BASE = "https://api.balldontlie.io/v1";
-const NBA_KEY = process.env.BALLDONTLIE_API_KEY;
-
-// ---------- Helpers ----------
+/**
+ * Helpers
+ */
 function isFinalStatus(status) {
   const s = String(status || "").toLowerCase();
-  return s === "final" || s === "post" || s === "completed";
+  return s === "final" || s === "post" || s === "completed" || s.includes("final");
 }
 
-async function fetchJSON(url, headers = {}) {
-  const r = await fetch(url, { headers });
-  if (!r.ok) {
-    const text = await r.text().catch(() => "");
-    throw new Error(`Upstream ${r.status} for ${url} — ${text}`.slice(0, 400));
+function safeNum(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+function getScoresFromGame(g) {
+  const hs =
+    safeNum(g?.homeScore) ??
+    safeNum(g?.home?.score) ??
+    safeNum(g?.homeTeam?.score) ??
+    null;
+
+  const as =
+    safeNum(g?.awayScore) ??
+    safeNum(g?.away?.score) ??
+    safeNum(g?.awayTeam?.score) ??
+    null;
+
+  return { homeScore: hs, awayScore: as };
+}
+
+function getPickSide(g) {
+  // unified contract: g.market.pick
+  const p = g?.market?.pick ?? g?.pick ?? null;
+  return p === "home" || p === "away" ? p : null;
+}
+
+function outcomeFromPick(pickSide, homeScore, awayScore) {
+  if (!pickSide) return { result: "NOPICK", won: null };
+
+  if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) {
+    return { result: "NOSCORE", won: null };
   }
-  return r.json();
+
+  if (homeScore === awayScore) return { result: "PUSH", won: 0 };
+
+  const homeWon = homeScore > awayScore;
+  const pickHome = pickSide === "home";
+  const won = (homeWon && pickHome) || (!homeWon && !pickHome);
+
+  return { result: won ? "WIN" : "LOSS", won: won ? 1 : 0 };
 }
 
-// ---------- League fetchers ----------
-async function fetchNBAResults(date) {
-  if (!NBA_KEY) throw new Error("Missing BALLDONTLIE_API_KEY");
-  const url = `${NBA_API_BASE}/games?per_page=100&dates[]=${encodeURIComponent(date)}`;
-  const json = await fetchJSON(url, { Authorization: NBA_KEY });
+/**
+ * ✅ Named export (cron/admin rely on this)
+ */
+export async function scoreCompletedGames(league, dateYYYYMMDD, games = []) {
+  const rows = Array.isArray(games) ? games : [];
 
-  const games = Array.isArray(json.data) ? json.data : [];
-  return games.map((g) => {
-    const homeId = g.home_team?.id;
-    const awayId = g.visitor_team?.id;
-    const homePts = Number(g.home_team_score);
-    const awayPts = Number(g.visitor_team_score);
+  let completed = 0;
+  let picks = 0; // non-pass picks in completed games
+  let graded = 0; // wins+losses+pushes
+  let wins = 0;
+  let losses = 0;
+  let pushes = 0;
+  let noPick = 0; // completed finals that were PASS/null
 
-    const winner =
-      Number.isFinite(homePts) && Number.isFinite(awayPts)
-        ? homePts > awayPts
-          ? { id: `nba-${homeId}`, name: g.home_team?.abbreviation || g.home_team?.name }
-          : { id: `nba-${awayId}`, name: g.visitor_team?.abbreviation || g.visitor_team?.name }
-        : { id: null, name: null };
+  let sumEdge = 0;
+  let nEdge = 0;
 
-    return {
-      gameId: `nba-${g.id}`,
-      status: g.status,
-      winnerTeamId: isFinalStatus(g.status) ? winner.id : null,
-      winnerTeamName: isFinalStatus(g.status) ? winner.name : null,
-    };
-  });
-}
+  let sumWinProb = 0;
+  let nWinProb = 0;
 
-async function fetchNCAAMResults(date) {
-  // ESPN scoreboard: date is YYYYMMDD
-  const yyyymmdd = date.replaceAll("-", "");
-  const url = `https://site.web.api.espn.com/apis/v2/sports/basketball/mens-college-basketball/scoreboard?dates=${yyyymmdd}`;
-  const json = await fetchJSON(url);
+  let sumConf = 0;
+  let nConf = 0;
 
-  const events = Array.isArray(json.events) ? json.events : [];
-  return events.map((ev) => {
-    const comp = ev.competitions?.[0];
-    const status = comp?.status?.type?.name || comp?.status?.type?.state || comp?.status?.type?.description;
+  const details = [];
 
-    const competitors = Array.isArray(comp?.competitors) ? comp.competitors : [];
-    const winnerComp = competitors.find((c) => c.winner === true);
+  for (const g of rows) {
+    const status = g?.status ?? g?.state ?? "";
+    if (!isFinalStatus(status)) continue;
 
-    const winnerTeamId = winnerComp?.team?.id ? `ncaam-${winnerComp.team.id}` : null;
-    const winnerTeamName = winnerComp?.team?.abbreviation || winnerComp?.team?.shortDisplayName || null;
+    const { homeScore, awayScore } = getScoresFromGame(g);
+    completed++;
 
-    return {
-      gameId: `ncaam-${ev.id}`,
-      status,
-      winnerTeamId: isFinalStatus(status) ? winnerTeamId : null,
-      winnerTeamName: isFinalStatus(status) ? winnerTeamName : null,
-    };
-  });
-}
-
-async function fetchNHLResults(_date) {
-  // Plug in YOUR NHL fetcher here (you already have NHL in the app).
-  // Return objects shaped like { gameId:"nhl-xxxx", status:"Final", winnerTeamId:"nhl-TEAMID", winnerTeamName:"BOS" }
-  return [];
-}
-
-// POST /api/score?date=YYYY-MM-DD&league=nba|nhl|ncaam|all
-router.post("/", async (req, res) => {
-  try {
-    const date = String(req.query.date || "").slice(0, 10);
-    const leagueParam = String(req.query.league || "all").toLowerCase();
-
-    if (!date || date.length !== 10) return res.status(400).json({ ok: false, error: "Missing/invalid date" });
-
-    const leagues = leagueParam === "all" ? ["nba", "nhl", "ncaam"] : [leagueParam];
-
-    let totalScored = 0;
-    let totalConsidered = 0;
-
-    for (const league of leagues) {
-      const picks = listPicks({ league, date });
-      if (!picks.length) continue;
-
-      let results = [];
-      if (league === "nba") results = await fetchNBAResults(date);
-      if (league === "ncaam") results = await fetchNCAAMResults(date);
-      if (league === "nhl") results = await fetchNHLResults(date);
-
-      const byGameId = new Map(results.map((g) => [g.gameId, g]));
-
-      for (const p of picks) {
-        totalConsidered += 1;
-
-        const g = byGameId.get(p.gameId);
-        if (!g) continue;
-        if (!g.winnerTeamId) continue; // not final / not scoreable
-
-        const correct = String(p.predictedTeamId) === String(g.winnerTeamId);
-
-        updatePick(p.league, p.gameId, p.date, {
-          scored: true,
-          correct,
-          winnerTeamId: g.winnerTeamId,
-          winnerTeamName: g.winnerTeamName,
-          status: g.status,
-        });
-
-        totalScored += 1;
-      }
+    const pickSide = getPickSide(g);
+    if (!pickSide) {
+      noPick++;
+      continue;
     }
 
-    res.json({ ok: true, date, league: leagueParam, considered: totalConsidered, newlyScored: totalScored });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message || String(e) });
+    // must have numeric scores to grade
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+
+    const { result } = outcomeFromPick(pickSide, homeScore, awayScore);
+
+    picks++;
+    graded++;
+
+    if (result === "WIN") wins++;
+    else if (result === "LOSS") losses++;
+    else if (result === "PUSH") pushes++;
+
+    const edge = safeNum(g?.market?.edge);
+    if (Number.isFinite(edge)) {
+      sumEdge += edge;
+      nEdge++;
+    }
+
+    const winProb = safeNum(g?.market?.winProb);
+    if (Number.isFinite(winProb)) {
+      sumWinProb += winProb;
+      nWinProb++;
+    }
+
+    const conf = safeNum(g?.market?.confidence);
+    if (Number.isFinite(conf)) {
+      sumConf += conf;
+      nConf++;
+    }
+
+    details.push({
+      gameId: g?.gameId ?? g?.id ?? null,
+      date: g?.date ?? dateYYYYMMDD,
+      status,
+      pickSide,
+      homeScore,
+      awayScore,
+      result,
+      edge: Number.isFinite(edge) ? edge : null,
+      winProb: Number.isFinite(winProb) ? winProb : null,
+      confidence: Number.isFinite(conf) ? conf : null,
+    });
   }
+
+  const winRate = (wins + losses) > 0 ? wins / (wins + losses) : null;
+
+  return {
+    ok: true,
+    league,
+    date: dateYYYYMMDD,
+    counts: {
+      inputGames: rows.length,
+      completed,
+      picks,      // non-pass picks among finals
+      graded,     // picks that got a W/L/PUSH
+      wins,
+      losses,
+      pushes,
+      noPick,
+    },
+    metrics: {
+      winRate,
+      avgEdge: nEdge > 0 ? sumEdge / nEdge : null,
+      avgWinProb: nWinProb > 0 ? sumWinProb / nWinProb : null,
+      avgConfidence: nConf > 0 ? sumConf / nConf : null,
+    },
+    details, // keep for debugging; you can remove later
+  };
+}
+
+/**
+ * Router (optional)
+ */
+router.get("/ping", (_req, res) => {
+  res.json({ ok: true, route: "score", version: "score-v2" });
 });
 
 export default router;

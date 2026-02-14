@@ -7,6 +7,12 @@ import adminPerformanceRouter from "./routes/adminPerformance.js";
 import predictRouter from "./routes/predict.js";
 import performanceRoutes from "./routes/performance.js";
 import upsetsRouter from "./routes/upsets.js"; // ✅ Upsets router
+import scoreRouter from "./routes/score.js"; // ✅ expose /api/score/* (ping/debug)
+
+// ✅ Cron job starter
+// NOTE: We only import startDailyScoreJob to avoid regressions if dailyScore.js
+// does NOT export runDailyScoreOnce yet.
+import { startDailyScoreJob } from "./cron/dailyScore.js";
 
 /**
  * Optional: Premium NBA router
@@ -23,11 +29,19 @@ try {
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 
+// ✅ allow disabling cron (useful for local dev / certain deploys)
+const ENABLE_CRON = String(process.env.ENABLE_CRON || "true").toLowerCase() !== "false";
+
+// ✅ optional guard for admin endpoints (recommended for any non-local deploy)
+const ADMIN_KEY = String(process.env.ADMIN_KEY || "").trim();
+const isLocal = process.env.NODE_ENV !== "production";
+
 // small hardening
 app.disable("x-powered-by");
 
+// ✅ light request hardening
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 // ✅ sanity route (proves we’re running THIS file)
 app.get("/__ping", (_req, res) => res.json({ ok: true, from: "apps/api/src/index.js" }));
@@ -40,31 +54,118 @@ app.get("/api/health", (_req, res) =>
     ok: true,
     service: "sports-mvp-api",
     time: new Date().toISOString(),
-    version: "api-index-v5-upsets",
+    version: "api-index-v8-upsets-cron-safe-runner",
   })
 );
 
 /**
  * ✅ Mount routers (ONLY ONCE)
- * Order:
- * - admin (writes nightly performance)
- * - performance (reads from DB / stats)
- * - upsets (upset watch)
- * - nbaPremium before other /api/nba/* routes (if present)
- * - predictRouter last
  */
 app.use("/api", adminPerformanceRouter);
 app.use("/api", performanceRoutes);
 
-// ✅ Upset Watch route
 // routes/upsets.js uses router.get("/") so mount it at /api/upsets
 app.use("/api/upsets", upsetsRouter);
+
+// ✅ score router (ping/debug)
+app.use("/api/score", scoreRouter);
 
 if (nbaPremiumRouter) {
   app.use("/api/nba", nbaPremiumRouter);
 }
 
 app.use("/api", predictRouter);
+
+/**
+ * ✅ Admin guard helper
+ * - In production: requires ?key=ADMIN_KEY or header x-admin-key
+ * - In local dev: allows if ADMIN_KEY not set
+ */
+function requireAdmin(req) {
+  if (!ADMIN_KEY) return isLocal; // local-only if no key provided
+  const key = String(req.query.key || req.headers["x-admin-key"] || "").trim();
+  return key && key === ADMIN_KEY;
+}
+
+function normalizeDateParam(date) {
+  if (!date) return null;
+  const ok = /^\d{4}-\d{2}-\d{2}$/.test(date);
+  return ok ? date : null;
+}
+
+function yesterdayUTCYYYYMMDD() {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * ✅ Safe in-file cron runner (fallback)
+ * This avoids hard dependency on dailyScore.js exporting runDailyScoreOnce.
+ */
+async function runDailyScoreOnceFallback({ date } = {}) {
+  const ymd = normalizeDateParam(date) || yesterdayUTCYYYYMMDD();
+
+  // Lazy imports to avoid startup/circular problems
+  const { buildNbaPredictions } = await import("./routes/predict.js");
+  const { scoreCompletedGames } = await import("./routes/score.js");
+
+  const nba = await buildNbaPredictions(ymd, 14, { modelVersion: "v2" });
+  const report = await scoreCompletedGames("nba", ymd, nba?.games || []);
+
+  return {
+    ranFor: ymd,
+    scoredGames: Array.isArray(nba?.games) ? nba.games.length : 0,
+    report,
+  };
+}
+
+/**
+ * ✅ Manual cron trigger (for testing)
+ *
+ * Local (no key set):
+ *   curl -s "http://127.0.0.1:3001/api/admin/run-cron" | jq
+ *
+ * Deterministic:
+ *   curl -s "http://127.0.0.1:3001/api/admin/run-cron?date=2026-02-05" | jq
+ *
+ * Prod (with ADMIN_KEY):
+ *   curl -s "https://YOUR_HOST/api/admin/run-cron?key=YOUR_ADMIN_KEY" | jq
+ */
+app.get("/api/admin/run-cron", async (req, res) => {
+  try {
+    if (!requireAdmin(req)) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    const date = String(req.query.date || "").trim() || undefined;
+
+    // Prefer cron module's runOnce if it exists, else fallback
+    let out = null;
+    try {
+      const cronMod = await import("./cron/dailyScore.js");
+      if (typeof cronMod?.runDailyScoreOnce === "function") {
+        out = await cronMod.runDailyScoreOnce({ date });
+      }
+    } catch {
+      // ignore — we'll fallback below
+    }
+
+    if (!out) {
+      out = await runDailyScoreOnceFallback({ date });
+    }
+
+    return res.json({
+      ok: true,
+      ranFor: out.ranFor,
+      scoredGames: out.scoredGames,
+      report: out.report, // keep for debugging; remove later if you want slimmer payload
+    });
+  } catch (e) {
+    console.error("[ADMIN CRON ERROR]", e);
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
 
 /* ======================================================================
    Everything below here is your existing inline endpoints / helpers.
@@ -109,69 +210,91 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function jitter(ms, pct = 0.2) {
+  const j = ms * pct;
+  return Math.max(0, Math.round(ms + (Math.random() * 2 - 1) * j));
+}
+
+function parseRetryAfterSeconds(res) {
+  const ra = res?.headers?.get?.("retry-after");
+  if (!ra) return null;
+  const n = Number(ra);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
- * ✅ fetchJson w/ smarter 429 handling + small retry
+ * ✅ fetchJson w/ smarter 429 handling + small retry + timeout
  * - prevents "regressions" where a single 429 kills the slate
+ * - prevents "forever hang" with AbortController
  */
-async function fetchJson(url, { headers } = {}, { cacheTtlMs = CACHE_TTL_MS, retries = 2 } = {}) {
+async function fetchJson(
+  url,
+  { headers } = {},
+  { cacheTtlMs = CACHE_TTL_MS, retries = 2, baseBackoffMs = 450, timeoutMs = 25_000 } = {}
+) {
   const auth = headers?.Authorization ? String(headers.Authorization) : "";
   const cacheKey = `GET:${url}:AUTH=${auth}`;
+
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
   let lastErr = null;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const res = await fetch(url, { headers });
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), timeoutMs);
 
-    // Handle 429 with retry/backoff
-    if (res.status === 429) {
-      const retryAfter = res.headers.get("retry-after");
-      const retryAfterMs = retryAfter ? Math.max(0, Number(retryAfter) * 1000) : 0;
-      const text = await res.text().catch(() => "");
-      const err = new Error(
-        `Upstream 429 for ${url}${text ? ` — ${text}` : ""} — Too many requests, please try again later.`
-      );
-      err.status = 429;
-      lastErr = err;
+      const res = await fetch(url, { headers, signal: controller.signal }).finally(() => clearTimeout(t));
 
-      if (attempt < retries) {
-        // jittered exponential backoff
-        const base = 350 * Math.pow(2, attempt);
-        const jitter = Math.floor(Math.random() * 200);
-        const wait = Math.max(retryAfterMs, base + jitter);
-        await sleep(wait);
-        continue;
+      if (res.status === 429) {
+        const retryAfter = parseRetryAfterSeconds(res);
+        const retryAfterMs = retryAfter != null ? retryAfter * 1000 : 0;
+        const text = await res.text().catch(() => "");
+        const err = new Error(
+          `Upstream 429 for ${url}${text ? ` — ${text}` : ""} — Too many requests, please try again later.`
+        );
+        err.status = 429;
+        lastErr = err;
+
+        if (attempt < retries) {
+          const wait = Math.max(retryAfterMs, jitter(baseBackoffMs * Math.pow(2, attempt), 0.25));
+          await sleep(wait);
+          continue;
+        }
+        throw err;
       }
 
-      throw err;
-    }
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        const err = new Error(`Upstream error ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
+        err.status = res.status;
+        lastErr = err;
+        throw err;
+      }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      const err = new Error(`Upstream error ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
-      err.status = res.status;
-      lastErr = err;
-      throw err;
-    }
+      const data = await res.json();
+      setCache(cacheKey, data, cacheTtlMs);
+      return data;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      const isAbort = msg.toLowerCase().includes("aborted");
+      const isTransient =
+        isAbort || msg.includes("fetch failed") || msg.includes("ECONNRESET") || msg.includes("ETIMEDOUT");
 
-    const data = await res.json();
-    setCache(cacheKey, data, cacheTtlMs);
-    return data;
+      lastErr = e;
+
+      if (!isTransient || attempt >= retries) throw e;
+      await sleep(jitter(baseBackoffMs * Math.pow(2, attempt), 0.25));
+    }
   }
 
-  // should never reach, but safe fallback
   throw lastErr || new Error(`fetchJson failed for ${url}`);
 }
 
 /**
  * Helpers
  */
-function normalizeDateParam(date) {
-  if (!date) return null;
-  const ok = /^\d{4}-\d{2}-\d{2}$/.test(date);
-  return ok ? date : null;
-}
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
@@ -492,7 +615,7 @@ async function getNcaamTop25() {
   const ap = ranks.filter((x) => String(x.poll).toLowerCase().includes("ap"));
   const finalList = ap.length ? ap : ranks;
 
-  finalList.sort((a, b) => (Number(a.rank) || 999) - (Number(b.rank) || 999));
+  finalList.sort((a, b) => (Number(a.rank) || 999) - (Number(a.rank) || 999));
   return finalList.slice(0, 25);
 }
 
@@ -597,4 +720,13 @@ app.use((err, _req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
+
+  // ✅ start cron (safe toggle)
+  if (ENABLE_CRON) {
+    console.log("[CRON] Daily scoring job enabled");
+    // This should schedule "30 3 * * *" (UTC) inside dailyScore.js
+    startDailyScoreJob();
+  } else {
+    console.log("[CRON] Disabled via ENABLE_CRON=false");
+  }
 });
