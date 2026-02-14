@@ -17,16 +17,45 @@ function num(n, digits = 0) {
   return String(Math.round(n * m) / m);
 }
 
+function sideLabel(side) {
+  const s = String(side || "").toLowerCase();
+  if (s === "home") return "HOME";
+  if (s === "away") return "AWAY";
+  return "—";
+}
+
 export default function Upsets() {
-  const [league, setLeague] = useState("nba");
+  const [league, setLeague] = useState("nba"); // nba | nhl | ncaam
   const [date, setDate] = useState(todayYMD());
-  const [windowDays, setWindowDays] = useState(5);
-  const [minGap, setMinGap] = useState(15);
-  const [limit, setLimit] = useState(12);
-  const [sortKey, setSortKey] = useState("score"); // score | winProb | baseGap
+
+  // API: window, minWin, limit (+ aliases supported by backend)
+  const [windowDays, setWindowDays] = useState(14);
+  const [minWin, setMinWin] = useState(0.3);
+  const [limit, setLimit] = useState(20);
+
+  // mode=watch|strict
+  const [mode, setMode] = useState("watch");
+
+  // score | winProb | baseGap
+  const [sortKey, setSortKey] = useState("score");
+
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [payload, setPayload] = useState(null);
+
+  // Sensible defaults when you switch leagues
+  useEffect(() => {
+    if (league === "ncaam") {
+      // NCAA: tighter distribution → 0.20 is more useful
+      setMinWin((v) => (Number.isFinite(v) ? Math.min(v, 0.3) : 0.2));
+      if (minWin > 0.3) setMinWin(0.2);
+      if (windowDays < 14) setWindowDays(45);
+    } else {
+      if (windowDays > 60) setWindowDays(14);
+      if (minWin < 0.25) setMinWin(0.3);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [league]);
 
   async function load() {
     setLoading(true);
@@ -37,8 +66,9 @@ export default function Upsets() {
         league,
         date,
         window: String(windowDays),
-        minGap: String(minGap),
+        minWin: String(minWin),
         limit: String(limit),
+        mode,
       });
 
       const res = await fetch(`/api/upsets?${qs.toString()}`);
@@ -60,30 +90,54 @@ export default function Upsets() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [league, date, windowDays, minGap, limit]);
-
-  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
-
-  const sortedRows = useMemo(() => {
-    const r = [...rows];
-    const get = (row) => {
-      if (sortKey === "winProb") return row?.pick?.winProb ?? 0;
-      if (sortKey === "baseGap") return row?.signals?.baseGap ?? -9999;
-      return row?.signals?.score ?? 0;
-    };
-    r.sort((a, b) => get(b) - get(a));
-    return r;
-  }, [rows, sortKey]);
+  }, [league, date, windowDays, minWin, limit, mode]);
 
   const meta = payload?.meta || {};
+
+  // backend returns BOTH `rows` and `candidates`
+  const rows = useMemo(() => {
+    if (Array.isArray(payload?.rows)) return payload.rows;
+    if (Array.isArray(payload?.candidates)) return payload.candidates;
+    return [];
+  }, [payload]);
+
+  const sorted = useMemo(() => {
+    const r = [...rows];
+
+    const baseGapAbs = (x) => {
+      const g = x?.signals?.baseGap;
+      return Number.isFinite(g) ? Math.abs(g) : 0;
+    };
+
+    const score = (x) => {
+      const s = x?.signals?.score;
+      return Number.isFinite(s) ? s : 0;
+    };
+
+    const winProb = (x) => {
+      const w = x?.winProb;
+      return Number.isFinite(w) ? w : 0;
+    };
+
+    r.sort((a, b) => {
+      if (sortKey === "baseGap") return baseGapAbs(a) - baseGapAbs(b); // closer game first
+      if (sortKey === "winProb") return winProb(b) - winProb(a);
+      return score(b) - score(a);
+    });
+
+    return r.slice(0, Math.max(1, Math.min(50, Number(limit) || 20)));
+  }, [rows, sortKey, limit]);
 
   const emptyReason = useMemo(() => {
     if (loading) return "";
     if (err) return "";
     if (!payload) return "";
-    if ((meta?.trainedGames ?? 0) === 0) return "No model history available for that date/window.";
-    // if rows is empty, it’s either “no games” or “no candidates”
-    return "No upset candidates matched your filters for this slate.";
+
+    const slate = typeof meta?.slateGames === "number" ? meta.slateGames : null;
+
+    if (slate === 0) return "No games on this slate (try another date/league).";
+    if ((payload?.count ?? 0) === 0) return "No upset candidates matched your filters for this slate.";
+    return "No results.";
   }, [loading, err, payload, meta]);
 
   return (
@@ -94,17 +148,22 @@ export default function Upsets() {
             <div>
               <div style={{ fontWeight: 900 }}>Upset Watch</div>
               <div className="muted" style={{ marginTop: 6 }}>
-                Underdog candidates with real win equity (based on today’s model slate).
+                Underdog win equity + model context (pick/edge/conf). Use <b>Watch</b> to scan equity; use{" "}
+                <b>Strict</b> for “model actually picked the dog.”
               </div>
 
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                <span className="pill">Model: {meta?.sourceModel || "elo+rest"}</span>
+                <span className="pill">Source: {meta?.source || "—"}</span>
+                <span className="pill">League: {league.toUpperCase()}</span>
+                <span className="pill">Mode: {mode}</span>
                 <span className="pill">Window: {windowDays}d</span>
-                <span className="pill">Min gap: {minGap} Elo</span>
-                <span className="pill">Limit: {limit}</span>
-                {typeof meta?.trainedGames === "number" ? (
-                  <span className="pill">Trained: {meta.trainedGames} games</span>
+                <span className="pill">Min underdog win%: {pct(minWin)}</span>
+
+                {typeof meta?.slateGames === "number" ? <span className="pill">Slate: {meta.slateGames}</span> : null}
+                {typeof meta?.strictUnderdogPicks === "number" ? (
+                  <span className="pill">Model underdog picks: {meta.strictUnderdogPicks}</span>
                 ) : null}
+                {typeof meta?.elapsedMs === "number" ? <span className="pill">API: {meta.elapsedMs}ms</span> : null}
               </div>
             </div>
 
@@ -113,17 +172,14 @@ export default function Upsets() {
                 Home
               </Link>
 
-              <button
-                className={league === "nba" ? "btnPrimary" : "btnGhost"}
-                onClick={() => setLeague("nba")}
-              >
+              <button className={league === "nba" ? "btnPrimary" : "btnGhost"} onClick={() => setLeague("nba")}>
                 NBA
               </button>
-              <button
-                className={league === "nhl" ? "btnPrimary" : "btnGhost"}
-                onClick={() => setLeague("nhl")}
-              >
+              <button className={league === "nhl" ? "btnPrimary" : "btnGhost"} onClick={() => setLeague("nhl")}>
                 NHL
+              </button>
+              <button className={league === "ncaam" ? "btnPrimary" : "btnGhost"} onClick={() => setLeague("ncaam")}>
+                NCAAM
               </button>
             </div>
           </div>
@@ -133,12 +189,7 @@ export default function Upsets() {
             <div className="row" style={{ alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <div className="muted">Date</div>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="input"
-                />
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
               </div>
 
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -146,24 +197,25 @@ export default function Upsets() {
                 <input
                   type="number"
                   min={3}
-                  max={30}
+                  max={90}
                   value={windowDays}
-                  onChange={(e) => setWindowDays(Number(e.target.value || 5))}
+                  onChange={(e) => setWindowDays(Number(e.target.value || 14))}
                   className="input"
                   style={{ width: 90 }}
                 />
               </div>
 
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div className="muted">Min gap</div>
+                <div className="muted">Min underdog win%</div>
                 <input
                   type="number"
-                  min={0}
-                  max={250}
-                  value={minGap}
-                  onChange={(e) => setMinGap(Number(e.target.value || 0))}
+                  min={0.05}
+                  max={0.95}
+                  step={0.05}
+                  value={minWin}
+                  onChange={(e) => setMinWin(Number(e.target.value || 0.3))}
                   className="input"
-                  style={{ width: 90 }}
+                  style={{ width: 150 }}
                 />
               </div>
 
@@ -174,24 +226,28 @@ export default function Upsets() {
                   min={1}
                   max={50}
                   value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value || 12))}
+                  onChange={(e) => setLimit(Number(e.target.value || 20))}
                   className="input"
                   style={{ width: 90 }}
                 />
+              </div>
+
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <div className="muted">Mode</div>
+                <select value={mode} onChange={(e) => setMode(e.target.value)} className="input">
+                  <option value="watch">Watch (equity filter)</option>
+                  <option value="strict">Strict (model picked underdog)</option>
+                </select>
               </div>
 
               <div style={{ flex: 1 }} />
 
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <div className="muted">Sort</div>
-                <select
-                  value={sortKey}
-                  onChange={(e) => setSortKey(e.target.value)}
-                  className="input"
-                >
-                  <option value="score">Edge score</option>
-                  <option value="winProb">Win prob</option>
-                  <option value="baseGap">Elo gap</option>
+                <select value={sortKey} onChange={(e) => setSortKey(e.target.value)} className="input">
+                  <option value="score">Score</option>
+                  <option value="winProb">Underdog win%</option>
+                  <option value="baseGap">Gap (closest first)</option>
                 </select>
               </div>
 
@@ -204,7 +260,7 @@ export default function Upsets() {
           {/* Content */}
           <div className="list" style={{ marginTop: 14 }}>
             <div className="card">
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>Today’s Candidates</div>
+              <div style={{ fontWeight: 900, marginBottom: 6 }}>Upset Candidates</div>
 
               {err ? (
                 <div className="kicker">
@@ -212,7 +268,7 @@ export default function Upsets() {
                 </div>
               ) : loading ? (
                 <div className="kicker">Loading upsets…</div>
-              ) : sortedRows.length === 0 ? (
+              ) : sorted.length === 0 ? (
                 <div className="kicker">{emptyReason}</div>
               ) : (
                 <div style={{ overflowX: "auto" }}>
@@ -220,59 +276,88 @@ export default function Upsets() {
                     <thead>
                       <tr className="muted" style={{ textAlign: "left" }}>
                         <th style={{ padding: "10px 8px" }}>Matchup</th>
-                        <th style={{ padding: "10px 8px" }}>Pick</th>
-                        <th style={{ padding: "10px 8px" }}>Win%</th>
-                        <th style={{ padding: "10px 8px" }}>Elo gap</th>
-                        <th style={{ padding: "10px 8px" }}>Why</th>
-                        <th style={{ padding: "10px 8px" }}>Rest</th>
+                        <th style={{ padding: "10px 8px" }}>Underdog</th>
+                        <th style={{ padding: "10px 8px" }}>Fav</th>
+                        <th style={{ padding: "10px 8px" }}>Dog win%</th>
+                        <th style={{ padding: "10px 8px" }}>Fav side + gap</th>
                         <th style={{ padding: "10px 8px" }}>Score</th>
+                        <th style={{ padding: "10px 8px" }}>Model pick</th>
+                        <th style={{ padding: "10px 8px" }}>Dog edge</th>
+                        <th style={{ padding: "10px 8px" }}>Conf</th>
+                        <th style={{ padding: "10px 8px" }}>Why</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedRows.map((r) => {
-                        const home = r?.home?.abbr || "HOME";
-                        const away = r?.away?.abbr || "AWAY";
-                        const pickName = r?.pick?.winnerName || "—";
-
-                        const winProb = r?.pick?.winProb;
-                        const baseGap = r?.signals?.baseGap;
-                        const score = r?.signals?.score;
-
-                        const restH = r?.signals?.rest?.home;
-                        const restA = r?.signals?.rest?.away;
-
-                        const restText =
-                          restH && restA
-                            ? `H:${restH.restDays ?? "—"}d / A:${restA.restDays ?? "—"}d`
-                            : "—";
-
+                      {sorted.map((r) => {
+                        const u = r?.underdog || {};
+                        const f = r?.favorite || {};
                         const why = Array.isArray(r?.why) ? r.why.join(" • ") : "—";
 
+                        const gap = r?.signals?.baseGap;
+                        const favSide = r?.signals?.favoriteSide; // "home" | "away"
+                        const score = r?.signals?.score;
+
+                        const pickSide = r?.pick?.pickSide; // "home" | "away"
+                        const pickName = r?.pick?.recommendedTeamName;
+
+                        const edge = r?.pick?.edge; // this is UNDERDOG edge in your current API contract
+                        const conf = r?.pick?.confidence;
+
+                        const matchup = r?.matchup || "—";
+
                         return (
-                          <tr key={r?.gameId} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
-                            <td style={{ padding: "10px 8px", fontWeight: 800 }}>
-                              {away} @ {home}
-                            </td>
+                          <tr
+                            key={r?.id || r?.gameId || `${r?.league}-${r?.date}-${matchup}`}
+                            style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}
+                          >
+                            <td style={{ padding: "10px 8px", fontWeight: 800 }}>{matchup}</td>
+
                             <td style={{ padding: "10px 8px" }}>
-                              <span className="pill">{pickName}</span>
+                              <span className="pill">
+                                {u?.abbr || u?.name || "Underdog"}
+                                {u?.isHome ? " (H)" : " (A)"}
+                              </span>
                             </td>
-                            <td style={{ padding: "10px 8px" }}>{pct(winProb)}</td>
+
                             <td style={{ padding: "10px 8px" }}>
-                              {baseGap == null ? "—" : `${Math.round(baseGap)} `}
-                              {r?.signals?.isAwayPick ? <span className="pill">Away</span> : null}
+                              {f?.abbr || f?.name || "Favorite"}
+                              {f?.isHome ? " (H)" : " (A)"}
                             </td>
+
+                            <td style={{ padding: "10px 8px" }}>{pct(r?.winProb)}</td>
+
+                            <td style={{ padding: "10px 8px" }}>
+                              {favSide ? `${sideLabel(favSide)} fav` : "—"}
+                              {Number.isFinite(gap) ? ` • ${Math.round(Math.abs(gap))}` : ""}
+                            </td>
+
+                            <td style={{ padding: "10px 8px" }}>{Number.isFinite(score) ? num(score, 1) : "—"}</td>
+
+                            <td style={{ padding: "10px 8px" }}>
+                              <span className="pill">
+                                {pickName ? pickName : "—"} {pickSide ? `(${sideLabel(pickSide)})` : ""}
+                              </span>
+                            </td>
+
+                            <td style={{ padding: "10px 8px" }}>
+                              {Number.isFinite(edge) ? num(edge, 3) : "—"}
+                            </td>
+
+                            <td style={{ padding: "10px 8px" }}>{Number.isFinite(conf) ? pct(conf) : "—"}</td>
+
                             <td style={{ padding: "10px 8px" }} className="muted">
                               {why}
                             </td>
-                            <td style={{ padding: "10px 8px" }} className="muted">
-                              {restText}
-                            </td>
-                            <td style={{ padding: "10px 8px" }}>{num(score, 2)}</td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
+
+                  <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
+                    Notes: “Dog win%” is the underdog’s win equity. “Dog edge” is expressed from the underdog POV
+                    (so negatives are common). “Fav side + gap” is an Elo-like pseudo-gap (not official Elo).
+                  </div>
                 </div>
               )}
             </div>

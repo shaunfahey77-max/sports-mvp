@@ -30,7 +30,7 @@ export default function Layout({ children }) {
             <NavItem to="/league/nba">NBA</NavItem>
             <NavItem to="/league/nhl">NHL</NavItem>
             <NavItem to="/league/ncaam">NCAAM</NavItem>
-            <NavItem to="/parlay-lab">Parlay Lab</NavItem>
+            {/* <NavLink to="/parlay" className="navLink">Parlay Lab</NavLink> */}
             <NavItem to="/upsets">Upset Watch</NavItem>
           </nav>
         </div>

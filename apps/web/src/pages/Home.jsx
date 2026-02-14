@@ -27,12 +27,6 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
 }
 
-function addDaysUTC(ymd, delta) {
-  const d = new Date(`${ymd}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
-}
-
 function tierKey(t) {
   const v = String(t || "PASS").toUpperCase();
   if (v === "ELITE") return "ELITE";
@@ -41,6 +35,11 @@ function tierKey(t) {
   return "PASS";
 }
 
+/**
+ * Aggregates a slate (games[]) into KPIs.
+ * IMPORTANT: completed/scoring is based on winnerTeamId OR final-ish status.
+ * We only count wins/losses if we have BOTH predictedId and winnerId.
+ */
 function aggGames(games) {
   const out = {
     games: games.length,
@@ -71,15 +70,18 @@ function aggGames(games) {
       nAbsEdge++;
     }
 
-    if (isFinalStatus(g?.status)) {
+    const predictedId = g?.market?.recommendedTeamId || null;
+    const winnerId = g?.result?.winnerTeamId || null;
+
+    // ✅ consider complete if we have a winnerId OR status is final-ish
+    const isComplete = Boolean(winnerId) || isFinalStatus(g?.status);
+
+    if (isComplete) {
       out.completed++;
-      if (pick) {
-        const predictedId = g?.market?.recommendedTeamId || null;
-        const winnerId = g?.result?.winnerTeamId || null;
-        if (predictedId && winnerId) {
-          if (predictedId === winnerId) out.wins++;
-          else out.losses++;
-        }
+
+      if (pick && predictedId && winnerId) {
+        if (predictedId === winnerId) out.wins++;
+        else out.losses++;
       }
     }
   }
@@ -102,13 +104,11 @@ async function fetchJson(url, { timeoutMs = 12000, signal } = {}) {
   try {
     const r = await fetch(url, { signal: ctrl.signal });
 
-    // If upstream hiccups or proxy restarts, .json() can throw.
-    // Read text first and parse safely.
     const text = await r.text();
     let json = null;
     try {
       json = text ? JSON.parse(text) : null;
-    } catch (e) {
+    } catch {
       const err = new Error("Bad JSON from API");
       err._raw = text?.slice?.(0, 200);
       throw err;
@@ -143,7 +143,9 @@ function TrendLine({ points }) {
   if (!valid.length) {
     return (
       <div className="trendEmpty">
-        <div className="muted2" style={{ fontSize: 12 }}>No scored picks yet</div>
+        <div className="muted2" style={{ fontSize: 12 }}>
+          No scored picks yet
+        </div>
       </div>
     );
   }
@@ -162,7 +164,14 @@ function TrendLine({ points }) {
     .join(" ");
 
   return (
-    <svg width={w} height={h} className="trendSvg" viewBox={`0 0 ${w} ${h}`} role="img" aria-label="7-day accuracy trend">
+    <svg
+      width={w}
+      height={h}
+      className="trendSvg"
+      viewBox={`0 0 ${w} ${h}`}
+      role="img"
+      aria-label="7-day accuracy trend"
+    >
       <line x1="0" y1={h / 2} x2={w} y2={h / 2} className="trendGrid" />
       <line x1="0" y1={h - 1} x2={w} y2={h - 1} className="trendGrid" />
       <polyline points={path} className="trendLine" fill="none" />
@@ -200,7 +209,9 @@ function LeagueCard({ league, title, meta, games, loading, error, onOpenLink }) 
             {meta?.mode ? ` • Mode: ${meta.mode}` : ""}
           </div>
         </div>
-        <Link className="btn" to={onOpenLink || `/league/${league}`}>Open</Link>
+        <Link className="btn" to={onOpenLink || `/league/${league}`}>
+          Open
+        </Link>
       </div>
 
       <div className="cardBody">
@@ -218,7 +229,9 @@ function LeagueCard({ league, title, meta, games, loading, error, onOpenLink }) 
             </div>
 
             <div style={{ marginTop: 14 }}>
-              <div className="muted2" style={{ fontSize: 12, marginBottom: 8 }}>Tier distribution</div>
+              <div className="muted2" style={{ fontSize: 12, marginBottom: 8 }}>
+                Tier distribution
+              </div>
               <div style={{ display: "grid", gap: 8 }}>
                 <Bar label="ELITE" value={a.tiers.ELITE} max={maxTier} />
                 <Bar label="STRONG" value={a.tiers.STRONG} max={maxTier} />
@@ -228,7 +241,9 @@ function LeagueCard({ league, title, meta, games, loading, error, onOpenLink }) 
             </div>
 
             <div style={{ marginTop: 14 }}>
-              <div className="muted2" style={{ fontSize: 12, marginBottom: 8 }}>Performance (completed games only)</div>
+              <div className="muted2" style={{ fontSize: 12, marginBottom: 8 }}>
+                Performance (completed games only)
+              </div>
 
               <div className="kpiGrid3">
                 <KpiTile label="Completed" value={a.completed} />
@@ -280,6 +295,31 @@ function PerfMiniTable({ rows }) {
   );
 }
 
+/**
+ * Normalizes /api/performance rows into exactly 7 days ending on `endDate`.
+ * Fills missing days with { scored:0, acc:null } so the UI never breaks.
+ */
+function normalizePerfRows(rows, endDate) {
+  const byDate = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    if (!r?.date) continue;
+    byDate.set(String(r.date).slice(0, 10), {
+      date: String(r.date).slice(0, 10),
+      scored: Number(r?.scored || 0),
+      acc: Number.isFinite(r?.acc) ? r.acc : null,
+    });
+  }
+
+  const out = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(`${endDate}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - i);
+    const ymd = d.toISOString().slice(0, 10);
+    out.push(byDate.get(ymd) || { date: ymd, scored: 0, acc: null });
+  }
+  return out;
+}
+
 export default function Home() {
   const [date, setDate] = useState(todayUTCYYYYMMDD());
   const [apiOk, setApiOk] = useState(null);
@@ -293,6 +333,7 @@ export default function Home() {
     loading: false,
     error: "",
     rows: { nba: [], nhl: [], ncaam: [] }, // [{ date, scored, acc }]
+    meta: null, // optional meta from API
   });
 
   const perfAbortRef = useRef(null);
@@ -309,7 +350,9 @@ export default function Home() {
         setApiOk(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // load today's slate for each league
@@ -335,17 +378,26 @@ export default function Home() {
       setNba({ loading: false, error: "API offline (port 3001)", data: null });
       setNhl({ loading: false, error: "API offline (port 3001)", data: null });
       setNcaam({ loading: false, error: "API offline (port 3001)", data: null });
-      return () => { alive = false; };
+      return () => {
+        alive = false;
+      };
     }
 
     loadOne("nba", setNba);
     loadOne("nhl", setNhl);
     loadOne("ncaam", setNcaam);
 
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [date, apiOk]);
 
-  // 7-day performance fetch (safe abort + progressive)
+  // ✅ 7-day performance fetch (single call to /api/performance)
+  // FIXES:
+  // - Uses routeTimeoutMs >= internalTimeoutMs * days (otherwise abort cascades)
+  // - Uses a slightly longer fetch timeout than route timeout
+  // - Normalizes rows to exactly 7 days ending on selected `date`
+  // - Handles partial responses (ok:false) without breaking UI
   useEffect(() => {
     if (apiOk !== true) return;
 
@@ -353,66 +405,74 @@ export default function Home() {
     const abort = new AbortController();
     perfAbortRef.current = abort;
 
-    const days = [];
-    for (let i = 6; i >= 0; i--) days.push(addDaysUTC(date, -i));
-    const leagues = ["nba", "nhl", "ncaam"];
+    // prefill UI so it never looks "empty"
+    const empty = {
+      nba: normalizePerfRows([], date),
+      nhl: normalizePerfRows([], date),
+      ncaam: normalizePerfRows([], date),
+    };
 
-    setPerf7({
-      loading: true,
-      error: "",
-      rows: {
-        nba: days.map((d) => ({ date: d, scored: 0, acc: null })),
-        nhl: days.map((d) => ({ date: d, scored: 0, acc: null })),
-        ncaam: days.map((d) => ({ date: d, scored: 0, acc: null })),
-      },
-    });
+    setPerf7({ loading: true, error: "", rows: empty, meta: null });
 
     const run = async () => {
       try {
-        // Fetch by day to keep UI snappy (and avoid upstream bursts)
-        for (let idx = 0; idx < days.length; idx++) {
-          if (abort.signal.aborted) return;
-          const ymd = days[idx];
+        const leagues = ["nba", "nhl", "ncaam"].join(",");
 
-          // 3 leagues in parallel for this day
-          const results = await Promise.all(
-            leagues.map(async (lg) => {
-              const qs = new URLSearchParams({ league: lg, date: ymd });
-              const { json } = await fetchJson(`/api/predictions?${qs.toString()}`, {
-                timeoutMs: 20000,
-                signal: abort.signal,
-              });
+        // If your API is doing 7 days * 3 leagues, plan for worst-case.
+        // Keep concurrency low to avoid upstream bursts.
+        const internalTimeoutMs = 15000; // per internal /predictions call
+        const routeTimeoutMs = 80000; // must be comfortably > internalTimeoutMs * 7 / concurrency
+        const fetchTimeoutMs = routeTimeoutMs + 10000; // allow the server to finish before client aborts
 
-              const games = json?.games || [];
-              const a = aggGames(games);
-              const scored = (a.wins || 0) + (a.losses || 0);
-              const acc = scored ? a.wins / scored : null;
-              return { lg, scored, acc };
-            })
-          );
+        const qs = new URLSearchParams({
+          days: "7",
+          leagues,
+          internalTimeoutMs: String(internalTimeoutMs),
+          routeTimeoutMs: String(routeTimeoutMs),
+          concurrency: "1",
+        });
 
-          setPerf7((p) => {
-            const next = { ...p.rows };
-            for (const r of results) {
-              const copy = [...(next[r.lg] || [])];
-              copy[idx] = { date: ymd, scored: r.scored, acc: r.acc };
-              next[r.lg] = copy;
-            }
-            return { ...p, rows: next };
-          });
+        const { ok, status, json } = await fetchJson(`/api/performance?${qs.toString()}`, {
+          timeoutMs: fetchTimeoutMs,
+          signal: abort.signal,
+        });
 
-          // small pacing
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise((r) => setTimeout(r, 60));
+        if (abort.signal.aborted) return;
+
+        if (!ok || !json) {
+          const msg = `Performance failed (HTTP ${status})`;
+          setPerf7({ loading: false, error: msg, rows: empty, meta: null });
+          return;
         }
 
-        setPerf7((p) => ({ ...p, loading: false, error: "" }));
+        // If the route times out it may return ok:false with error/meta
+        if (!json?.ok) {
+          const msg = json?.error || "Performance failed";
+          setPerf7({ loading: false, error: msg, rows: empty, meta: json?.meta || null });
+          return;
+        }
+
+        const rows = json?.rows || {};
+        setPerf7({
+          loading: false,
+          error: "",
+          meta: json?.meta || null,
+          rows: {
+            nba: normalizePerfRows(rows.nba, date),
+            nhl: normalizePerfRows(rows.nhl, date),
+            ncaam: normalizePerfRows(rows.ncaam, date),
+          },
+        });
       } catch (e) {
-        // IMPORTANT: ignore abort errors completely (this is where your “signal is aborted…” came from)
         if (abort.signal.aborted) return;
         if (e?.name === "AbortError") return;
 
-        setPerf7((p) => ({ ...p, loading: false, error: String(e?.message || e) }));
+        setPerf7((p) => ({
+          loading: false,
+          error: String(e?.message || e),
+          rows: p.rows,
+          meta: p.meta || null,
+        }));
       }
     };
 
@@ -424,6 +484,7 @@ export default function Home() {
   const nhlAgg = useMemo(() => aggGames(nhl.data?.games || []), [nhl.data]);
   const ncaamAgg = useMemo(() => aggGames(ncaam.data?.games || []), [ncaam.data]);
 
+  // Today's slate summary
   const global = useMemo(() => {
     const wins = (nbaAgg.wins || 0) + (nhlAgg.wins || 0) + (ncaamAgg.wins || 0);
     const losses = (nbaAgg.losses || 0) + (nhlAgg.losses || 0) + (ncaamAgg.losses || 0);
@@ -435,6 +496,35 @@ export default function Home() {
 
     return { scored, acc, picks, completed };
   }, [nbaAgg, nhlAgg, ncaamAgg]);
+
+  // ✅ 7-day summary derived from perf7 (scored + weighted accuracy)
+  const global7 = useMemo(() => {
+    const sumLeague = (lg) => {
+      const arr = perf7.rows?.[lg] || [];
+      let scored = 0;
+      let winsApprox = 0;
+
+      for (const r of arr) {
+        const s = Number(r?.scored || 0);
+        scored += s;
+        if (Number.isFinite(r?.acc)) winsApprox += r.acc * s;
+      }
+
+      const acc = scored ? winsApprox / scored : null;
+      return { scored, acc };
+    };
+
+    const nba7 = sumLeague("nba");
+    const nhl7 = sumLeague("nhl");
+    const ncaam7 = sumLeague("ncaam");
+
+    const scored = nba7.scored + nhl7.scored + ncaam7.scored;
+    const winsApprox =
+      (nba7.acc ?? 0) * nba7.scored + (nhl7.acc ?? 0) * nhl7.scored + (ncaam7.acc ?? 0) * ncaam7.scored;
+    const acc = scored ? winsApprox / scored : null;
+
+    return { scored, acc };
+  }, [perf7.rows]);
 
   const openNbaLink = useMemo(() => `/league/nba?date=${date}`, [date]);
   const openNhlLink = useMemo(() => `/league/nhl?date=${date}`, [date]);
@@ -449,7 +539,9 @@ export default function Home() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="cardHeader">
           <div>
-            <div className="h1" style={{ marginBottom: 6 }}>Sports MVP</div>
+            <div className="h1" style={{ marginBottom: 6 }}>
+              Sports MVP
+            </div>
             <p className="sub" style={{ margin: 0 }}>
               Daily slate + premium predictions contract across NBA / NHL / NCAAM.
             </p>
@@ -457,7 +549,9 @@ export default function Home() {
 
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            <Link className="btn btnPrimary" to={openNbaLink}>Open NBA</Link>
+            <Link className="btn btnPrimary" to={openNbaLink}>
+              Open NBA
+            </Link>
           </div>
         </div>
 
@@ -474,28 +568,38 @@ export default function Home() {
               <div>
                 <div style={{ fontWeight: 900 }}>7-day performance</div>
                 <div className="muted2" style={{ fontSize: 12, marginTop: 4 }}>
-                  Scored picks: <span className="muted" style={{ fontWeight: 800 }}>{global.scored || 0}</span>
+                  Scored picks:{" "}
+                  <span className="muted" style={{ fontWeight: 800 }}>
+                    {global7.scored || 0}
+                  </span>
                   {" • "}
-                  Total picks: <span className="muted" style={{ fontWeight: 800 }}>{global.picks || 0}</span>
-                  {" • "}
-                  Completed: <span className="muted" style={{ fontWeight: 800 }}>{global.completed || 0}</span>
+                  7-day accuracy:{" "}
+                  <span className="muted" style={{ fontWeight: 800 }}>
+                    {pct(global7.acc)}
+                  </span>
                 </div>
               </div>
 
               <div className="perfLegend">
-                <span className="muted2" style={{ fontSize: 12 }}>Accuracy trend</span>
+                <span className="muted2" style={{ fontSize: 12 }}>
+                  Accuracy trend
+                </span>
                 <span className="badge">Last 7 days</span>
               </div>
             </div>
 
             {perf7.error ? (
-              <div className="muted" style={{ marginTop: 10 }}>Error: {perf7.error}</div>
+              <div className="muted" style={{ marginTop: 10 }}>
+                Error: {perf7.error}
+              </div>
             ) : (
               <div className="perfGrid">
                 <div className="perfCard">
                   <div className="perfCardHead">
                     <div style={{ fontWeight: 900 }}>NBA</div>
-                    <div className="muted2" style={{ fontSize: 12 }}>Avg: {pct(avgAcc(perf7.rows.nba))}</div>
+                    <div className="muted2" style={{ fontSize: 12 }}>
+                      Avg: {pct(avgAcc(perf7.rows.nba))}
+                    </div>
                   </div>
                   <TrendLine points={trendPoints("nba")} />
                   <PerfMiniTable rows={perf7.rows.nba} />
@@ -504,7 +608,9 @@ export default function Home() {
                 <div className="perfCard">
                   <div className="perfCardHead">
                     <div style={{ fontWeight: 900 }}>NHL</div>
-                    <div className="muted2" style={{ fontSize: 12 }}>Avg: {pct(avgAcc(perf7.rows.nhl))}</div>
+                    <div className="muted2" style={{ fontSize: 12 }}>
+                      Avg: {pct(avgAcc(perf7.rows.nhl))}
+                    </div>
                   </div>
                   <TrendLine points={trendPoints("nhl")} />
                   <PerfMiniTable rows={perf7.rows.nhl} />
@@ -513,7 +619,9 @@ export default function Home() {
                 <div className="perfCard">
                   <div className="perfCardHead">
                     <div style={{ fontWeight: 900 }}>NCAAM</div>
-                    <div className="muted2" style={{ fontSize: 12 }}>Avg: {pct(avgAcc(perf7.rows.ncaam))}</div>
+                    <div className="muted2" style={{ fontSize: 12 }}>
+                      Avg: {pct(avgAcc(perf7.rows.ncaam))}
+                    </div>
                   </div>
                   <TrendLine points={trendPoints("ncaam")} />
                   <PerfMiniTable rows={perf7.rows.ncaam} />
@@ -522,23 +630,54 @@ export default function Home() {
             )}
 
             <div className="muted2" style={{ fontSize: 12, marginTop: 10 }}>
-              {perf7.loading ? "Updating trend progressively…" : " "}
-              {" "}Tip: Use <span className="badge">Tournament</span> mode on NCAAM pages for neutral-court feel + higher upset sensitivity.
+              {perf7.loading ? "Updating…" : " "}
+              {" "}
+              Tip: Use <span className="badge">Tournament</span> mode on NCAAM pages for neutral-court feel + higher upset sensitivity.
             </div>
           </div>
         </div>
       </div>
 
       <div className="leagueGrid">
-        <LeagueCard league="nba" title="NBA" meta={nba.data?.meta} games={nba.data?.games || []} loading={nba.loading} error={nba.error} onOpenLink={openNbaLink} />
-        <LeagueCard league="nhl" title="NHL" meta={nhl.data?.meta} games={nhl.data?.games || []} loading={nhl.loading} error={nhl.error} onOpenLink={openNhlLink} />
-        <LeagueCard league="ncaam" title="NCAAM" meta={ncaam.data?.meta} games={ncaam.data?.games || []} loading={ncaam.loading} error={ncaam.error} onOpenLink={openNcaamLink} />
+        <LeagueCard
+          league="nba"
+          title="NBA"
+          meta={nba.data?.meta}
+          games={nba.data?.games || []}
+          loading={nba.loading}
+          error={nba.error}
+          onOpenLink={openNbaLink}
+        />
+        <LeagueCard
+          league="nhl"
+          title="NHL"
+          meta={nhl.data?.meta}
+          games={nhl.data?.games || []}
+          loading={nhl.loading}
+          error={nhl.error}
+          onOpenLink={openNhlLink}
+        />
+        <LeagueCard
+          league="ncaam"
+          title="NCAAM"
+          meta={ncaam.data?.meta}
+          games={ncaam.data?.games || []}
+          loading={ncaam.loading}
+          error={ncaam.error}
+          onOpenLink={openNcaamLink}
+        />
       </div>
 
       <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <Link className="btn" to="/parlay-lab">Parlay Lab</Link>
-        <Link className="btn" to="/upsets">Upset Watch</Link>
-        <Link className="btn" to={openNcaamTournamentLink}>NCAAM Tournament Mode</Link>
+        <Link className="btn" to="/parlay-lab">
+          Parlay Lab
+        </Link>
+        <Link className="btn" to="/upsets">
+          Upset Watch
+        </Link>
+        <Link className="btn" to={openNcaamTournamentLink}>
+          NCAAM Tournament Mode
+        </Link>
       </div>
     </div>
   );

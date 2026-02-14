@@ -1,188 +1,168 @@
 // apps/api/src/routes/performance.js
 import express from "express";
+import { supabaseAdmin } from "../lib/supabaseAdmin.js";
 
 const router = express.Router();
 
-/**
- * Very small in-memory cache to prevent re-hitting upstreams
- * (especially during dev + HMR refreshes).
- */
-const CACHE = new Map();
-// key -> { exp:number, val:any }
-const CACHE_TTL_MS = 1000 * 60 * 3; // 3 minutes
+const DEFAULT_DAYS = 7;
+const MAX_DAYS = 30;
+const MULTI_LEAGUE_MAX_DAYS = 30; // DB is cheap — no need to cap hard anymore
 
-function cacheGet(key) {
-  const hit = CACHE.get(key);
+// Small response cache (avoids repeating the same DB query)
+const PERF_CACHE_TTL_MS = 15_000;
+const perfCache = new Map(); // key -> { time, value }
+
+function getPerfCache(key) {
+  const hit = perfCache.get(key);
   if (!hit) return null;
-  if (Date.now() > hit.exp) {
-    CACHE.delete(key);
+  if (Date.now() - hit.time > PERF_CACHE_TTL_MS) {
+    perfCache.delete(key);
     return null;
   }
-  return hit.val;
+  return hit.value;
 }
-
-function cacheSet(key, val, ttlMs = CACHE_TTL_MS) {
-  CACHE.set(key, { exp: Date.now() + ttlMs, val });
-}
-
-function ymd(d) {
-  return d.toISOString().slice(0, 10);
-}
-
-function parseYMD(s) {
-  // Expect YYYY-MM-DD
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s || ""))) return null;
-  const d = new Date(`${s}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) return null;
-  return d;
-}
-
-function summarizeGames(games) {
-  const out = {
-    games: Array.isArray(games) ? games.length : 0,
-    picks: 0,
-    pass: 0,
-    completed: 0,
-    wins: 0,
-    losses: 0,
-    scored: 0,
-    acc: null,
-  };
-
-  for (const g of games || []) {
-    const pick = g?.market?.pick;
-    if (pick) out.picks++;
-    else out.pass++;
-
-    const status = String(g?.status || "").toLowerCase();
-    const isFinal = status === "final" || status === "post" || status === "completed";
-    if (!isFinal) continue;
-
-    out.completed++;
-
-    const predictedId = g?.market?.recommendedTeamId || null;
-    const winnerId = g?.result?.winnerTeamId || null;
-    if (predictedId && winnerId) {
-      if (predictedId === winnerId) out.wins++;
-      else out.losses++;
-    }
+function setPerfCache(key, value) {
+  perfCache.set(key, { time: Date.now(), value });
+  if (perfCache.size > 80) {
+    const entries = [...perfCache.entries()].sort((a, b) => a[1].time - b[1].time);
+    for (let i = 0; i < Math.min(15, entries.length); i++) perfCache.delete(entries[i][0]);
   }
-
-  out.scored = out.wins + out.losses;
-  out.acc = out.scored ? out.wins / out.scored : null;
-  return out;
 }
 
-/**
- * GET /api/performance?start=YYYY-MM-DD&end=YYYY-MM-DD&leagues=nba,nhl,ncaam
- *
- * Returns: { ok, start, end, leagues, rows: { nba:[...], nhl:[...], ncaam:[...] } }
- * where each row = { date, scored, acc, wins, losses, picks, completed, games }
- *
- * Implementation note:
- * We call your existing /api/predictions endpoint internally so you don't have to
- * refactor the prediction engine right now. This still collapses the frontend into
- * ONE request and lets us cache server-side.
- */
-router.get("/performance", async (req, res) => {
-  const startS = req.query.start;
-  const endS = req.query.end;
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
 
-  const startD = parseYMD(startS);
-  const endD = parseYMD(endS);
+function yyyymmddUTC(d) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+    .toISOString()
+    .slice(0, 10);
+}
 
-  if (!startD || !endD) {
-    return res.status(400).json({ ok: false, error: "start/end must be YYYY-MM-DD" });
-  }
-  if (endD < startD) {
-    return res.status(400).json({ ok: false, error: "end must be >= start" });
-  }
+function addDaysUTC(dateYYYYMMDD, deltaDays) {
+  const [y, m, d] = dateYYYYMMDD.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  return yyyymmddUTC(dt);
+}
 
-  const rawLeagues = String(req.query.leagues || "nba,nhl,ncaam");
-  const leagues = rawLeagues
+function parseLeaguesParam(v) {
+  const raw = String(v || "").trim();
+  if (!raw) return ["nba"];
+  return raw
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+}
 
-  // safety: max 14 days
-  const days = [];
-  {
-    const cur = new Date(startD);
-    while (cur <= endD) {
-      days.push(ymd(cur));
-      cur.setUTCDate(cur.getUTCDate() + 1);
-      if (days.length > 14) break;
-    }
-  }
+/**
+ * Fetch performance rows from Supabase and index by league:date
+ */
+async function fetchPerfRowsFromDb(leagues, start, end) {
+  const { data, error } = await supabaseAdmin
+    .from("performance_daily")
+    .select("league,date,games,picks,pass,completed,wins,losses,scored,acc,updated_at")
+    .in("league", leagues)
+    .gte("date", start)
+    .lte("date", end);
 
-  const port = process.env.PORT || 3001;
-  const base = `http://127.0.0.1:${port}`;
+  if (error) throw new Error(`Supabase fetch failed: ${error.message}`);
 
-  async function getPredictionsCached(league, date) {
-    const key = `pred:${league}:${date}`;
-    const hit = cacheGet(key);
-    if (hit) return hit;
+  const byKey = new Map();
+  for (const r of data || []) byKey.set(`${r.league}:${r.date}`, r);
+  return byKey;
+}
 
-    const url = `${base}/api/predictions?league=${encodeURIComponent(league)}&date=${encodeURIComponent(date)}`;
-    const r = await fetch(url);
-    if (!r.ok) {
-      const txt = await r.text().catch(() => "");
-      throw new Error(`predictions ${league} ${date} failed (${r.status}) ${txt}`.trim());
-    }
-    const j = await r.json();
-    cacheSet(key, j);
-    return j;
-  }
+/**
+ * GET /api/performance?days=7&leagues=nba,nhl,ncaam
+ *
+ * DB-backed, fast, stable.
+ * Missing dates return rows with error="missing_db_row"
+ */
+router.get("/performance", async (req, res) => {
+  const leagues = parseLeaguesParam(req.query.leagues);
+
+  const requestedDays = clamp(Number(req.query.days || DEFAULT_DAYS), 1, MAX_DAYS);
+  const days = leagues.length > 1 ? Math.min(requestedDays, MULTI_LEAGUE_MAX_DAYS) : requestedDays;
+
+  const cacheKey = `perf:db:v1:days=${days}:leagues=${leagues.join(",")}`;
+  const cached = getPerfCache(cacheKey);
+  if (cached) return res.json(cached);
+
+  const startedAt = Date.now();
 
   try {
-    const rows = {};
-    for (const lg of leagues) rows[lg] = [];
+    const end = yyyymmddUTC(new Date());
+    const start = addDaysUTC(end, -(days - 1));
 
-    // Concurrency limit so we don't blast upstreams
-    const CONCURRENCY = 4;
-    const queue = [];
-
-    async function runOne(lg, date) {
-      const key = `perf:${lg}:${date}`;
-      const hit = cacheGet(key);
-      if (hit) return hit;
-
-      const j = await getPredictionsCached(lg, date);
-      const summary = summarizeGames(j?.games || []);
-      const row = { date, ...summary };
-      cacheSet(key, row);
-      return row;
+    const dates = [];
+    let cur = start;
+    while (cur <= end) {
+      dates.push(cur);
+      cur = addDaysUTC(cur, 1);
     }
 
-    for (const lg of leagues) {
-      for (const date of days) {
-        queue.push({ lg, date });
-      }
+    const byKey = await fetchPerfRowsFromDb(leagues, start, end);
+
+    const rows = Object.fromEntries(leagues.map((l) => [l, []]));
+
+    let missingCount = 0;
+
+    for (const league of leagues) {
+      rows[league] = dates.map((date) => {
+        const hit = byKey.get(`${league}:${date}`);
+        if (hit) {
+          return {
+            date: hit.date,
+            games: hit.games ?? 0,
+            picks: hit.picks ?? 0,
+            pass: hit.pass ?? 0,
+            completed: hit.completed ?? 0,
+            wins: hit.wins ?? 0,
+            losses: hit.losses ?? 0,
+            scored: hit.scored ?? 0,
+            acc: typeof hit.acc === "number" ? hit.acc : null,
+            error: null,
+            updated_at: hit.updated_at ?? null,
+          };
+        }
+        missingCount++;
+        return {
+          date,
+          games: 0,
+          picks: 0,
+          pass: 0,
+          completed: 0,
+          wins: 0,
+          losses: 0,
+          scored: 0,
+          acc: null,
+          error: "missing_db_row",
+          updated_at: null,
+        };
+      });
     }
 
-    let idx = 0;
-    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-      while (idx < queue.length) {
-        const mine = queue[idx++];
-        const row = await runOne(mine.lg, mine.date);
-        rows[mine.lg].push(row);
-      }
-    });
+    const elapsedMs = Date.now() - startedAt;
 
-    await Promise.all(workers);
-
-    // Ensure rows per league are sorted by date
-    for (const lg of leagues) {
-      rows[lg].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    }
-
-    return res.json({
+    const payload = {
       ok: true,
-      start: ymd(startD),
-      end: ymd(endD),
+      start,
+      end,
       leagues,
+      meta: {
+        source: "supabase:performance_daily",
+        elapsedMs,
+        requestedDays,
+        effectiveDays: days,
+        missingCount,
+        partial: missingCount > 0,
+      },
       rows,
-    });
+    };
+
+    setPerfCache(cacheKey, payload);
+    return res.json(payload);
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
