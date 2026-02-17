@@ -37,8 +37,8 @@ function tierKey(t) {
 
 /**
  * Aggregates a slate (games[]) into KPIs.
- * IMPORTANT: completed/scoring is based on winnerTeamId OR final-ish status.
- * We only count wins/losses if we have BOTH predictedId and winnerId.
+ * completed/scoring is based on winnerTeamId OR final-ish status.
+ * wins/losses only count if we have BOTH predictedId and winnerId.
  */
 function aggGames(games) {
   const out = {
@@ -73,7 +73,6 @@ function aggGames(games) {
     const predictedId = g?.market?.recommendedTeamId || null;
     const winnerId = g?.result?.winnerTeamId || null;
 
-    // ✅ consider complete if we have a winnerId OR status is final-ish
     const isComplete = Boolean(winnerId) || isFinalStatus(g?.status);
 
     if (isComplete) {
@@ -93,7 +92,7 @@ function aggGames(games) {
   return out;
 }
 
-/** Fetch helper with timeout (and safe abort handling) */
+/** Fetch helper with timeout */
 async function fetchJson(url, { timeoutMs = 12000, signal } = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -164,14 +163,7 @@ function TrendLine({ points }) {
     .join(" ");
 
   return (
-    <svg
-      width={w}
-      height={h}
-      className="trendSvg"
-      viewBox={`0 0 ${w} ${h}`}
-      role="img"
-      aria-label="7-day accuracy trend"
-    >
+    <svg width={w} height={h} className="trendSvg" viewBox={`0 0 ${w} ${h}`} role="img" aria-label="trend">
       <line x1="0" y1={h / 2} x2={w} y2={h / 2} className="trendGrid" />
       <line x1="0" y1={h - 1} x2={w} y2={h - 1} className="trendGrid" />
       <polyline points={path} className="trendLine" fill="none" />
@@ -272,10 +264,10 @@ function LeagueCard({ league, title, meta, games, loading, error, onOpenLink }) 
   );
 }
 
-/** Helpers for 7-day widgets */
-function avgAcc(rows) {
+/** DB perf helpers: rows have wins/losses/win_rate */
+function avgWinRate(rows) {
   const arr = Array.isArray(rows) ? rows : [];
-  const valid = arr.map((r) => r?.acc).filter((x) => Number.isFinite(x));
+  const valid = arr.map((r) => safeNum(r?.win_rate)).filter((x) => Number.isFinite(x));
   if (!valid.length) return null;
   return valid.reduce((a, b) => a + b, 0) / valid.length;
 }
@@ -284,40 +276,82 @@ function PerfMiniTable({ rows }) {
   const arr = Array.isArray(rows) ? rows : [];
   return (
     <div className="perfTable">
-      {arr.map((r) => (
-        <div className="perfRow" key={r.date}>
-          <div className="perfDate">{String(r.date).slice(5)}</div>
-          <div className="perfScored">{r.scored || 0} scored</div>
-          <div className="perfAcc">{pct(r.acc)}</div>
-        </div>
-      ))}
+      {arr.map((r) => {
+        const wins = Number(r?.wins || 0);
+        const losses = Number(r?.losses || 0);
+        const scored = wins + losses;
+        const wr = Number.isFinite(r?.win_rate) ? r.win_rate : scored ? wins / scored : null;
+
+        return (
+          <div className="perfRow" key={r.date}>
+            <div className="perfDate">{String(r.date).slice(5)}</div>
+            <div className="perfScored">{scored} scored</div>
+            <div className="perfAcc">{pct(wr)}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 /**
- * Normalizes /api/performance rows into exactly 7 days ending on `endDate`.
- * Fills missing days with { scored:0, acc:null } so the UI never breaks.
+ * Normalizes /api/performance rows into exactly N days ending on `endDate`.
+ * Uses wins/losses/win_rate and fills missing days with zeros.
  */
-function normalizePerfRows(rows, endDate) {
+function normalizePerfRows(rows, endDate, days) {
   const byDate = new Map();
   for (const r of Array.isArray(rows) ? rows : []) {
     if (!r?.date) continue;
-    byDate.set(String(r.date).slice(0, 10), {
-      date: String(r.date).slice(0, 10),
-      scored: Number(r?.scored || 0),
-      acc: Number.isFinite(r?.acc) ? r.acc : null,
+    const d = String(r.date).slice(0, 10);
+    byDate.set(d, {
+      date: d,
+      wins: Number(r?.wins || 0),
+      losses: Number(r?.losses || 0),
+      win_rate: Number.isFinite(r?.win_rate) ? r.win_rate : null,
+      picks: Number(r?.picks || 0),
+      pass: Number(r?.pass || 0),
+      error: r?.error || null,
     });
   }
 
   const out = [];
-  for (let i = 6; i >= 0; i--) {
+  for (let i = days - 1; i >= 0; i--) {
     const d = new Date(`${endDate}T00:00:00Z`);
     d.setUTCDate(d.getUTCDate() - i);
     const ymd = d.toISOString().slice(0, 10);
-    out.push(byDate.get(ymd) || { date: ymd, scored: 0, acc: null });
+    out.push(
+      byDate.get(ymd) || {
+        date: ymd,
+        wins: 0,
+        losses: 0,
+        win_rate: null,
+        picks: 0,
+        pass: 0,
+        error: "missing_db_row",
+      }
+    );
   }
   return out;
+}
+
+function PeriodToggle({ value, onChange }) {
+  const btn = (v, label) => (
+    <button
+      type="button"
+      className={`btn ${value === v ? "btnPrimary" : ""}`}
+      onClick={() => onChange(v)}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {btn(7, "7 days")}
+      {btn(14, "14 days")}
+      {btn(30, "30 days")}
+    </div>
+  );
 }
 
 export default function Home() {
@@ -325,15 +359,18 @@ export default function Home() {
   const [apiOk, setApiOk] = useState(null);
   const [lastUpdated, setLastUpdated] = useState("");
 
+  // ✅ Performance window selector
+  const [perfDays, setPerfDays] = useState(7);
+
   const [nba, setNba] = useState({ loading: true, error: "", data: null });
   const [nhl, setNhl] = useState({ loading: true, error: "", data: null });
   const [ncaam, setNcaam] = useState({ loading: true, error: "", data: null });
 
-  const [perf7, setPerf7] = useState({
+  const [perf, setPerf] = useState({
     loading: false,
     error: "",
-    rows: { nba: [], nhl: [], ncaam: [] }, // [{ date, scored, acc }]
-    meta: null, // optional meta from API
+    rows: { nba: [], nhl: [], ncaam: [] },
+    meta: null,
   });
 
   const perfAbortRef = useRef(null);
@@ -355,7 +392,7 @@ export default function Home() {
     };
   }, []);
 
-  // load today's slate for each league
+  // load slate for each league
   useEffect(() => {
     let alive = true;
 
@@ -392,12 +429,7 @@ export default function Home() {
     };
   }, [date, apiOk]);
 
-  // ✅ 7-day performance fetch (single call to /api/performance)
-  // FIXES:
-  // - Uses routeTimeoutMs >= internalTimeoutMs * days (otherwise abort cascades)
-  // - Uses a slightly longer fetch timeout than route timeout
-  // - Normalizes rows to exactly 7 days ending on selected `date`
-  // - Handles partial responses (ok:false) without breaking UI
+  // ✅ Performance fetch from Supabase-backed /api/performance
   useEffect(() => {
     if (apiOk !== true) return;
 
@@ -405,69 +437,55 @@ export default function Home() {
     const abort = new AbortController();
     perfAbortRef.current = abort;
 
-    // prefill UI so it never looks "empty"
     const empty = {
-      nba: normalizePerfRows([], date),
-      nhl: normalizePerfRows([], date),
-      ncaam: normalizePerfRows([], date),
+      nba: normalizePerfRows([], date, perfDays),
+      nhl: normalizePerfRows([], date, perfDays),
+      ncaam: normalizePerfRows([], date, perfDays),
     };
 
-    setPerf7({ loading: true, error: "", rows: empty, meta: null });
+    setPerf({ loading: true, error: "", rows: empty, meta: null });
 
     const run = async () => {
       try {
         const leagues = ["nba", "nhl", "ncaam"].join(",");
-
-        // If your API is doing 7 days * 3 leagues, plan for worst-case.
-        // Keep concurrency low to avoid upstream bursts.
-        const internalTimeoutMs = 15000; // per internal /predictions call
-        const routeTimeoutMs = 80000; // must be comfortably > internalTimeoutMs * 7 / concurrency
-        const fetchTimeoutMs = routeTimeoutMs + 10000; // allow the server to finish before client aborts
-
         const qs = new URLSearchParams({
-          days: "7",
+          days: String(perfDays),
           leagues,
-          internalTimeoutMs: String(internalTimeoutMs),
-          routeTimeoutMs: String(routeTimeoutMs),
-          concurrency: "1",
         });
 
         const { ok, status, json } = await fetchJson(`/api/performance?${qs.toString()}`, {
-          timeoutMs: fetchTimeoutMs,
+          timeoutMs: 30000,
           signal: abort.signal,
         });
 
         if (abort.signal.aborted) return;
 
         if (!ok || !json) {
-          const msg = `Performance failed (HTTP ${status})`;
-          setPerf7({ loading: false, error: msg, rows: empty, meta: null });
+          setPerf({ loading: false, error: `Performance failed (HTTP ${status})`, rows: empty, meta: null });
           return;
         }
 
-        // If the route times out it may return ok:false with error/meta
         if (!json?.ok) {
-          const msg = json?.error || "Performance failed";
-          setPerf7({ loading: false, error: msg, rows: empty, meta: json?.meta || null });
+          setPerf({ loading: false, error: json?.error || "Performance failed", rows: empty, meta: json?.meta || null });
           return;
         }
 
         const rows = json?.rows || {};
-        setPerf7({
+        setPerf({
           loading: false,
           error: "",
           meta: json?.meta || null,
           rows: {
-            nba: normalizePerfRows(rows.nba, date),
-            nhl: normalizePerfRows(rows.nhl, date),
-            ncaam: normalizePerfRows(rows.ncaam, date),
+            nba: normalizePerfRows(rows.nba, date, perfDays),
+            nhl: normalizePerfRows(rows.nhl, date, perfDays),
+            ncaam: normalizePerfRows(rows.ncaam, date, perfDays),
           },
         });
       } catch (e) {
         if (abort.signal.aborted) return;
         if (e?.name === "AbortError") return;
 
-        setPerf7((p) => ({
+        setPerf((p) => ({
           loading: false,
           error: String(e?.message || e),
           rows: p.rows,
@@ -478,7 +496,7 @@ export default function Home() {
 
     run();
     return () => abort.abort();
-  }, [date, apiOk]);
+  }, [date, apiOk, perfDays]);
 
   const nbaAgg = useMemo(() => aggGames(nba.data?.games || []), [nba.data]);
   const nhlAgg = useMemo(() => aggGames(nhl.data?.games || []), [nhl.data]);
@@ -497,34 +515,31 @@ export default function Home() {
     return { scored, acc, picks, completed };
   }, [nbaAgg, nhlAgg, ncaamAgg]);
 
-  // ✅ 7-day summary derived from perf7 (scored + weighted accuracy)
-  const global7 = useMemo(() => {
+  // ✅ Window summary derived from perf rows
+  const globalPerf = useMemo(() => {
     const sumLeague = (lg) => {
-      const arr = perf7.rows?.[lg] || [];
-      let scored = 0;
-      let winsApprox = 0;
-
+      const arr = perf.rows?.[lg] || [];
+      let wins = 0;
+      let losses = 0;
       for (const r of arr) {
-        const s = Number(r?.scored || 0);
-        scored += s;
-        if (Number.isFinite(r?.acc)) winsApprox += r.acc * s;
+        wins += Number(r?.wins || 0);
+        losses += Number(r?.losses || 0);
       }
-
-      const acc = scored ? winsApprox / scored : null;
-      return { scored, acc };
+      const scored = wins + losses;
+      const wr = scored ? wins / scored : null;
+      return { scored, wr };
     };
 
-    const nba7 = sumLeague("nba");
-    const nhl7 = sumLeague("nhl");
-    const ncaam7 = sumLeague("ncaam");
+    const nbaP = sumLeague("nba");
+    const nhlP = sumLeague("nhl");
+    const ncaamP = sumLeague("ncaam");
 
-    const scored = nba7.scored + nhl7.scored + ncaam7.scored;
-    const winsApprox =
-      (nba7.acc ?? 0) * nba7.scored + (nhl7.acc ?? 0) * nhl7.scored + (ncaam7.acc ?? 0) * ncaam7.scored;
-    const acc = scored ? winsApprox / scored : null;
+    const scored = nbaP.scored + nhlP.scored + ncaamP.scored;
+    const winsApprox = (nbaP.wr ?? 0) * nbaP.scored + (nhlP.wr ?? 0) * nhlP.scored + (ncaamP.wr ?? 0) * ncaamP.scored;
+    const wr = scored ? winsApprox / scored : null;
 
-    return { scored, acc };
-  }, [perf7.rows]);
+    return { scored, wr };
+  }, [perf.rows]);
 
   const openNbaLink = useMemo(() => `/league/nba?date=${date}`, [date]);
   const openNhlLink = useMemo(() => `/league/nhl?date=${date}`, [date]);
@@ -532,7 +547,13 @@ export default function Home() {
   const openNcaamTournamentLink = useMemo(() => `/league/ncaam?date=${date}&mode=tournament`, [date]);
 
   const trendPoints = (league) =>
-    (perf7.rows?.[league] || []).map((r, i) => ({ x: i, y: Number.isFinite(r?.acc) ? r.acc : null }));
+    (perf.rows?.[league] || []).map((r, i) => {
+      const wins = Number(r?.wins || 0);
+      const losses = Number(r?.losses || 0);
+      const scored = wins + losses;
+      const wr = Number.isFinite(r?.win_rate) ? r.win_rate : scored ? wins / scored : null;
+      return { x: i, y: Number.isFinite(wr) ? wr : null };
+    });
 
   return (
     <div className="container">
@@ -543,7 +564,7 @@ export default function Home() {
               Sports MVP
             </div>
             <p className="sub" style={{ margin: 0 }}>
-              Daily slate + premium predictions contract across NBA / NHL / NCAAM.
+              Daily slate + predictions contract across NBA / NHL / NCAAM.
             </p>
           </div>
 
@@ -566,31 +587,28 @@ export default function Home() {
           <div className="perfStrip">
             <div className="perfStripTop">
               <div>
-                <div style={{ fontWeight: 900 }}>7-day performance</div>
+                <div style={{ fontWeight: 900 }}>Performance</div>
                 <div className="muted2" style={{ fontSize: 12, marginTop: 4 }}>
                   Scored picks:{" "}
                   <span className="muted" style={{ fontWeight: 800 }}>
-                    {global7.scored || 0}
+                    {globalPerf.scored || 0}
                   </span>
                   {" • "}
-                  7-day accuracy:{" "}
+                  Win rate:{" "}
                   <span className="muted" style={{ fontWeight: 800 }}>
-                    {pct(global7.acc)}
+                    {pct(globalPerf.wr)}
                   </span>
                 </div>
               </div>
 
-              <div className="perfLegend">
-                <span className="muted2" style={{ fontSize: 12 }}>
-                  Accuracy trend
-                </span>
-                <span className="badge">Last 7 days</span>
+              <div className="perfLegend" style={{ gap: 10 }}>
+                <PeriodToggle value={perfDays} onChange={setPerfDays} />
               </div>
             </div>
 
-            {perf7.error ? (
+            {perf.error ? (
               <div className="muted" style={{ marginTop: 10 }}>
-                Error: {perf7.error}
+                Error: {perf.error}
               </div>
             ) : (
               <div className="perfGrid">
@@ -598,40 +616,39 @@ export default function Home() {
                   <div className="perfCardHead">
                     <div style={{ fontWeight: 900 }}>NBA</div>
                     <div className="muted2" style={{ fontSize: 12 }}>
-                      Avg: {pct(avgAcc(perf7.rows.nba))}
+                      Avg: {pct(avgWinRate(perf.rows.nba))}
                     </div>
                   </div>
                   <TrendLine points={trendPoints("nba")} />
-                  <PerfMiniTable rows={perf7.rows.nba} />
+                  <PerfMiniTable rows={perf.rows.nba} />
                 </div>
 
                 <div className="perfCard">
                   <div className="perfCardHead">
                     <div style={{ fontWeight: 900 }}>NHL</div>
                     <div className="muted2" style={{ fontSize: 12 }}>
-                      Avg: {pct(avgAcc(perf7.rows.nhl))}
+                      Avg: {pct(avgWinRate(perf.rows.nhl))}
                     </div>
                   </div>
                   <TrendLine points={trendPoints("nhl")} />
-                  <PerfMiniTable rows={perf7.rows.nhl} />
+                  <PerfMiniTable rows={perf.rows.nhl} />
                 </div>
 
                 <div className="perfCard">
                   <div className="perfCardHead">
                     <div style={{ fontWeight: 900 }}>NCAAM</div>
                     <div className="muted2" style={{ fontSize: 12 }}>
-                      Avg: {pct(avgAcc(perf7.rows.ncaam))}
+                      Avg: {pct(avgWinRate(perf.rows.ncaam))}
                     </div>
                   </div>
                   <TrendLine points={trendPoints("ncaam")} />
-                  <PerfMiniTable rows={perf7.rows.ncaam} />
+                  <PerfMiniTable rows={perf.rows.ncaam} />
                 </div>
               </div>
             )}
 
             <div className="muted2" style={{ fontSize: 12, marginTop: 10 }}>
-              {perf7.loading ? "Updating…" : " "}
-              {" "}
+              {perf.loading ? "Updating…" : " "}
               Tip: Use <span className="badge">Tournament</span> mode on NCAAM pages for neutral-court feel + higher upset sensitivity.
             </div>
           </div>

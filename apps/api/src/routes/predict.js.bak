@@ -10,18 +10,14 @@ const router = express.Router();
 const NBA_API_BASE = "https://api.balldontlie.io/v1";
 const NBA_API_KEY = process.env.NBA_API_KEY || "";
 
-// NHL (public) schedule endpoint
+// NHL (public) schedule endpoint (returns a week; we filter by date)
 const NHL_API_BASE = "https://api-web.nhle.com/v1";
 
-// ✅ NCAAM via CollegeBasketballData (CBBD)
-const CBBD_API_BASE = String(
-  process.env.CBBD_API_BASE ||
-    process.env.NCAAM_API_BASE ||
-    "https://api.collegebasketballdata.com"
-).replace(/\/+$/, "");
-
-const CBBD_API_KEY =
-  process.env.CBBD_API_KEY || process.env.NCAAM_API_KEY || process.env.CBB_API_KEY || "";
+// NCAAM (College Basketball Data / SportsData / etc.) — dedicated API
+// NOTE: This file intentionally disables ESPN.
+const NCAAM_API_BASE = process.env.NCAAM_API_BASE || "";
+const NCAAM_API_KEY =
+  process.env.NCAAM_API_KEY || process.env.CBBD_API_KEY || process.env.CBB_API_KEY || "";
 
 /* =========================================================
    Cache (TTL + in-flight de-dupe + simple pruning)
@@ -72,7 +68,7 @@ function parseRetryAfterSeconds(res) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Small per-host concurrency gate (prevents implosion)
+// Small per-host concurrency gate (prevents “imploding”)
 const hostGates = new Map(); // host -> { active, queue: [] }
 
 async function withHostGate(url, limit, fn) {
@@ -415,11 +411,12 @@ function toNhlTeamId(tri) {
   return `nhl-${String(tri || "").toLowerCase()}`;
 }
 function toNcaamTeamId(idOrKey) {
+  // idOrKey can be a numeric id or a team key like "DUKE"
   return `ncaam-${String(idOrKey || "").toLowerCase()}`;
 }
 
 /* =========================================================
-   NBA — premium blended model
+   NBA — premium blended model (unchanged)
    ========================================================= */
 
 async function getNbaGamesByDate(dateYYYYMMDD) {
@@ -795,281 +792,367 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
 }
 
 /* =========================================================
-   NHL — stable standings model + Olympics pause behavior
+   NHL — schedule + scores (picks paused) for performance tracking
    ========================================================= */
+
+// Extract an array of games from whichever shape NHL returns
+function extractNhlGames(json) {
+  // Most common: { gameWeek: [ { date: "YYYY-MM-DD", games: [...] }, ... ] }
+  const wk = Array.isArray(json?.gameWeek) ? json.gameWeek : null;
+  if (wk) {
+    const all = [];
+    for (const day of wk) {
+      const dayDate =
+        (typeof day?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day.date) && day.date) ||
+        (typeof day?.gameDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(day.gameDate) && day.gameDate) ||
+        null;
+
+      if (Array.isArray(day?.games)) {
+        for (const g of day.games) {
+          // annotate in case game objects don't include gameDate (or UTC date differs)
+          if (dayDate && !g?.gameDate) g._dayDate = dayDate;
+          all.push(g);
+        }
+      }
+    }
+    if (all.length) return all;
+  }
+
+  // Some variants: { games: [...] }
+  if (Array.isArray(json?.games)) return json.games;
+
+  // Fallback: scan a couple known keys
+  for (const k of ["dates", "days", "schedule"]) {
+    const arr = json?.[k];
+    if (Array.isArray(arr)) {
+      const all = [];
+      for (const d of arr) {
+        const dayDate =
+          (typeof d?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.date) && d.date) ||
+          (typeof d?.gameDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.gameDate) && d.gameDate) ||
+          null;
+
+        if (Array.isArray(d?.games)) {
+          for (const g of d.games) {
+            if (dayDate && !g?.gameDate) g._dayDate = dayDate;
+            all.push(g);
+          }
+        }
+      }
+      if (all.length) return all;
+    }
+  }
+
+  return [];
+}
+
+function nhlGameDateYYYYMMDD(g) {
+  // Prefer day-bucket date (the schedule endpoint groups by local game date)
+  const dd = g?._dayDate;
+  if (typeof dd === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dd)) return dd;
+
+  // NHL often provides gameDate: "YYYY-MM-DD"
+  const gd = g?.gameDate;
+  if (typeof gd === "string" && /^\d{4}-\d{2}-\d{2}$/.test(gd)) return gd;
+
+  // Fallback: derive from start time (UTC can roll to next day for late games)
+  const t = g?.startTimeUTC || g?.startTime || g?.gameDateTime;
+  if (typeof t === "string" && t.length >= 10) {
+    const d = t.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  }
+  return null;
+}
+
+function nhlStatusLabel(g) {
+  const st = g?.gameState || g?.gameScheduleState || g?.status || g?.gameStatus;
+  return typeof st === "string" ? st : "";
+}
+
+function isNhlFinalLike(status) {
+  const s = String(status || "").toLowerCase();
+  return s.includes("final") || s === "final" || s === "off" || s === "completed" || s === "closed";
+}
+
+function normalizeNhlGame(dateYYYYMMDD, g) {
+  const homeTri =
+    g?.homeTeam?.abbrev ||
+    g?.homeTeam?.triCode ||
+    g?.homeTeam?.abbreviation ||
+    g?.homeTeam?.teamAbbrev;
+
+  const awayTri =
+    g?.awayTeam?.abbrev ||
+    g?.awayTeam?.triCode ||
+    g?.awayTeam?.abbreviation ||
+    g?.awayTeam?.teamAbbrev;
+
+  const homeName =
+    g?.homeTeam?.placeName?.default ||
+    g?.homeTeam?.name?.default ||
+    g?.homeTeam?.commonName?.default ||
+    g?.homeTeam?.teamName?.default ||
+    homeTri ||
+    "";
+
+  const awayName =
+    g?.awayTeam?.placeName?.default ||
+    g?.awayTeam?.name?.default ||
+    g?.awayTeam?.commonName?.default ||
+    g?.awayTeam?.teamName?.default ||
+    awayTri ||
+    "";
+
+  const homeScore =
+    safeNum(g?.homeTeam?.score) ??
+    safeNum(g?.homeTeam?.goals) ??
+    safeNum(g?.homeScore) ??
+    null;
+
+  const awayScore =
+    safeNum(g?.awayTeam?.score) ??
+    safeNum(g?.awayTeam?.goals) ??
+    safeNum(g?.awayScore) ??
+    null;
+
+  const statusRaw = nhlStatusLabel(g);
+  const status =
+    statusRaw ||
+    (Number.isFinite(homeScore) || Number.isFinite(awayScore) ? "in_progress" : "scheduled");
+
+  const id =
+    g?.id ??
+    g?.gameId ??
+    g?.gamePk ??
+    `${dateYYYYMMDD}:${awayTri || "away"}@${homeTri || "home"}:${g?.startTimeUTC || g?.startTime || ""}`;
+
+  return {
+    gameId: `nhl-${String(id)}`,
+    date: dateYYYYMMDD,
+    status: isNhlFinalLike(status) ? "Final" : status,
+    home: { id: toNhlTeamId(homeTri), name: homeName || String(homeTri || ""), abbr: String(homeTri || ""), score: homeScore },
+    away: { id: toNhlTeamId(awayTri), name: awayName || String(awayTri || ""), abbr: String(awayTri || ""), score: awayScore },
+    homeScore,
+    awayScore,
+  };
+}
 
 async function getNhlGamesByDate(dateYYYYMMDD) {
   const url = `${NHL_API_BASE}/schedule/${encodeURIComponent(dateYYYYMMDD)}`;
-  const json = await fetchJson(url);
-  const gameWeek = Array.isArray(json?.gameWeek) ? json.gameWeek : [];
-  const day = gameWeek.find((d) => d?.date === dateYYYYMMDD);
-  const games = Array.isArray(day?.games) ? day.games : [];
-  return games.map((g) => {
-    const homeTri = g?.homeTeam?.abbrev;
-    const awayTri = g?.awayTeam?.abbrev;
-    return {
-      gameId: `nhl-${g.id}`,
-      date: dateYYYYMMDD,
-      status: g?.gameState || g?.gameStateId || "",
-      home: { id: toNhlTeamId(homeTri), name: homeTri || "" },
-      away: { id: toNhlTeamId(awayTri), name: awayTri || "" },
-    };
+  const json = await fetchJson(url, { headers: { Accept: "application/json" } }, {
+    cacheTtlMs: CACHE_TTL_MS,
+    hostConcurrency: 2,
+    retries: 4,
+    baseBackoffMs: 650,
+    timeoutMs: 25_000,
   });
-}
 
-async function getNhlStandingsMap() {
-  const url = `${NHL_API_BASE}/standings/now`;
-  const json = await fetchJson(url, {}, { cacheTtlMs: 10 * 60_000 });
-  const rows = Array.isArray(json?.standings) ? json.standings : [];
-  const byTri = new Map();
+  const rawGames = extractNhlGames(json).filter((g) => nhlGameDateYYYYMMDD(g) === dateYYYYMMDD);
 
-  for (const r of rows) {
-    const tri = (r?.teamAbbrev?.default || "").toUpperCase();
-    if (!tri) continue;
-    const pointPct = safeNum(r?.pointPct);
-    const gp = safeNum(r?.gamesPlayed);
-    const gd = safeNum(r?.goalDifferential);
-    const gdPerGame = Number.isFinite(gd) && Number.isFinite(gp) && gp > 0 ? gd / gp : null;
-
-    const l10w = safeNum(r?.l10Wins);
-    const l10l = safeNum(r?.l10Losses);
-    const l10o = safeNum(r?.l10OtLosses);
-    let last10Pct = null;
-    if (Number.isFinite(l10w) && Number.isFinite(l10l)) {
-      const played10 = l10w + l10l + (Number.isFinite(l10o) ? l10o : 0);
-      if (played10 > 0) last10Pct = (l10w + 0.5 * (Number.isFinite(l10o) ? l10o : 0)) / played10;
-    }
-
-    byTri.set(tri, { pointPct, gdPerGame, last10Pct });
-  }
-
-  return byTri;
-}
-
-function nhlEdge(home, away) {
-  if (!home || !away) return NaN;
-  if (!Number.isFinite(home.pointPct) || !Number.isFinite(away.pointPct)) return NaN;
-  if (!Number.isFinite(home.gdPerGame) || !Number.isFinite(away.gdPerGame)) return NaN;
-
-  const wPoint = 0.72, wGD = 0.23, wRecent = 0.05;
-  const pointDiff = home.pointPct - away.pointPct;
-  const gdDiff = clamp((home.gdPerGame - away.gdPerGame) / 1.3, -1, 1);
-  const recentDiff =
-    (Number.isFinite(home.last10Pct) ? home.last10Pct : 0.5) -
-    (Number.isFinite(away.last10Pct) ? away.last10Pct : 0.5);
-
-  const homeAdv = 0.015;
-  return wPoint * pointDiff + wGD * gdDiff + wRecent * recentDiff + homeAdv;
+  return rawGames
+    .map((g) => normalizeNhlGame(dateYYYYMMDD, g))
+    .filter((x) => x?.home?.id && x?.away?.id);
 }
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
-  const schedule = await getNhlGamesByDate(dateYYYYMMDD);
+  const key = `PRED:nhl:${dateYYYYMMDD}:w${windowDays}`;
+  return computeCached(key, CACHE_TTL_MS, async () => {
+    const schedule = await getNhlGamesByDate(dateYYYYMMDD);
 
-  // ✅ Olympics pause behavior: no games -> return 0 with explicit note (not an error)
-  if (!schedule.length) {
-    return {
-      meta: {
+    if (!schedule.length) {
+      // Olympics pause or true off-day => performance rows should show 0
+      return {
+        meta: {
+          league: "nhl",
+          date: dateYYYYMMDD,
+          windowDays,
+          model: "NHL schedule-v1",
+          mode: "regular",
+          note: "No NHL games scheduled.",
+          warnings: [],
+        },
+        games: [],
+      };
+    }
+
+    const games = schedule.map((g) =>
+      toUnifiedGame({
         league: "nhl",
+        gameId: g.gameId,
         date: dateYYYYMMDD,
-        windowDays,
-        model: "NHL premium-v2",
-        note: "NHL paused (Olympics) — no games scheduled.",
-      },
-      predictions: [],
-    };
-  }
-
-  const standings = await getNhlStandingsMap();
-  const predictions = [];
-  let noPickCount = 0;
-
-  const MIN_EDGE_FOR_PICK = 0.085;
-
-  for (const g of schedule) {
-    const homeRow = standings.get(String(g.home.name || "").toUpperCase());
-    const awayRow = standings.get(String(g.away.name || "").toUpperCase());
-
-    const edge = nhlEdge(homeRow, awayRow);
-    const pick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
-    const conf = confidenceFromEdge(edge, 0.19, 0.53, 0.93);
-
-    let winner = null;
-    if (pick.side === "home") winner = g.home;
-    else if (pick.side === "away") winner = g.away;
-    else noPickCount++;
-
-    predictions.push({
-      gameId: g.gameId,
-      date: g.date,
-      status: g.status,
-      home: g.home,
-      away: g.away,
-      prediction: {
-        winnerTeamId: winner ? winner.id : null,
-        winnerName: winner ? winner.name : "",
-        confidence: winner ? conf : 0.5,
+        status: g.status || "scheduled",
+        home: g.home,
+        away: g.away,
+        pickSide: null,
+        pickNote: "nhl_model_paused",
+        edge: null,
+        conf: null,
+        tier: "PASS",
+        whyPanel: {
+          headline: "PASS (no bet)",
+          bullets: ["NHL picks/model currently paused. Slate + scoring only."],
+          deltas: [],
+        },
         factors: {
           windowDays,
-          edge,
-          pickNote: pick.note,
-          note: "Premium blend: point% + goal diff/game + last10 + small home adv. PASS discipline enabled.",
+          note: "NHL: returning schedule + scores/status for performance tracking. Picks/model paused.",
         },
-      },
-    });
-  }
+      })
+    );
 
-  return {
-    meta: { league: "nhl", date: dateYYYYMMDD, windowDays, noPickCount, model: "NHL premium-v2" },
-    predictions,
-  };
+    return {
+      meta: { league: "nhl", date: dateYYYYMMDD, windowDays, model: "NHL schedule-v1", mode: "regular", warnings: [] },
+      games,
+    };
+  });
 }
 
 /* =========================================================
-   NCAAM — CBBD /games/teams (D1 Men’s Basketball)
-   ✅ FIXED: use correct CBBD endpoint + pair team rows into games
+   NCAAM — dedicated API (ESPN disabled)
    ========================================================= */
 
-function cbbdHeaders() {
-  const h = { Accept: "application/json" };
-  if (CBBD_API_KEY) h.Authorization = `Bearer ${CBBD_API_KEY}`;
-  return h;
+function pickFirst(obj, keys) {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v != null && v !== "") return v;
+  }
+  return null;
 }
 
-function isoRangeForDay(dateYYYYMMDD) {
+function ncaamHeaders() {
+  if (!NCAAM_API_KEY) return { Accept: "application/json" };
+
+  // Different providers use different auth schemes. We send a few safe headers:
+  // - x-api-key (common)
+  // - Authorization: Bearer <key> (common)
+  // - Ocp-Apim-Subscription-Key (SportsData-style)
   return {
-    start: `${dateYYYYMMDD}T00:00:00Z`,
-    end: `${dateYYYYMMDD}T23:59:59Z`,
+    Accept: "application/json",
+    "x-api-key": NCAAM_API_KEY,
+    Authorization: `Bearer ${NCAAM_API_KEY}`,
+    "Ocp-Apim-Subscription-Key": NCAAM_API_KEY,
   };
 }
 
-function seasonFromDate(dateYYYYMMDD) {
-  // CBBD commonly uses the ending year for season (e.g., 2025-26 season => 2026)
-  const y = Number(String(dateYYYYMMDD).slice(0, 4));
-  return Number.isFinite(y) ? y : new Date().getUTCFullYear();
+function ncaamRowDateYYYYMMDD(g) {
+  const raw =
+    pickFirst(g, ["date", "gameDate", "start_date", "startTimeUTC", "startTime", "StartTimeUTC", "StartTime", "DateTime", "gameDateTime"]) ??
+    null;
+
+  if (typeof raw === "string" && raw.length >= 10) {
+    const d = raw.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  }
+  return null;
 }
 
-/**
- * CBBD returns 1 row per team per game.
- * We pair by gameId:
- * - if row.isHome === true, row.team is home, row.opponent is away
- * - else row.team is away, row.opponent is home
- */
-function pairCbbdTeamRowsToGames(dateYYYYMMDD, rows) {
-  const byGame = new Map();
+function normalizeNcaamGame(fallbackDateYYYYMMDD, g) {
+  // Try a bunch of common shapes/fields (Swagger differs by vendor)
+  const rowDate = ncaamRowDateYYYYMMDD(g) || fallbackDateYYYYMMDD;
 
-  for (const r of Array.isArray(rows) ? rows : []) {
-    const gameId = r?.gameId;
-    if (gameId == null) continue;
+  const id =
+    pickFirst(g, ["GameID", "gameId", "id", "GameId", "GlobalGameID", "globalGameId", "GameKey", "gameKey"]) ??
+    `${rowDate}:${pickFirst(g, ["AwayTeam", "awayTeam", "AwayTeamKey", "awayTeamKey", "awayTeamAbbr"]) || "away"}@${pickFirst(g, ["HomeTeam", "homeTeam", "HomeTeamKey", "homeTeamKey", "homeTeamAbbr"]) || "home"}`;
 
-    const key = String(gameId);
-    if (!byGame.has(key)) byGame.set(key, { home: null, away: null, raw: [] });
-    const slot = byGame.get(key);
-    slot.raw.push(r);
+  const homeKey =
+    pickFirst(g, ["HomeTeam", "homeTeam", "HomeTeamKey", "homeTeamKey", "homeTeamAbbr", "homeTeamCode", "homeTeamId"]) ??
+    null;
+  const awayKey =
+    pickFirst(g, ["AwayTeam", "awayTeam", "AwayTeamKey", "awayTeamKey", "awayTeamAbbr", "awayTeamCode", "awayTeamId"]) ??
+    null;
 
-    const isHome = Boolean(r?.isHome);
-    const teamId = r?.teamId;
-    const oppId = r?.opponentId;
+  const homeName =
+    pickFirst(g, ["HomeTeamName", "homeTeamName", "homeTeam", "HomeTeam", "homeTeamSchool", "homeTeamFullName"]) ??
+    String(homeKey || "");
+  const awayName =
+    pickFirst(g, ["AwayTeamName", "awayTeamName", "awayTeam", "AwayTeam", "awayTeamSchool", "awayTeamFullName"]) ??
+    String(awayKey || "");
 
-    const teamName = String(r?.team || "");
-    const oppName = String(r?.opponent || "");
+  const homeScore = safeNum(pickFirst(g, ["HomeTeamScore", "homeScore", "HomeScore", "home_points", "homePoints", "homeTeamScore"]));
+  const awayScore = safeNum(pickFirst(g, ["AwayTeamScore", "awayScore", "AwayScore", "away_points", "awayPoints", "awayTeamScore"]));
 
-    const teamScore = safeNum(r?.teamStats?.points?.total);
-    const oppScore = safeNum(r?.opponentStats?.points?.total);
+  const statusRaw = pickFirst(g, ["Status", "status", "gameState", "state"]) ?? "scheduled";
+  const status = String(statusRaw).toLowerCase();
 
-    const neutralSite = Boolean(r?.neutralSite);
-    const conferenceGame = Boolean(r?.conferenceGame);
+  return {
+    gameId: `ncaam-${String(id)}`,
+    date: rowDate,
+    status,
+    home: {
+      id: `ncaam-${String(homeKey || homeName).toLowerCase()}`,
+      name: String(homeName || ""),
+      abbr: String(homeKey || homeName || "").toUpperCase(),
+      score: homeScore,
+    },
+    away: {
+      id: `ncaam-${String(awayKey || awayName).toLowerCase()}`,
+      name: String(awayName || ""),
+      abbr: String(awayKey || awayName || "").toUpperCase(),
+      score: awayScore,
+    },
+    homeScore,
+    awayScore,
+  };
+}
 
-    const startDate = r?.startDate ? String(r.startDate).slice(0, 10) : dateYYYYMMDD;
+async function fetchNcaamGamesByDate(dateYYYYMMDD) {
+  if (!NCAAM_API_BASE) {
+    throw new Error("Missing NCAAM_API_BASE (set in apps/api/.env). ESPN is disabled by design.");
+  }
 
-    // Build home/away objects from this single row
-    if (isHome) {
-      slot.home = {
-        id: toNcaamTeamId(teamId),
-        name: teamName || String(teamId ?? ""),
-        abbr: "",
-        score: teamScore,
-      };
-      slot.away = {
-        id: toNcaamTeamId(oppId),
-        name: oppName || String(oppId ?? ""),
-        abbr: "",
-        score: oppScore,
-      };
-      slot.meta = { neutralSite, conferenceGame, startDate };
-    } else {
-      slot.away = {
-        id: toNcaamTeamId(teamId),
-        name: teamName || String(teamId ?? ""),
-        abbr: "",
-        score: teamScore,
-      };
-      slot.home = {
-        id: toNcaamTeamId(oppId),
-        name: oppName || String(oppId ?? ""),
-        abbr: "",
-        score: oppScore,
-      };
-      slot.meta = { neutralSite, conferenceGame, startDate };
+  const base = String(NCAAM_API_BASE).replace(/\/+$/, "");
+
+  // Different vendors differ on query params. We try a few common variants.
+  const candidates = [
+    `${base}/games?date=${encodeURIComponent(dateYYYYMMDD)}`,
+    `${base}/games?gameDate=${encodeURIComponent(dateYYYYMMDD)}`,
+    `${base}/games?startDate=${encodeURIComponent(dateYYYYMMDD)}&endDate=${encodeURIComponent(dateYYYYMMDD)}`,
+    `${base}/games?from=${encodeURIComponent(dateYYYYMMDD)}&to=${encodeURIComponent(dateYYYYMMDD)}`,
+  ];
+
+  let lastErr = null;
+
+  for (const url of candidates) {
+    try {
+      const json = await fetchJson(url, { headers: ncaamHeaders() }, {
+        cacheTtlMs: CACHE_TTL_MS,
+        retries: 3,
+        baseBackoffMs: 650,
+        hostConcurrency: 2,
+        timeoutMs: 25_000,
+      });
+
+      // Normalize shapes: array | {games:[]} | {data:[]}
+      const rows =
+        (Array.isArray(json) && json) ||
+        (Array.isArray(json?.games) && json.games) ||
+        (Array.isArray(json?.data) && json.data) ||
+        [];
+
+      // Some providers return ALL games; filter by date if there's a field for it
+      const filtered = rows.filter((g) => {
+        const gd =
+          pickFirst(g, ["Date", "date", "GameDate", "gameDate", "Day", "day", "StartTimeUTC", "startTimeUTC"]) ||
+          null;
+        if (!gd) return true;
+        const d = String(gd).slice(0, 10);
+        return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d === dateYYYYMMDD : true;
+      });
+
+      return filtered
+        .map((g) => normalizeNcaamGame(dateYYYYMMDD, g))
+        .filter((x) => x?.home?.id && x?.away?.id);
+    } catch (e) {
+      lastErr = e;
+      continue;
     }
   }
 
-  const out = [];
-  for (const [gid, g] of byGame.entries()) {
-    if (!g.home?.id || !g.away?.id) continue;
-
-    const hs = safeNum(g.home.score);
-    const as = safeNum(g.away.score);
-
-    // Conservative status: if both scores exist and (non-null), treat as Final
-    const status = hs != null && as != null ? "Final" : "scheduled";
-
-    out.push({
-      gameId: `ncaam-${gid}`,
-      date: g?.meta?.startDate || dateYYYYMMDD,
-      status,
-      neutralSite: Boolean(g?.meta?.neutralSite),
-      conferenceGame: Boolean(g?.meta?.conferenceGame),
-      home: g.home,
-      away: g.away,
-      homeScore: hs,
-      awayScore: as,
-    });
-  }
-
-  return out;
-}
-
-async function fetchNcaamGamesByDate_CBBD(dateYYYYMMDD, { seasonType = "regular", season } = {}) {
-  if (!CBBD_API_BASE) throw new Error("Missing CBBD_API_BASE");
-  if (!CBBD_API_KEY) throw new Error("Missing CBBD_API_KEY (Bearer token) in apps/api/.env");
-
-  const { start, end } = isoRangeForDay(dateYYYYMMDD);
-  const s = Number.isFinite(Number(season)) ? Number(season) : seasonFromDate(dateYYYYMMDD);
-
-  const qs = new URLSearchParams({
-    startDateRange: start,
-    endDateRange: end,
-    season: String(s),
-    seasonType: String(seasonType),
-  });
-
-  const url = `${CBBD_API_BASE}/games/teams?${qs.toString()}`;
-
-  const rows = await fetchJson(
-    url,
-    { headers: cbbdHeaders() },
-    { cacheTtlMs: CACHE_TTL_MS, retries: 4, baseBackoffMs: 650, hostConcurrency: 2, timeoutMs: 25_000 }
-  );
-
-  if (!Array.isArray(rows)) {
-    throw new Error(`CBBD /games/teams returned unexpected shape (expected array).`);
-  }
-
-  // Pair team rows into unique games
-  return pairCbbdTeamRowsToGames(dateYYYYMMDD, rows);
+  throw lastErr || new Error("Failed to fetch NCAAM games (no candidate endpoint returned JSON).");
 }
 
 function ncaamEdgeBasic(home, away, neutralSite, tournamentMode) {
+  // Minimal conservative blend (same structure as ESPN version)
   if (!home?.ok || !away?.ok) return NaN;
 
   const wWin = tournamentMode ? 0.46 : 0.50;
@@ -1086,7 +1169,7 @@ function ncaamEdgeBasic(home, away, neutralSite, tournamentMode) {
   return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
 }
 
-// Build team stats from scored history games list (expects scores on completed games)
+// Build team stats from dedicated API games list (expects scores on completed games)
 function buildNcaamTeamStatsFromGames(historyGames, endDateYYYYMMDD, recentN = 10) {
   const cutoff = Date.parse(`${endDateYYYYMMDD}T00:00:00Z`);
   const byTeamGames = new Map();
@@ -1099,6 +1182,7 @@ function buildNcaamTeamStatsFromGames(historyGames, endDateYYYYMMDD, recentN = 1
   for (const g of historyGames) {
     if (g.homeScore == null || g.awayScore == null) continue;
 
+    // attempt date parsing
     const t = Date.parse(`${g.date}T00:00:00Z`);
     if (!t || t >= cutoff) continue;
 
@@ -1123,8 +1207,11 @@ function buildNcaamTeamStatsFromGames(historyGames, endDateYYYYMMDD, recentN = 1
     }
 
     const recent = games.slice(0, recentN);
-    let rWins = 0;
-    for (const g of recent) if (g.my > g.opp) rWins++;
+    let rWins = 0, rMargin = 0;
+    for (const g of recent) {
+      if (g.my > g.opp) rWins++;
+      rMargin += g.my - g.opp;
+    }
 
     out.set(id, {
       ok: true,
@@ -1132,6 +1219,7 @@ function buildNcaamTeamStatsFromGames(historyGames, endDateYYYYMMDD, recentN = 1
       winPct: wins / played,
       marginPerGame: (pf - pa) / played,
       recentWinPct: recent.length ? rWins / recent.length : null,
+      recentMargin: recent.length ? rMargin / recent.length : null,
     });
   }
 
@@ -1143,10 +1231,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
   const key = `PRED:ncaam:${dateYYYYMMDD}:w${historyDays}:t${tournamentMode ? 1 : 0}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
-    const season = seasonFromDate(dateYYYYMMDD);
-    const seasonType = tournamentMode ? "postseason" : "regular";
-
-    const slate = await fetchNcaamGamesByDate_CBBD(dateYYYYMMDD, { season, seasonType });
+    const slate = await fetchNcaamGamesByDate(dateYYYYMMDD);
 
     if (!slate.length) {
       return {
@@ -1154,7 +1239,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
           league: "ncaam",
           date: dateYYYYMMDD,
           windowDays: historyDays,
-          model: "NCAAM cbbd-v1",
+          model: "NCAAM dedicated-v1",
           mode: modeLabel,
           note: "No NCAAM games scheduled.",
           warnings: [],
@@ -1163,15 +1248,15 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
       };
     }
 
-    // History: request each day (cached + gated)
+    // History: request each day (conservative; cached + gated)
     const history = [];
     for (let i = historyDays; i >= 1; i--) {
       const d = addDaysUTC(dateYYYYMMDD, -i);
       try {
-        const rows = await fetchNcaamGamesByDate_CBBD(d, { season: seasonFromDate(d), seasonType: "regular" });
+        const rows = await fetchNcaamGamesByDate(d);
         history.push(...rows);
       } catch {
-        // skip day failures
+        // If a particular day fails, skip it (do not blow up the whole slate)
       }
       await sleep(40);
     }
@@ -1188,8 +1273,8 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
       const homeS = teamStats.get(g.home.id) || { ok: false };
       const awayS = teamStats.get(g.away.id) || { ok: false };
 
-      const neutral = Boolean(g.neutralSite) || Boolean(tournamentMode);
-      const edge = ncaamEdgeBasic(homeS, awayS, neutral, tournamentMode);
+      const neutral = Boolean(tournamentMode); // if you have neutral-site flags from vendor, wire them in later
+      let edge = ncaamEdgeBasic(homeS, awayS, neutral, tournamentMode);
 
       const pick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
       const conf = confidenceFromEdge(edge, tournamentMode ? 0.24 : 0.22, 0.53, 0.92);
@@ -1227,9 +1312,13 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
             pickNote: pick.note,
             neutralSite: neutral,
             tournamentMode: Boolean(tournamentMode),
-            season,
-            seasonType,
-            note: "NCAAM cbbd-v1: CBBD /games/teams paired into games + conservative edge blend.",
+            homeWinPct: homeS.winPct ?? null,
+            awayWinPct: awayS.winPct ?? null,
+            homeMarginPerGame: homeS.marginPerGame ?? null,
+            awayMarginPerGame: awayS.marginPerGame ?? null,
+            homeRecentWinPct: homeS.recentWinPct ?? null,
+            awayRecentWinPct: awayS.recentWinPct ?? null,
+            note: "NCAAM dedicated-v1: conservative blend from recent scored games. ESPN disabled.",
           },
         })
       );
@@ -1242,7 +1331,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
         windowDays: historyDays,
         historyGamesFetched: history.length,
         noPickCount,
-        model: "NCAAM cbbd-v1",
+        model: "NCAAM dedicated-v1",
         mode: modeLabel,
         warnings: [],
       },
@@ -1329,7 +1418,7 @@ router.get("/ncaam/predict", async (req, res) => {
           league: "ncaam",
           date,
           windowDays,
-          model: "NCAAM cbbd-v1",
+          model: "NCAAM dedicated-v1",
           mode,
           error: String(e?.message || e),
           warnings: [],

@@ -1,5 +1,7 @@
 // apps/api/src/index.js
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ path: new URL("../.env", import.meta.url) });
+
 import express from "express";
 import cors from "cors";
 
@@ -10,8 +12,6 @@ import upsetsRouter from "./routes/upsets.js"; // ✅ Upsets router
 import scoreRouter from "./routes/score.js"; // ✅ expose /api/score/* (ping/debug)
 
 // ✅ Cron job starter
-// NOTE: We only import startDailyScoreJob to avoid regressions if dailyScore.js
-// does NOT export runDailyScoreOnce yet.
 import { startDailyScoreJob } from "./cron/dailyScore.js";
 
 /**
@@ -54,7 +54,7 @@ app.get("/api/health", (_req, res) =>
     ok: true,
     service: "sports-mvp-api",
     time: new Date().toISOString(),
-    version: "api-index-v8-upsets-cron-safe-runner",
+    version: "api-index-v9-cbbd-ncaam",
   })
 );
 
@@ -122,15 +122,6 @@ async function runDailyScoreOnceFallback({ date } = {}) {
 
 /**
  * ✅ Manual cron trigger (for testing)
- *
- * Local (no key set):
- *   curl -s "http://127.0.0.1:3001/api/admin/run-cron" | jq
- *
- * Deterministic:
- *   curl -s "http://127.0.0.1:3001/api/admin/run-cron?date=2026-02-05" | jq
- *
- * Prod (with ADMIN_KEY):
- *   curl -s "https://YOUR_HOST/api/admin/run-cron?key=YOUR_ADMIN_KEY" | jq
  */
 app.get("/api/admin/run-cron", async (req, res) => {
   try {
@@ -159,7 +150,7 @@ app.get("/api/admin/run-cron", async (req, res) => {
       ok: true,
       ranFor: out.ranFor,
       scoredGames: out.scoredGames,
-      report: out.report, // keep for debugging; remove later if you want slimmer payload
+      report: out.report,
     });
   } catch (e) {
     console.error("[ADMIN CRON ERROR]", e);
@@ -168,8 +159,7 @@ app.get("/api/admin/run-cron", async (req, res) => {
 });
 
 /* ======================================================================
-   Everything below here is your existing inline endpoints / helpers.
-   Kept intact, and uses the same `app` defined above.
+   Everything below here is your inline endpoints / helpers.
    ====================================================================== */
 
 /**
@@ -180,10 +170,16 @@ const NBA_API_KEY = process.env.NBA_API_KEY || "";
 const NHL_API_BASE = "https://api-web.nhle.com/v1";
 
 /**
- * ✅ NCAAM (Men's College Basketball) via ESPN (no key)
+ * ✅ NCAAM via CollegeBasketballData (CBBD) — requires key
+ * Env:
+ *   NCAAM_API_BASE=https://api.collegebasketballdata.com
+ *   CBBD_API_KEY=...
  */
-const ESPN_SITE_API = "https://site.api.espn.com/apis/site/v2/sports";
-const ESPN_NCAAM_PATH = "basketball/mens-college-basketball";
+const NCAAM_API_BASE = String(process.env.NCAAM_API_BASE || "https://api.collegebasketballdata.com").replace(
+  /\/+$/,
+  ""
+);
+const CBBD_API_KEY = String(process.env.CBBD_API_KEY || "").trim();
 
 /**
  * Caching
@@ -224,8 +220,6 @@ function parseRetryAfterSeconds(res) {
 
 /**
  * ✅ fetchJson w/ smarter 429 handling + small retry + timeout
- * - prevents "regressions" where a single 429 kills the slate
- * - prevents "forever hang" with AbortController
  */
 async function fetchJson(
   url,
@@ -295,9 +289,6 @@ async function fetchJson(
 /**
  * Helpers
  */
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
-}
 function addDays(yyyyMmDd, deltaDays) {
   const safe = normalizeDateParam(yyyyMmDd);
   if (!safe) throw new Error(`Invalid date (expected YYYY-MM-DD): ${yyyyMmDd}`);
@@ -312,8 +303,8 @@ function toNbaTeamId(abbr) {
 function toNhlTeamId(triCode) {
   return `nhl-${String(triCode || "").toLowerCase()}`;
 }
-function toNcaamTeamId(code) {
-  return `ncaam-${String(code || "").toLowerCase()}`;
+function toNcaamTeamId(codeOrId) {
+  return `ncaam-${String(codeOrId || "").toLowerCase()}`;
 }
 
 function wantExpandTeams(req) {
@@ -326,13 +317,6 @@ function readDateFromReq(req) {
   const d1 = normalizeDateParam(req.query.date);
   const d2 = normalizeDateParam(req.query["dates[]"]);
   return d1 || d2 || new Date().toISOString().slice(0, 10);
-}
-
-/** ESPN uses YYYYMMDD */
-function ymdToEspn(ymd) {
-  const safe = normalizeDateParam(ymd);
-  if (!safe) return null;
-  return safe.replaceAll("-", "");
 }
 
 /**
@@ -499,124 +483,81 @@ async function getNhlGamesByDate(dateYYYYMMDD, expandTeams) {
 }
 
 /**
- * ✅ NCAAM Games + Top25 (kept)
+ * ✅ NCAAM (CBBD) games by date
+ * Uses /games with startDateRange & endDateRange (ISO 8601)
  */
-function espnPickTeamCode(team) {
-  const abbr = team?.abbreviation;
-  if (abbr) return String(abbr);
-  const short = team?.shortDisplayName;
-  if (short) return String(short).slice(0, 4);
-  const id = team?.id;
-  return id ? String(id) : "team";
+function isoRangeForYMD(ymd) {
+  const safe = normalizeDateParam(ymd);
+  if (!safe) throw new Error(`Invalid date (expected YYYY-MM-DD): ${ymd}`);
+  return {
+    start: `${safe}T00:00:00Z`,
+    end: `${safe}T23:59:59Z`,
+  };
 }
 
 async function getNcaamGamesByDate(dateYYYYMMDD, expandTeams) {
-  const yyyymmdd = ymdToEspn(dateYYYYMMDD);
-  if (!yyyymmdd) throw new Error(`Invalid date (expected YYYY-MM-DD): ${dateYYYYMMDD}`);
+  if (!CBBD_API_KEY) {
+    throw new Error("Missing CBBD_API_KEY. Add it to apps/api/.env to enable NCAAM (CBBD) data.");
+  }
 
-  const url = `${ESPN_SITE_API}/${ESPN_NCAAM_PATH}/scoreboard?dates=${encodeURIComponent(yyyymmdd)}`;
-  const json = await fetchJson(url, {}, { cacheTtlMs: CACHE_TTL_MS });
+  const { start, end } = isoRangeForYMD(dateYYYYMMDD);
 
-  const events = Array.isArray(json?.events) ? json.events : [];
+  // CBBD uses these filters (camelCase is the public doc convention) :contentReference[oaicite:1]{index=1}
+  const url =
+    `${NCAAM_API_BASE}/games` +
+    `?startDateRange=${encodeURIComponent(start)}` +
+    `&endDateRange=${encodeURIComponent(end)}`;
 
-  const rows = [];
-  for (const ev of events) {
-    const competitions = Array.isArray(ev?.competitions) ? ev.competitions : [];
-    const comp = competitions[0];
-    if (!comp) continue;
+  const rows = await fetchJson(
+    url,
+    { headers: { Authorization: `Bearer ${CBBD_API_KEY}` } },
+    { cacheTtlMs: CACHE_TTL_MS }
+  );
 
-    const competitors = Array.isArray(comp?.competitors) ? comp.competitors : [];
-    const home = competitors.find((c) => c?.homeAway === "home");
-    const away = competitors.find((c) => c?.homeAway === "away");
-    if (!home || !away) continue;
+  const games = Array.isArray(rows) ? rows : [];
 
-    const homeTeam = home?.team || {};
-    const awayTeam = away?.team || {};
+  return games.map((g) => {
+    const startDate = g?.start_date ? String(g.start_date) : "";
+    const date = startDate ? startDate.slice(0, 10) : dateYYYYMMDD;
 
-    const homeEspnId = homeTeam?.id ? String(homeTeam.id) : null;
-    const awayEspnId = awayTeam?.id ? String(awayTeam.id) : null;
-
-    const homeCode = espnPickTeamCode(homeTeam);
-    const awayCode = espnPickTeamCode(awayTeam);
-
-    const homeScore = Number.isFinite(Number(home?.score)) ? Number(home.score) : null;
-    const awayScore = Number.isFinite(Number(away?.score)) ? Number(away.score) : null;
+    const homeName = g?.home_team || "Home";
+    const awayName = g?.away_team || "Away";
 
     const base = {
       league: "ncaam",
-      id: `ncaam-${ev?.id || comp?.id || `${awayCode}-${homeCode}-${yyyymmdd}`}`,
-      date: dateYYYYMMDD,
-      status: ev?.status?.type?.shortDetail || ev?.status?.type?.description || "",
-      homeScore,
-      awayScore,
-      homeTeamId: toNcaamTeamId(homeCode),
-      awayTeamId: toNcaamTeamId(awayCode),
-      homeTeamEspnId: homeEspnId,
-      awayTeamEspnId: awayEspnId,
+      id: `ncaam-${g?.id ?? `${awayName}-${homeName}-${date}`}`,
+      date,
+      status: String(g?.status || ""),
+      homeScore: Number.isFinite(Number(g?.home_points)) ? Number(g.home_points) : null,
+      awayScore: Number.isFinite(Number(g?.away_points)) ? Number(g.away_points) : null,
+      homeTeamId: toNcaamTeamId(g?.home_team_id ?? homeName),
+      awayTeamId: toNcaamTeamId(g?.away_team_id ?? awayName),
+      homeTeamCbddId: g?.home_team_id ?? null,
+      awayTeamCbddId: g?.away_team_id ?? null,
+      neutralSite: Boolean(g?.neutral_site),
+      tournament: g?.tournament || null,
     };
 
-    if (!expandTeams) {
-      rows.push(base);
-      continue;
-    }
+    if (!expandTeams) return base;
 
-    rows.push({
+    return {
       ...base,
       homeTeam: {
-        id: toNcaamTeamId(homeCode),
-        espnId: homeEspnId,
-        name: homeTeam?.displayName || homeTeam?.name || homeCode,
-        city: "",
-        abbr: homeCode,
-        score: homeScore,
+        id: toNcaamTeamId(g?.home_team_id ?? homeName),
+        cbddId: g?.home_team_id ?? null,
+        name: homeName,
+        abbr: null,
+        score: base.homeScore,
       },
       awayTeam: {
-        id: toNcaamTeamId(awayCode),
-        espnId: awayEspnId,
-        name: awayTeam?.displayName || awayTeam?.name || awayCode,
-        city: "",
-        abbr: awayCode,
-        score: awayScore,
+        id: toNcaamTeamId(g?.away_team_id ?? awayName),
+        cbddId: g?.away_team_id ?? null,
+        name: awayName,
+        abbr: null,
+        score: base.awayScore,
       },
-    });
-  }
-
-  return rows;
-}
-
-async function getNcaamTop25() {
-  const url = `${ESPN_SITE_API}/${ESPN_NCAAM_PATH}/rankings`;
-  const json = await fetchJson(url, {}, { cacheTtlMs: 10 * 60_000 });
-
-  const ranks = [];
-  const lists = Array.isArray(json?.rankings) ? json.rankings : [];
-  for (const r of lists) {
-    const name = r?.name || r?.shortName || r?.type || "Rankings";
-    const entries = Array.isArray(r?.ranks) ? r.ranks : Array.isArray(r?.entries) ? r.entries : [];
-
-    for (const e of entries) {
-      const team = e?.team || e?.team?.team || e?.athlete || {};
-      const abbr = team?.abbreviation || team?.abbr;
-      const code = abbr || team?.shortDisplayName || team?.id;
-
-      ranks.push({
-        poll: name,
-        rank: e?.current || e?.rank || e?.position || null,
-        teamId: toNcaamTeamId(code || "team"),
-        abbr: abbr || String(code || "").slice(0, 4),
-        name: team?.displayName || team?.name || team?.shortDisplayName || String(code || ""),
-        record: e?.recordSummary || e?.record || null,
-        points: e?.points ?? null,
-        firstPlaceVotes: e?.firstPlaceVotes ?? null,
-      });
-    }
-  }
-
-  const ap = ranks.filter((x) => String(x.poll).toLowerCase().includes("ap"));
-  const finalList = ap.length ? ap : ranks;
-
-  finalList.sort((a, b) => (Number(a.rank) || 999) - (Number(a.rank) || 999));
-  return finalList.slice(0, 25);
+    };
+  });
 }
 
 /**
@@ -660,23 +601,20 @@ app.get("/api/ncaam/games", async (req, res) => {
   }
 });
 
-app.get("/api/ncaam/top25", async (_req, res) => {
-  try {
-    const rows = await getNcaamTop25();
-    res.json({ ok: true, count: rows.length, rows });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
-  }
-});
-
+/**
+ * ✅ Unified games endpoint (now includes NCAAM)
+ */
 app.get("/api/games", async (req, res) => {
   const date = readDateFromReq(req);
   const expandTeams = wantExpandTeams(req);
 
   let nbaGames = [];
   let nhlGames = [];
+  let ncaamGames = [];
+
   let nbaError = null;
   let nhlError = null;
+  let ncaamError = null;
 
   try {
     nbaGames = await getNbaGamesByDate(date, expandTeams);
@@ -690,12 +628,23 @@ app.get("/api/games", async (req, res) => {
     nhlError = String(e?.message || e);
   }
 
+  try {
+    ncaamGames = await getNcaamGamesByDate(date, expandTeams);
+  } catch (e) {
+    ncaamError = String(e?.message || e);
+  }
+
   res.json({
     date,
     expandTeams,
-    counts: { total: nbaGames.length + nhlGames.length, nba: nbaGames.length, nhl: nhlGames.length },
-    games: [...nbaGames, ...nhlGames],
-    errors: { nba: nbaError, nhl: nhlError },
+    counts: {
+      total: nbaGames.length + nhlGames.length + ncaamGames.length,
+      nba: nbaGames.length,
+      nhl: nhlGames.length,
+      ncaam: ncaamGames.length,
+    },
+    games: [...nbaGames, ...nhlGames, ...ncaamGames],
+    errors: { nba: nbaError, nhl: nhlError, ncaam: ncaamError },
   });
 });
 
@@ -724,7 +673,6 @@ app.listen(PORT, () => {
   // ✅ start cron (safe toggle)
   if (ENABLE_CRON) {
     console.log("[CRON] Daily scoring job enabled");
-    // This should schedule "30 3 * * *" (UTC) inside dailyScore.js
     startDailyScoreJob();
   } else {
     console.log("[CRON] Disabled via ENABLE_CRON=false");
