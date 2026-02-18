@@ -27,8 +27,14 @@ function haveSupabase() {
    ========================================================= */
 function normalizeDateParam(date) {
   if (!date) return null;
-  const ok = /^\d{4}-\d{2}-\d{2}$/.test(String(date));
-  return ok ? String(date) : null;
+  const s = String(date).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+function normalizeLeague(league) {
+  const l = String(league || "").trim().toLowerCase();
+  if (!l) return "nba";
+  return l;
 }
 
 function isFinalStatus(status) {
@@ -42,19 +48,19 @@ function safeNum(x) {
 }
 
 function getScoresFromGame(g) {
-  const hs =
+  const homeScore =
     safeNum(g?.homeScore) ??
     safeNum(g?.home?.score) ??
     safeNum(g?.homeTeam?.score) ??
     null;
 
-  const as =
+  const awayScore =
     safeNum(g?.awayScore) ??
     safeNum(g?.away?.score) ??
     safeNum(g?.awayTeam?.score) ??
     null;
 
-  return { homeScore: hs, awayScore: as };
+  return { homeScore, awayScore };
 }
 
 function getPickSide(g) {
@@ -79,6 +85,32 @@ function outcomeFromPick(pickSide, homeScore, awayScore) {
   return { result: won ? "WIN" : "LOSS", won: won ? 1 : 0 };
 }
 
+function confBucket(conf) {
+  if (!Number.isFinite(conf)) return null;
+  if (conf >= 0.75) return "0.75-1.00";
+  if (conf >= 0.65) return "0.65-0.75";
+  if (conf >= 0.55) return "0.55-0.65";
+  return "0.00-0.55";
+}
+
+function edgeBucket(edge) {
+  if (!Number.isFinite(edge)) return null;
+  if (edge >= 0.08) return "0.08+";
+  if (edge >= 0.05) return "0.05-0.08";
+  if (edge >= 0.03) return "0.03-0.05";
+  return "<0.03";
+}
+
+function initBucket() {
+  return { picks: 0, wins: 0, losses: 0, pushes: 0, winRate: null };
+}
+
+function finalizeBucket(b) {
+  const denom = b.wins + b.losses;
+  b.winRate = denom > 0 ? b.wins / denom : null;
+  return b;
+}
+
 /* =========================================================
    DB writer
    ========================================================= */
@@ -91,7 +123,6 @@ async function upsertPerformanceRow(row) {
     };
   }
 
-  // Hard guard: must include PK fields
   if (!row?.date || !row?.league) {
     return { ok: false, error: "Invalid row (missing date/league).", upserted: 0 };
   }
@@ -110,28 +141,37 @@ async function upsertPerformanceRow(row) {
 
 /* =========================================================
    ✅ Named export (cron/admin rely on this)
-   - NOW writes to Supabase
+   - premium rollups + resilient grading
    ========================================================= */
 export async function scoreCompletedGames(league, dateYYYYMMDD, games = []) {
   const ymd = normalizeDateParam(dateYYYYMMDD) || new Date().toISOString().slice(0, 10);
+  const lg = normalizeLeague(league);
   const rows = Array.isArray(games) ? games : [];
 
-  let completed = 0;
-  let picks = 0; // non-pass picks in completed games
-  let graded = 0; // wins+losses+pushes
+  // counts
+  let completedFinals = 0;      // final status regardless of score presence
+  let completedWithScore = 0;   // finals that have numeric scores
+  let picks = 0;               // non-pass picks in scored finals
+  let graded = 0;              // wins+losses+pushes
   let wins = 0;
   let losses = 0;
   let pushes = 0;
-  let noPick = 0; // completed finals that were PASS/null
+  let pass = 0;                // finals that were no-pick (PASS/null)
 
-  let sumEdge = 0;
-  let nEdge = 0;
+  // summary metrics
+  let sumEdge = 0, nEdge = 0;
+  let sumWinProb = 0, nWinProb = 0;
+  let sumConf = 0, nConf = 0;
 
-  let sumWinProb = 0;
-  let nWinProb = 0;
-
-  let sumConf = 0;
-  let nConf = 0;
+  // premium rollups
+  const by_conf = {};
+  const by_edge = {};
+  const by_market = {
+    pickSide: {
+      home: initBucket(),
+      away: initBucket(),
+    },
+  };
 
   const details = [];
 
@@ -139,17 +179,25 @@ export async function scoreCompletedGames(league, dateYYYYMMDD, games = []) {
     const status = g?.status ?? g?.state ?? "";
     if (!isFinalStatus(status)) continue;
 
+    completedFinals++;
+
     const { homeScore, awayScore } = getScoresFromGame(g);
-    completed++;
+    const hasScore = Number.isFinite(homeScore) && Number.isFinite(awayScore);
+    if (!hasScore) {
+      // premium: don't treat this as "completed" for grading/pick stats
+      continue;
+    }
+    completedWithScore++;
 
     const pickSide = getPickSide(g);
     if (!pickSide) {
-      noPick++;
+      pass++;
       continue;
     }
 
-    // must have numeric scores to grade
-    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+    const edge = safeNum(g?.market?.edge);
+    const winProb = safeNum(g?.market?.winProb);
+    const conf = safeNum(g?.market?.confidence);
 
     const { result } = outcomeFromPick(pickSide, homeScore, awayScore);
 
@@ -160,22 +208,37 @@ export async function scoreCompletedGames(league, dateYYYYMMDD, games = []) {
     else if (result === "LOSS") losses++;
     else if (result === "PUSH") pushes++;
 
-    const edge = safeNum(g?.market?.edge);
-    if (Number.isFinite(edge)) {
-      sumEdge += edge;
-      nEdge++;
+    // averages
+    if (Number.isFinite(edge)) { sumEdge += edge; nEdge++; }
+    if (Number.isFinite(winProb)) { sumWinProb += winProb; nWinProb++; }
+    if (Number.isFinite(conf)) { sumConf += conf; nConf++; }
+
+    // by_market pickSide
+    const psBucket = by_market.pickSide[pickSide] || initBucket();
+    psBucket.picks++;
+    if (result === "WIN") psBucket.wins++;
+    else if (result === "LOSS") psBucket.losses++;
+    else if (result === "PUSH") psBucket.pushes++;
+    by_market.pickSide[pickSide] = psBucket;
+
+    // by_conf buckets
+    const cb = confBucket(conf);
+    if (cb) {
+      by_conf[cb] = by_conf[cb] || initBucket();
+      by_conf[cb].picks++;
+      if (result === "WIN") by_conf[cb].wins++;
+      else if (result === "LOSS") by_conf[cb].losses++;
+      else if (result === "PUSH") by_conf[cb].pushes++;
     }
 
-    const winProb = safeNum(g?.market?.winProb);
-    if (Number.isFinite(winProb)) {
-      sumWinProb += winProb;
-      nWinProb++;
-    }
-
-    const conf = safeNum(g?.market?.confidence);
-    if (Number.isFinite(conf)) {
-      sumConf += conf;
-      nConf++;
+    // by_edge buckets
+    const eb = edgeBucket(edge);
+    if (eb) {
+      by_edge[eb] = by_edge[eb] || initBucket();
+      by_edge[eb].picks++;
+      if (result === "WIN") by_edge[eb].wins++;
+      else if (result === "LOSS") by_edge[eb].losses++;
+      else if (result === "PUSH") by_edge[eb].pushes++;
     }
 
     details.push({
@@ -192,29 +255,35 @@ export async function scoreCompletedGames(league, dateYYYYMMDD, games = []) {
     });
   }
 
+  // finalize win rates for rollups
+  by_market.pickSide.home = finalizeBucket(by_market.pickSide.home);
+  by_market.pickSide.away = finalizeBucket(by_market.pickSide.away);
+  for (const k of Object.keys(by_conf)) finalizeBucket(by_conf[k]);
+  for (const k of Object.keys(by_edge)) finalizeBucket(by_edge[k]);
+
   const winRate = wins + losses > 0 ? wins / (wins + losses) : null;
 
   // Build DB row
   const dbRow = {
     date: ymd,
-    league: String(league || "").toLowerCase(),
+    league: lg,
     games: rows.length,
     picks,
-    completed,
+    completed: completedWithScore, // premium: "completed" means "gradable finals"
     wins,
     losses,
     pushes,
-    pass: noPick, // treat "no pick on final" as pass for performance rollups
+    pass, // premium: explicit pass count
     win_rate: winRate,
-    by_conf: {},
-    by_edge: {},
-    by_market: {},
+    by_conf,
+    by_edge,
+    by_market,
     notes: null,
     error: null,
     updated_at: new Date().toISOString(),
   };
 
-  // Write to DB
+  // Write to DB (or return ok:false db if not configured)
   const db = await upsertPerformanceRow(dbRow);
 
   return {
@@ -224,19 +293,25 @@ export async function scoreCompletedGames(league, dateYYYYMMDD, games = []) {
     db,
     counts: {
       inputGames: rows.length,
-      completed,
+      completedFinals,
+      completedWithScore,
       picks,
       graded,
       wins,
       losses,
       pushes,
-      noPick,
+      pass,
     },
     metrics: {
       winRate,
       avgEdge: nEdge > 0 ? sumEdge / nEdge : null,
       avgWinProb: nWinProb > 0 ? sumWinProb / nWinProb : null,
       avgConfidence: nConf > 0 ? sumConf / nConf : null,
+    },
+    rollups: {
+      by_conf,
+      by_edge,
+      by_market,
     },
     details, // keep for debugging; remove later if you want
   };
@@ -246,7 +321,7 @@ export async function scoreCompletedGames(league, dateYYYYMMDD, games = []) {
    Router (debug utilities)
    ========================================================= */
 router.get("/ping", (_req, res) => {
-  res.json({ ok: true, route: "score", version: "score-v3-db-write" });
+  res.json({ ok: true, route: "score", version: "score-v4-premium-rollups" });
 });
 
 router.get("/env", (_req, res) => {
@@ -260,7 +335,7 @@ router.get("/env", (_req, res) => {
 
 // quick DB write test (no predictions needed)
 router.get("/test-write", async (req, res) => {
-  const league = String(req.query.league || "nba").toLowerCase();
+  const league = normalizeLeague(req.query.league || "nba");
   const date = normalizeDateParam(req.query.date) || new Date().toISOString().slice(0, 10);
 
   const row = {

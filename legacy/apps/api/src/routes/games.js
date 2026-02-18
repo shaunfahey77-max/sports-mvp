@@ -6,28 +6,16 @@ const router = express.Router();
 const PORT = Number(process.env.PORT || 3001);
 const SELF_BASE = `http://127.0.0.1:${PORT}`;
 
-// ✅ ESPN public “site” API (WORKING host)
 const ESPN_NCAAM_SCOREBOARD =
   "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard";
-
-/**
- * NOTE ON LINE COUNT:
- * The previous file had duplicated helpers and extra unused scaffolding.
- * This version is shorter on purpose, but it ADDS the critical fix:
- * - /api/games now returns {home, away, gameId} for EVERY league (incl. NCAAM),
- *   so your Home.jsx can merge predictions correctly.
- */
+const ESPN_NHL_SCOREBOARD =
+  "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard";
 
 function normalizeDateParam(dateLike) {
   const s = String(dateLike || "").trim();
   if (!s) return null;
-
-  // YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  // YYYYMMDD -> YYYY-MM-DD
   if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
-
   return null;
 }
 
@@ -41,9 +29,8 @@ function ymdToEspnDate(ymd) {
   return String(ymd || "").replaceAll("-", "");
 }
 
-function wantExpandTeams(req) {
-  const v = String(req.query.expand || "").toLowerCase();
-  return v === "teams" || v === "true" || v === "1";
+function safeArr(v) {
+  return Array.isArray(v) ? v : [];
 }
 
 async function fetchJson(url, { timeoutMs = 20000 } = {}) {
@@ -58,61 +45,51 @@ async function fetchJson(url, { timeoutMs = 20000 } = {}) {
     },
   }).finally(() => clearTimeout(t));
 
+  const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Upstream ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
+    const msg = json?.error || `Upstream ${res.status} for ${url}`;
+    throw new Error(msg);
   }
-
-  return res.json();
+  return json;
 }
 
-/**
- * Normalize ANY league game into the "Home.jsx expects" shape:
- * {
- *   id, gameId, league, date, status,
- *   homeScore, awayScore,
- *   home: {id,name,abbr,score,logo?},
- *   away: {id,name,abbr,score,logo?}
- * }
- */
-function normalizeGame({ league, id, date, status, home, away, homeScore, awayScore, extra = {} }) {
-  return {
-    league,
-    id: String(id),
-    gameId: String(id), // ✅ critical: merges predictions by gameId
-    date,
-    status: status || "",
-    homeScore: homeScore ?? null,
-    awayScore: awayScore ?? null,
-    home: home || null,
-    away: away || null,
-    ...extra,
-  };
+function normalizePredictionsGames(league, payload, fallbackDate) {
+  const list = safeArr(payload?.games);
+  return list
+    .map((g) => {
+      const gameId = g?.gameId || g?.id || null;
+      if (!gameId) return null;
+      return {
+        league,
+        gameId: String(gameId),
+        id: String(gameId),
+        date: g?.date || fallbackDate,
+        status: g?.status || g?.state || "",
+        homeScore: g?.homeScore ?? g?.home?.score ?? null,
+        awayScore: g?.awayScore ?? g?.away?.score ?? null,
+        home: g?.home || g?.homeTeam || null,
+        away: g?.away || g?.awayTeam || null,
+      };
+    })
+    .filter(Boolean);
 }
 
-/**
- * ✅ ESPN NCAAM games (normalized to unified + Home.jsx shape)
- */
-async function getNcaamGamesFromEspn(dateYYYYMMDD, expandTeams) {
-  const espnDate = ymdToEspnDate(dateYYYYMMDD);
-  const sourceUrl = `${ESPN_NCAAM_SCOREBOARD}?dates=${encodeURIComponent(espnDate)}`;
-
+async function getEspnGames(league, ymd) {
+  const espnDate = ymdToEspnDate(ymd);
+  const base = league === "nhl" ? ESPN_NHL_SCOREBOARD : ESPN_NCAAM_SCOREBOARD;
+  const sourceUrl = `${base}?dates=${encodeURIComponent(espnDate)}`;
   const json = await fetchJson(sourceUrl);
-  const events = Array.isArray(json?.events) ? json.events : [];
+  const events = safeArr(json?.events);
 
   const games = events
     .map((ev) => {
-      const comp = Array.isArray(ev?.competitions) ? ev.competitions[0] : null;
-      const competitors = Array.isArray(comp?.competitors) ? comp.competitors : [];
-
+      const comp = safeArr(ev?.competitions)[0] || null;
+      const competitors = safeArr(comp?.competitors);
       const homeC = competitors.find((c) => c?.homeAway === "home") || null;
       const awayC = competitors.find((c) => c?.homeAway === "away") || null;
 
-      const homeTeam = homeC?.team || {};
-      const awayTeam = awayC?.team || {};
-
-      const homeAbbr = homeTeam?.abbreviation || null;
-      const awayAbbr = awayTeam?.abbreviation || null;
+      const homeT = homeC?.team || {};
+      const awayT = awayC?.team || {};
 
       const homeScore = Number.isFinite(Number(homeC?.score)) ? Number(homeC.score) : null;
       const awayScore = Number.isFinite(Number(awayC?.score)) ? Number(awayC.score) : null;
@@ -124,197 +101,83 @@ async function getNcaamGamesFromEspn(dateYYYYMMDD, expandTeams) {
         ev?.status?.type?.name ||
         "";
 
-      const neutralSite = Boolean(comp?.neutralSite);
-      const venueName = comp?.venue?.fullName || comp?.venue?.address?.city || null;
+      const gidPrefix = league === "nhl" ? "nhl" : "ncaam";
+      const gameId = ev?.id ? `${gidPrefix}-${String(ev.id)}` : null;
+      if (!gameId) return null;
 
-      const homeLogo = homeTeam?.id ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${homeTeam.id}.png` : null;
-      const awayLogo = awayTeam?.id ? `https://a.espncdn.com/i/teamlogos/ncaa/500/${awayTeam.id}.png` : null;
+      const home = {
+        id: `${gidPrefix}-${String(homeT?.abbreviation || homeT?.id || "home").toLowerCase()}`,
+        name: homeT?.displayName || homeT?.shortDisplayName || homeT?.abbreviation || "Home",
+        abbr: homeT?.abbreviation || null,
+        score: homeScore,
+        espnTeamId: homeT?.id || null,
+      };
 
-      // ✅ Canonical ID that matches predictions
-      const gid = `ncaam-${ev?.id || `${awayAbbr || "away"}@${homeAbbr || "home"}-${dateYYYYMMDD}`}`;
+      const away = {
+        id: `${gidPrefix}-${String(awayT?.abbreviation || awayT?.id || "away").toLowerCase()}`,
+        name: awayT?.displayName || awayT?.shortDisplayName || awayT?.abbreviation || "Away",
+        abbr: awayT?.abbreviation || null,
+        score: awayScore,
+        espnTeamId: awayT?.id || null,
+      };
 
-      const home = expandTeams
-        ? {
-            id: `ncaam-${String(homeAbbr || homeTeam?.id || "home").toLowerCase()}`,
-            name: homeTeam?.displayName || homeTeam?.shortDisplayName || homeAbbr || "Home",
-            abbr: homeAbbr,
-            score: homeScore,
-            logo: homeLogo,
-            espnTeamId: homeTeam?.id || null,
-          }
-        : {
-            id: `ncaam-${String(homeAbbr || homeTeam?.id || "home").toLowerCase()}`,
-            name: homeAbbr || homeTeam?.id || "HOME",
-            abbr: homeAbbr,
-            score: homeScore,
-          };
-
-      const away = expandTeams
-        ? {
-            id: `ncaam-${String(awayAbbr || awayTeam?.id || "away").toLowerCase()}`,
-            name: awayTeam?.displayName || awayTeam?.shortDisplayName || awayAbbr || "Away",
-            abbr: awayAbbr,
-            score: awayScore,
-            logo: awayLogo,
-            espnTeamId: awayTeam?.id || null,
-          }
-        : {
-            id: `ncaam-${String(awayAbbr || awayTeam?.id || "away").toLowerCase()}`,
-            name: awayAbbr || awayTeam?.id || "AWAY",
-            abbr: awayAbbr,
-            score: awayScore,
-          };
-
-      return normalizeGame({
-        league: "ncaam",
-        id: gid,
-        date: dateYYYYMMDD,
+      return {
+        league,
+        gameId,
+        id: gameId,
+        date: ymd,
         status,
-        home,
-        away,
         homeScore,
         awayScore,
-        extra: { neutralSite, venue: venueName, espnEventId: ev?.id || null },
-      });
+        home,
+        away,
+      };
     })
     .filter(Boolean);
 
   return { games, sourceUrl };
 }
 
-/**
- * ✅ Normalize NBA/NHL local responses into the same shape
- */
-function normalizeLocalLeagueGames(league, payload, fallbackDate) {
-  const list = Array.isArray(payload) ? payload : Array.isArray(payload?.games) ? payload.games : [];
-
-  return list
-    .map((g) => {
-      const id = g?.id || g?.gameId || g?.game_id || null;
-      if (!id) return null;
-
-      const date = g?.date || fallbackDate;
-
-      // Support multiple shapes for expanded teams
-      const homeTeam = g?.home || g?.homeTeam || null;
-      const awayTeam = g?.away || g?.awayTeam || null;
-
-      const homeId = homeTeam?.id || g?.homeTeamId || g?.home_team_id || null;
-      const awayId = awayTeam?.id || g?.awayTeamId || g?.away_team_id || null;
-
-      const home = {
-        id: String(homeId || ""),
-        name: homeTeam?.name || homeTeam?.abbr || String(homeId || "HOME"),
-        abbr: homeTeam?.abbr || null,
-        score: homeTeam?.score ?? g?.homeScore ?? null,
-        logo: homeTeam?.logo || null,
-      };
-
-      const away = {
-        id: String(awayId || ""),
-        name: awayTeam?.name || awayTeam?.abbr || String(awayId || "AWAY"),
-        abbr: awayTeam?.abbr || null,
-        score: awayTeam?.score ?? g?.awayScore ?? null,
-        logo: awayTeam?.logo || null,
-      };
-
-      const homeScore = g?.homeScore ?? home?.score ?? null;
-      const awayScore = g?.awayScore ?? away?.score ?? null;
-
-      return normalizeGame({
-        league,
-        id: String(id),
-        date,
-        status: g?.status || "",
-        home,
-        away,
-        homeScore,
-        awayScore,
-      });
-    })
-    .filter(Boolean);
-}
-
-/**
- * ✅ /api/ncaam/games — ESPN source
- */
-router.get("/ncaam/games", async (req, res) => {
-  const date = normalizeDateParam(req.query.date || req.query["dates[]"]) || todayUTCYYYYMMDD();
-  const expandTeams = wantExpandTeams(req);
-
-  try {
-    const { games, sourceUrl } = await getNcaamGamesFromEspn(date, expandTeams);
-
-    return res.json({
-      ok: true,
-      date,
-      counts: { total: games.length, ncaam: games.length },
-      games,
-      errors: { ncaam: null },
-      expandTeams,
-      source: "espn-scoreboard",
-      sourceUrl,
-    });
-  } catch (e) {
-    return res.status(502).json({
-      ok: false,
-      date,
-      counts: null,
-      games: [],
-      errors: { ncaam: String(e?.message || e) },
-      expandTeams,
-      source: "espn-scoreboard",
-      sourceUrl: null,
-    });
-  }
-});
-
-/**
- * ✅ /api/games — unified
- * Always returns games normalized to {home,away,gameId}.
- */
+// /api/games
 router.get("/games", async (req, res) => {
   const date = normalizeDateParam(req.query.date || req.query["dates[]"]) || todayUTCYYYYMMDD();
-  const expandTeams = wantExpandTeams(req);
   const league = String(req.query.league || "").toLowerCase().trim(); // optional filter
 
   let nbaGames = [];
   let nhlGames = [];
   let ncaamGames = [];
+  let errors = { nba: null, nhl: null, ncaam: null };
+  let sourceUrl = null;
 
-  let nbaError = null;
-  let nhlError = null;
-  let ncaamError = null;
-
-  let ncaamSourceUrl = null;
-
+  // NBA from premium predictions
   if (!league || league === "nba") {
     try {
-      const url = `${SELF_BASE}/api/nba/games?date=${encodeURIComponent(date)}&expand=${expandTeams ? "teams" : "0"}`;
-      const j = await fetchJson(url);
-      nbaGames = normalizeLocalLeagueGames("nba", j, date);
+      const j = await fetchJson(`${SELF_BASE}/api/predictions?league=nba&date=${encodeURIComponent(date)}`);
+      nbaGames = normalizePredictionsGames("nba", j, date);
     } catch (e) {
-      nbaError = String(e?.message || e);
+      errors.nba = String(e?.message || e);
     }
   }
 
+  // NHL from ESPN (breaks recursion permanently)
   if (!league || league === "nhl") {
     try {
-      const url = `${SELF_BASE}/api/nhl/games?date=${encodeURIComponent(date)}&expand=${expandTeams ? "teams" : "0"}`;
-      const j = await fetchJson(url);
-      nhlGames = normalizeLocalLeagueGames("nhl", j, date);
+      const out = await getEspnGames("nhl", date);
+      nhlGames = out.games;
+      sourceUrl = out.sourceUrl;
     } catch (e) {
-      nhlError = String(e?.message || e);
+      errors.nhl = String(e?.message || e);
     }
   }
 
+  // NCAAM from ESPN
   if (!league || league === "ncaam") {
     try {
-      const out = await getNcaamGamesFromEspn(date, expandTeams);
+      const out = await getEspnGames("ncaam", date);
       ncaamGames = out.games;
-      ncaamSourceUrl = out.sourceUrl;
+      sourceUrl = out.sourceUrl;
     } catch (e) {
-      ncaamError = String(e?.message || e);
+      errors.ncaam = String(e?.message || e);
     }
   }
 
@@ -322,18 +185,13 @@ router.get("/games", async (req, res) => {
 
   return res.json({
     ok: true,
+    league: league || null,
     date,
-    counts: {
-      total: games.length,
-      nba: nbaGames.length,
-      nhl: nhlGames.length,
-      ncaam: ncaamGames.length,
-    },
+    counts: { total: games.length, nba: nbaGames.length, nhl: nhlGames.length, ncaam: ncaamGames.length },
     games,
-    errors: { nba: nbaError, nhl: nhlError, ncaam: ncaamError },
-    expandTeams,
-    note: "NCAAM via ESPN scoreboard. NBA/NHL via local endpoints. All games normalized to {home,away,gameId}.",
-    sourceUrl: ncaamSourceUrl,
+    errors,
+    sourceUrl,
+    note: "NBA via /api/predictions. NHL+NCAAM via ESPN scoreboard to avoid recursive fallbacks.",
   });
 });
 

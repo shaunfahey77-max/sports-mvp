@@ -1,7 +1,5 @@
 // legacy/apps/api/src/index.js
-import dotenv from "dotenv";
-dotenv.config({ path: new URL("../.env", import.meta.url) });
-
+import "dotenv/config"; // ✅ loads legacy/apps/api/.env automatically
 import express from "express";
 import cors from "cors";
 
@@ -9,44 +7,11 @@ import adminPerformanceRouter from "./routes/adminPerformance.js";
 import performanceRoutes from "./routes/performance.js";
 import upsetsRouter from "./routes/upsets.js";
 import scoreRouter from "./routes/score.js";
-
-// ✅ Premium unified predictions contract (/api/predictions?league=...&date=...)
-import predictionsRouter from "./routes/predictions.js";
-
-// ✅ unified /api/games + /api/ncaam/games
 import gamesRouter from "./routes/games.js";
-
-// ✅ ESPN NCAAM predictions (/api/ncaam/predict) — MUST BE MOUNTED BEFORE predictRouter
 import ncaamPredictRouter from "./routes/ncaamPredict.js";
-
-// ⚠️ generic predictions router (can shadow /ncaam/predict if mounted first)
 import predictRouter from "./routes/predict.js";
 
 import { startDailyScoreJob } from "./cron/dailyScore.js";
-
-/**
- * Optional: Premium NBA router
- * - Do NOT crash if file doesn't exist
- */
-let nbaPremiumRouter = null;
-try {
-  const mod = await import("./routes/nbaPremium.js");
-  nbaPremiumRouter = mod?.default || null;
-} catch {
-  // ignore
-}
-
-/**
- * Optional: Admin run-cron router (premium scoring trigger)
- * - Prefer router if present; otherwise keep fallback endpoint below
- */
-let adminRunCronRouter = null;
-try {
-  const mod = await import("./routes/adminRunCron.js");
-  adminRunCronRouter = mod?.default || null;
-} catch {
-  // ignore
-}
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -74,7 +39,8 @@ app.get("/api/health", (_req, res) =>
     ok: true,
     service: "sports-mvp-api",
     time: new Date().toISOString(),
-    version: "legacy-api-index-premium-scoring-upsets",
+    version: "legacy-api-index-premium-stable",
+    cronEnabled: ENABLE_CRON,
   })
 );
 
@@ -88,20 +54,34 @@ function requireAdmin(req) {
 }
 
 /**
+ * ✅ Optional routers (do not crash if missing)
+ */
+async function tryImport(defaultPath) {
+  try {
+    const mod = await import(defaultPath);
+    return mod?.default || null;
+  } catch {
+    return null;
+  }
+}
+
+// Optional: Premium NBA router
+const nbaPremiumRouter = await tryImport("./routes/nbaPremium.js");
+
+// Optional: Premium unified predictions router
+const predictionsRouter = await tryImport("./routes/predictions.js");
+
+// Optional: Admin run-cron router
+const adminRunCronRouter = await tryImport("./routes/adminRunCron.js");
+
+/**
  * ✅ Mount routers (ORDER MATTERS)
- *
- * Premium fixes included here:
- * - Ensure /api/predictions router is mounted (used by Upsets + performance UIs)
- * - Keep /api/upsets mounted explicitly at /api/upsets
- * - Keep scoring router mounted at /api/score
- * - Mount ncaamPredictRouter BEFORE predictRouter to prevent shadowing
- * - Prefer adminRunCron router when present for premium scoring runs
  */
 app.use("/api", adminPerformanceRouter);
 app.use("/api", performanceRoutes);
 
-// ✅ premium unified predictions router
-app.use("/api", predictionsRouter);
+// ✅ premium unified predictions contract (if present)
+if (predictionsRouter) app.use("/api", predictionsRouter);
 
 // routes/upsets.js uses router.get("/") so mount it at /api/upsets
 app.use("/api/upsets", upsetsRouter);
@@ -120,35 +100,32 @@ if (nbaPremiumRouter) {
   app.use("/api/nba", nbaPremiumRouter);
 }
 
-// ✅ premium admin scoring trigger router (if you created it)
+/**
+ * ✅ Admin run-cron
+ * IMPORTANT: mount at /api (not /api/admin) to avoid double-prefixing,
+ * because your current adminRunCron.js defines router.get("/admin/run-cron", ...)
+ */
 if (adminRunCronRouter) {
-  app.use("/api/admin", adminRunCronRouter);
-} else {
-  /**
-   * ✅ Manual cron trigger (fallback)
-   * If you have apps/api/src/routes/adminRunCron.js, it will be used instead.
-   */
-  app.get("/api/admin/run-cron", async (req, res) => {
-    try {
-      if (!requireAdmin(req)) {
-        return res.status(401).json({ ok: false, error: "Unauthorized" });
-      }
-      return res.json({
-        ok: true,
-        note:
-          "adminRunCron router not found. Create routes/adminRunCron.js for premium scoring runs, or wire run logic here.",
-      });
-    } catch (e) {
-      console.error("[ADMIN CRON ERROR]", e);
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  app.use("/api", (req, res, next) => {
+    // guard only /api/admin/*
+    if (req.path.startsWith("/admin/") && !requireAdmin(req)) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
+    return next();
+  });
+  app.use("/api", adminRunCronRouter);
+} else {
+  // fallback stub
+  app.get("/api/admin/run-cron", (req, res) => {
+    if (!requireAdmin(req)) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    res.json({ ok: true, note: "adminRunCron router not found (routes/adminRunCron.js missing)" });
   });
 }
 
 // ⚠️ generic predictions router LAST (avoid shadowing /api/ncaam/predict)
 app.use("/api", predictRouter);
 
-// ✅ 404 JSON (prevents confusing hangs / HTML)
+// ✅ 404 JSON
 app.use((req, res) => {
   res.status(404).json({ ok: false, error: `Not found: ${req.method} ${req.path}` });
 });
