@@ -13,15 +13,67 @@ const NBA_API_KEY = process.env.NBA_API_KEY || "";
 // NHL (public) schedule endpoint
 const NHL_API_BASE = "https://api-web.nhle.com/v1";
 
-// ✅ NCAAM via CollegeBasketballData (CBBD)
-const CBBD_API_BASE = String(
-  process.env.CBBD_API_BASE ||
-    process.env.NCAAM_API_BASE ||
-    "https://api.collegebasketballdata.com"
-).replace(/\/+$/, "");
+// ✅ NCAAM via espn
+const NCAAM_PROVIDER = String(process.env.NCAAM_PROVIDER || "espn").toLowerCase();
 
-const CBBD_API_KEY =
-  process.env.CBBD_API_KEY || process.env.NCAAM_API_KEY || process.env.CBB_API_KEY || "";
+router.get("/ncaam/predict", async (req, res) => {
+  const date = normalizeDateParam(req.query.date) || todayUTCYYYYMMDD();
+
+  // Always try ESPN first unless explicitly forced to cbbd
+  if (NCAAM_PROVIDER !== "cbbd") {
+    try {
+      const { games: slateGames, sourceUrl } = await getNcaamGamesFromEspn(date, true);
+
+      // If ESPN returns 0, do NOT fall back silently.
+      // Return ESPN meta + empty list + warning.
+      if (!slateGames.length) {
+        return res.json({
+          ok: true,
+          meta: {
+            league: "ncaam",
+            date,
+            model: "NCAAM espn-record-rank-v1",
+            source: "espn-scoreboard",
+            sourceUrl,
+            warnings: ["espn_empty_slate"],
+          },
+          games: [],
+        });
+      }
+
+      const preds = buildEspnRecordRankPredictions(slateGames); // your existing ESPN model function
+      return res.json({
+        ok: true,
+        meta: {
+          league: "ncaam",
+          date,
+          model: "NCAAM espn-record-rank-v1",
+          source: "espn-scoreboard",
+          sourceUrl,
+          warnings: [],
+        },
+        games: preds,
+      });
+    } catch (e) {
+      // Only here do we allow fallback
+      console.warn("[NCAAM] ESPN predict failed, falling back:", e?.message || e);
+    }
+  }
+
+  // Fallback to CBBD only if explicitly forced or ESPN errored
+  const preds = await buildCbbdPredictions(date); // your existing CBBD function
+  return res.json({
+    ok: true,
+    meta: {
+      league: "ncaam",
+      date,
+      model: "NCAAM cbbd-v1",
+      source: "cbbd",
+      warnings: [],
+    },
+    games: preds?.games || [],
+  });
+});
 
 /* =========================================================
    Cache (TTL + in-flight de-dupe + simple pruning)

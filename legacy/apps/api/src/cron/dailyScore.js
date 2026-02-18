@@ -1,37 +1,88 @@
 // apps/api/src/cron/dailyScore.js
 import cron from "node-cron";
 
+function ymdOrYesterdayUTC(date) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  const fallback = d.toISOString().slice(0, 10);
+  const ymd = (date && String(date).trim()) || fallback;
+  return ymd;
+}
+
+/**
+ * Try to get premium predictions via shared module function.
+ * If not available, fallback to hitting our own HTTP endpoint.
+ */
+async function getPremiumPredictions({ league, date }) {
+  // 1) Preferred: direct function import (no HTTP, fastest, consistent)
+  try {
+    const mod = await import("../routes/predictions.js");
+
+    // If you already have / can add an exported helper like:
+    // export async function getPredictionsFor({ league, date, ... })
+    const fn =
+      mod.getPredictionsFor ||
+      mod.getPredictions ||
+      mod.buildPredictions ||
+      null;
+
+    if (typeof fn === "function") {
+      return await fn({ league, date });
+    }
+  } catch {
+    // ignore and fallback to HTTP
+  }
+
+  // 2) Fallback: call our own API (slower but robust)
+  const base = process.env.API_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3001}`;
+  const url = `${base}/api/predictions?league=${encodeURIComponent(league)}&date=${encodeURIComponent(date)}`;
+
+  const res = await fetch(url);
+  const json = await res.json().catch(() => ({}));
+
+  if (!res.ok || json?.ok === false) {
+    const msg = json?.error || `Failed to fetch premium predictions (${res.status})`;
+    throw new Error(msg);
+  }
+
+  return json;
+}
+
 /**
  * Single runner used by BOTH:
  * - the scheduled cron
  * - the manual /api/admin/run-cron endpoint
  */
-export async function runDailyScoreOnce({ date } = {}) {
-  // Default = yesterday (UTC-safe date math)
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - 1);
-  const ymd = (date && String(date).trim()) || d.toISOString().slice(0, 10);
+export async function runDailyScoreOnce({ date, league = "nba" } = {}) {
+  const ymd = ymdOrYesterdayUTC(date);
 
-  console.log(`[CRON] Running scoring job for ${ymd}`);
+  console.log(`[CRON] Running PREMIUM scoring job for ${league} on ${ymd}`);
 
-  // Lazy imports prevent circular dependency issues
-  const { buildNbaPredictions } = await import("../routes/predict.js");
+  // Lazy import prevents circular dependency issues
   const { scoreCompletedGames } = await import("../routes/score.js");
 
-  // Build predictions (v2 premium model)
-  const nba = await buildNbaPredictions(ymd, 14, { modelVersion: "v2" });
+  // Pull PREMIUM predictions (same contract the UI/upsets should use)
+  const pred = await getPremiumPredictions({ league, date: ymd });
 
-  // Score completed games
-  const report = await scoreCompletedGames("nba", ymd, nba?.games || []);
+  // Normalize games array from common shapes
+  const games =
+    pred?.games ||
+    pred?.data?.games ||
+    pred?.rows ||
+    [];
 
-  const scoredGames = Array.isArray(nba?.games) ? nba.games.length : 0;
+  const report = await scoreCompletedGames(league, ymd, games);
 
-  console.log(`[CRON] Completed scoring for ${ymd} (games=${scoredGames})`);
+  const scoredGames = Array.isArray(games) ? games.length : 0;
+
+  console.log(`[CRON] Completed PREMIUM scoring for ${league} ${ymd} (games=${scoredGames})`);
 
   return {
     ranFor: ymd,
+    league,
     scoredGames,
     report,
+    source: pred?.meta?.source || pred?._source || "premium-predictions",
   };
 }
 
@@ -47,17 +98,14 @@ export function startDailyScoreJob() {
     expr,
     async () => {
       try {
-        await runDailyScoreOnce();
+        // NBA first (expand to nhl/ncaam after you confirm scoring is perfect)
+        await runDailyScoreOnce({ league: "nba" });
       } catch (err) {
-        console.error("[CRON] Error:", err);
+        console.error("[CRON] Error:", err?.message || err);
       }
     },
-    {
-      timezone: "America/New_York", // ✅ Eastern Time (DST-aware)
-    }
+    { timezone: "America/New_York" }
   );
 
-  console.log(
-    `[CRON] Scheduled daily scoring job: "${expr}" (America/New_York — 03:30 AM Eastern)`
-  );
+  console.log(`[CRON] Scheduled daily scoring job: "${expr}" (America/New_York — 03:30 AM Eastern)`);
 }

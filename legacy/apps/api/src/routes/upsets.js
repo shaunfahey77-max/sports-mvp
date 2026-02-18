@@ -4,23 +4,25 @@ import express from "express";
 const router = express.Router();
 
 /**
- * Upsets v7 — winProb-aware
- * - Source: /api/predictions (premium model output)
- * - leagues: nba | nhl | ncaam
- * - query aliases:
- *   - windowDays OR window
- *   - minWin OR minProb
- *   - limit
- *   - mode: watch | strict
- *   - model: v1 | v2  (forwarded to /api/predictions)
+ * Upsets v8 — premium-safe
+ * - Source: direct resolver from routes/predictions.js (preferred)
+ * - Fallback: HTTP GET /api/predictions (keeps local+deploy working)
+ *
+ * leagues: nba | nhl | ncaam
+ * query aliases:
+ *  - windowDays OR window   (accepted; currently informational)
+ *  - minWin OR minProb
+ *  - limit
+ *  - mode: watch | strict
+ *  - model: v1 | v2 (forwarded)
  *
  * Response:
  *  - rows[] (for web UI)
  *  - candidates[] (back-compat)
- *  - meta.strictUnderdogPicks is ALWAYS a number
+ *  - meta.strictUnderdogPicks ALWAYS a number
  */
 
-const VERSION = "upsets-v7-winprob";
+const VERSION = "upsets-v8-premium-resolver";
 
 const iso = (d) => new Date(d).toISOString().slice(0, 10);
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -68,7 +70,14 @@ function makeMatchup(away, home) {
   return `${a} @ ${h}`;
 }
 
+// ✅ strict validation: must be a real prob between (0,1)
+function isRealProb(p) {
+  return Number.isFinite(p) && p > 0 && p < 1;
+}
+
 async function fetchJson(url) {
+  // Node 18+ has global fetch. If you deploy on older Node, this will fail.
+  // (If needed, swap to undici; keeping as-is for simplicity.)
   const r = await fetch(url);
   const j = await r.json().catch(() => null);
   if (!r.ok) {
@@ -78,9 +87,39 @@ async function fetchJson(url) {
   return j;
 }
 
-// ✅ strict validation: must be a real prob between (0,1)
-function isRealProb(p) {
-  return Number.isFinite(p) && p > 0 && p < 1;
+/**
+ * Prefer a direct resolver from routes/predictions.js for speed + consistency.
+ * Falls back to HTTP /api/predictions if no resolver is exported.
+ */
+async function getPremiumPredictions({ league, date, model, req }) {
+  // 1) Preferred: direct function import
+  try {
+    const mod = await import("./predictions.js"); // same folder
+
+    // If you have (or add) an exported helper like:
+    // export async function getPredictionsFor({ league, date, model }) { ... }
+    const fn =
+      mod.getPredictionsFor ||
+      mod.getPredictions ||
+      mod.buildPredictions ||
+      null;
+
+    if (typeof fn === "function") {
+      const out = await fn({ league, date, model });
+      return out;
+    }
+  } catch {
+    // ignore and fallback to HTTP
+  }
+
+  // 2) Fallback: call our own API using the request host
+  const base = `${req.protocol}://${req.get("host")}`;
+  const url =
+    `${base}/api/predictions?league=${encodeURIComponent(league)}` +
+    `&date=${encodeURIComponent(date)}` +
+    (model ? `&model=${encodeURIComponent(model)}` : "");
+
+  return await fetchJson(url);
 }
 
 router.get("/ping", (_req, res) => {
@@ -93,6 +132,7 @@ router.get("/", async (req, res) => {
     const league = String(req.query.league || "nba").trim().toLowerCase();
     const date = String(req.query.date || iso(new Date())).slice(0, 10);
 
+    // accepted (currently informational, but we keep returning it)
     const windowDays = clamp(asInt(req.query.windowDays ?? req.query.window, 14), 3, 90);
 
     // minWin is “underdog win equity” threshold
@@ -102,24 +142,15 @@ router.get("/", async (req, res) => {
 
     const mode = String(req.query.mode || "watch").trim().toLowerCase(); // watch | strict
 
-    // ✅ forward model to /api/predictions if provided (v1/v2)
+    // forward model to predictions if provided (v1/v2)
     const model = req.query.model != null ? String(req.query.model).trim().toLowerCase() : null;
 
-    // Use the same host the request hit (works local + deploy)
-    const base = `${req.protocol}://${req.get("host")}`;
-
-    const predUrl =
-      `${base}/api/predictions?league=${encodeURIComponent(league)}` +
-      `&date=${encodeURIComponent(date)}` +
-      (model ? `&model=${encodeURIComponent(model)}` : "");
-
-    const pred = await fetchJson(predUrl);
+    const pred = await getPremiumPredictions({ league, date, model, req });
 
     const games = Array.isArray(pred?.games) ? pred.games : [];
     const slateGames = games.length;
 
     let strictUnderdogPicks = 0;
-
     const rows = [];
 
     for (const g of games) {
@@ -143,8 +174,8 @@ router.get("/", async (req, res) => {
 
       const modelSide = isAwayPick ? "away" : "home";
 
-      // ✅ Prefer model-provided winProb ONLY if it's a real probability.
-      // IMPORTANT: we treat market.winProb as "picked side win probability".
+      // Prefer model-provided winProb ONLY if it's a real probability.
+      // Treat market.winProb as "picked side win probability".
       const rawWinProb = market?.winProb;
       const modelPickWinProb = isRealProb(rawWinProb) ? Number(rawWinProb) : null;
 
@@ -213,7 +244,6 @@ router.get("/", async (req, res) => {
           isHome: underdogSide !== "home",
         },
 
-        // what the UI expects / might use
         winProb: underdogWinProb,
 
         pick: {
@@ -222,8 +252,7 @@ router.get("/", async (req, res) => {
           recommendedTeamName: market?.recommendedTeamName ?? null,
           edge: Number.isFinite(Number(market?.edge)) ? Number(market.edge) : null,
           confidence: Number.isFinite(conf) ? conf : null,
-          // ✅ include picked-side win prob if we have it
-          winProb: pPick,
+          winProb: pPick, // picked-side win prob (or confidence fallback)
         },
 
         signals: {
@@ -255,7 +284,7 @@ router.get("/", async (req, res) => {
       rows: trimmed,
       candidates: trimmed, // back-compat
       meta: {
-        source: "premium-predictions",
+        source: pred?.meta?.source || "premium-predictions",
         slateGames,
         rowsIn: trimmed.length,
         strictUnderdogPicks, // ALWAYS a number
@@ -264,6 +293,7 @@ router.get("/", async (req, res) => {
         limitUsed: limit,
         modelForwarded: model || null,
         elapsedMs: Date.now() - t0,
+        version: VERSION,
       },
     });
   } catch (e) {
