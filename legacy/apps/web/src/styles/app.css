@@ -1,280 +1,219 @@
-/* =========================================================
-   Sports MVP – Clean Quant Dashboard Layout
-   ========================================================= */
+/* legacy/apps/web/src/styles/app.css
+   Premium shell — lightened dark, stronger contrast, clean hierarchy
+*/
 
 :root{
-  --bg0:#060b17;
-  --bg1:#0c1326;
-  --card:rgba(255,255,255,.06);
-  --stroke:rgba(255,255,255,.08);
-  --text:#EAF0FF;
-  --muted:rgba(234,240,255,.65);
-  --accent:#5DA9FF;
-  --green:#2BD97F;
-  --warn:#FFB020;
+  /* Lightened dark base */
+  --bg0:#070A16;
+  --bg1:#0B122A;
+
+  /* Surfaces */
+  --card: rgba(255,255,255,.07);
+  --card2: rgba(255,255,255,.10);
+  --stroke: rgba(255,255,255,.14);
+
+  /* Text */
+  --text:#F4F7FF;
+  --muted: rgba(244,247,255,.72);
+  --muted2: rgba(244,247,255,.55);
+
+  /* Accents */
+  --good: #2ee59d;
+  --warn: #f6c356;
+  --bad:  #ff5a70;
+  --info: #6D60FF;
+
+  --radius: 18px;
+  --shadow: 0 14px 50px rgba(0,0,0,.50);
 }
 
 *{ box-sizing:border-box; }
+html,body{ height:100%; }
 
 body{
   margin:0;
-  font-family: Inter, system-ui, -apple-system, sans-serif;
   background:
-    radial-gradient(1200px 600px at 10% -10%, #153056 0%, transparent 60%),
-    radial-gradient(1000px 600px at 100% 0%, #241a4f 0%, transparent 60%),
-    var(--bg0);
+    radial-gradient(1100px 700px at 18% 20%, rgba(46,229,157,.12), transparent 56%),
+    radial-gradient(1100px 700px at 85% 18%, rgba(109,96,255,.14), transparent 58%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
   color:var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial;
+  line-height: 1.25;
 }
+
+a{ color:inherit; text-decoration:none; }
+button, input, select{ font:inherit; color:inherit; }
 
 .page{
-  padding:32px 28px 60px;
+  position:relative;
+  min-height:100vh;
+  padding: 28px 22px 64px;
 }
 
+/* ✅ CLICK FIX: prevent FX layers from stealing pointer events */
+.page::before,
+.page::after{
+  content:"";
+  position:fixed;
+  inset:-40px;
+  pointer-events:none !important;
+  z-index:0;
+}
+.page::before{
+  background:
+    radial-gradient(900px 600px at 18% 78%, rgba(46,229,157,.12), transparent 62%),
+    radial-gradient(900px 600px at 82% 20%, rgba(123,92,255,.16), transparent 62%);
+}
+.page::after{
+  background: linear-gradient(180deg, rgba(255,255,255,.04), transparent 45%);
+  opacity:.55;
+}
+
+/* All app content above FX layers */
 .shell{
-  max-width:1400px;
+  position:relative;
+  z-index:5;
+  max-width:1200px;
   margin:0 auto;
 }
 
-/* ---------------------------------------------------------
-   HERO
---------------------------------------------------------- */
-
-.hero{
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  margin-bottom:28px;
+.card{
+  background: linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.055));
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
-.hero h1{
-  margin:0 0 6px 0;
-  font-size:32px;
-  font-weight:600;
+.row{ display:flex; gap:14px; align-items:stretch; }
+.grid{
+  display:grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap:14px;
 }
 
-.muted{
-  color:var(--muted);
-  font-size:14px;
+.h1{ font-size:32px; font-weight:900; letter-spacing:-.02em; margin:0; }
+.h2{ font-size:16px; font-weight:900; letter-spacing:-.01em; margin:0; }
+.sub{ margin-top:6px; color:var(--muted); font-size:13px; }
+.sub2{ color:var(--muted2); font-size:12px; }
+
+.hr{
+  height:1px;
+  background: rgba(255,255,255,.10);
+  margin: 12px 0;
 }
 
-.hero-actions{
-  display:flex;
-  gap:12px;
-  align-items:center;
-}
-
+.pills{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .pill{
-  padding:6px 12px;
-  background:var(--card);
-  border:1px solid var(--stroke);
+  display:inline-flex; align-items:center; gap:8px;
+  padding:8px 12px;
   border-radius:999px;
-  font-size:13px;
-}
-
-.pill.small{
-  font-size:12px;
-  padding:4px 10px;
-}
-
-/* ---------------------------------------------------------
-   STAT STRIP
---------------------------------------------------------- */
-
-.top-stats{
-  display:grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap:14px;
-  margin-bottom:28px;
-}
-
-.stat{
-  padding:14px 16px;
-  background:var(--card);
-  border:1px solid var(--stroke);
-  border-radius:12px;
-}
-
-.stat .label{
-  font-size:12px;
-  color:var(--muted);
-  margin-bottom:6px;
-}
-
-.stat .value{
-  font-size:20px;
-  font-weight:600;
-}
-
-/* ---------------------------------------------------------
-   SECTION
---------------------------------------------------------- */
-
-.section{
-  padding:22px;
-  border-radius:14px;
-  background:var(--card);
-  border:1px solid var(--stroke);
-}
-
-.section-header{
-  display:flex;
-  justify-content:space-between;
-  align-items:flex-start;
-  margin-bottom:20px;
-}
-
-.section-title{
-  font-size:18px;
-  font-weight:600;
-  margin-bottom:4px;
-}
-
-.section-controls{
-  display:flex;
-  align-items:center;
-  gap:14px;
-}
-
-.toggle{
-  display:flex;
-  background:rgba(255,255,255,.04);
-  border-radius:999px;
-  overflow:hidden;
-}
-
-.toggle button{
-  padding:6px 12px;
-  border:none;
-  background:transparent;
-  color:var(--muted);
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05);
   cursor:pointer;
-  font-size:13px;
+  transition: transform .08s ease, background .15s ease, border-color .15s ease;
 }
+.pill:hover{ background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.20); transform: translateY(-1px); }
+.pill:active{ transform: translateY(0px); }
 
-.toggle button.active{
-  background:var(--accent);
-  color:white;
+.kpi{
+  padding:14px 14px;
+  border-radius: var(--radius);
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05);
 }
+.kpi .label{ color:var(--muted); font-size:12px; }
+.kpi .value{ font-size:20px; font-weight:900; margin-top:4px; }
+.kpi .meta{ margin-top:6px; color:var(--muted2); font-size:12px; }
 
-/* ---------------------------------------------------------
-   LEAGUE GRID
---------------------------------------------------------- */
-
-.league-grid{
-  display:grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap:18px;
-}
-
-.league{
-  padding:16px;
-  border-radius:12px;
-  background:rgba(255,255,255,.04);
-  border:1px solid var(--stroke);
-}
-
-.league-head{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:12px;
-  font-weight:600;
-}
-
-.league-name{
-  font-size:15px;
-}
-
-.league-body{
-  max-height:420px;
-  overflow:auto;
-}
-
-/* ---------------------------------------------------------
-   DAY ROWS
---------------------------------------------------------- */
-
-.day-list{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-}
-
-.day-row{
-  display:grid;
-  grid-template-columns: 70px 1fr 60px;
-  align-items:center;
-  font-size:13px;
-  padding:6px 8px;
-  border-radius:8px;
-  background:rgba(255,255,255,.03);
-}
-
-.day-row:hover{
-  background:rgba(255,255,255,.06);
-}
-
-.day-date{
-  font-weight:500;
-}
-
-.day-mid{
-  display:flex;
+.badge{
+  display:inline-flex;
   align-items:center;
   gap:8px;
-}
-
-.day-pct{
-  text-align:right;
-  font-weight:600;
-}
-
-/* ---------------------------------------------------------
-   TAGS
---------------------------------------------------------- */
-
-.tag{
-  font-size:11px;
-  padding:3px 6px;
-  border-radius:6px;
-  background:rgba(255,255,255,.1);
-}
-
-.tag.warn{
-  background:rgba(255,176,32,.15);
-  color:var(--warn);
-}
-
-/* ---------------------------------------------------------
-   BUTTONS
---------------------------------------------------------- */
-
-.btn{
-  padding:8px 14px;
-  border-radius:8px;
-  background:var(--accent);
-  color:white;
-  text-decoration:none;
-  font-size:14px;
-  font-weight:500;
-}
-
-.btn.secondary{
-  background:rgba(255,255,255,.08);
-  border:1px solid var(--stroke);
-}
-
-/* ---------------------------------------------------------
-   FOOTER LINKS
---------------------------------------------------------- */
-
-.bottom-actions{
-  margin-top:26px;
-  display:flex;
-  gap:12px;
-}
-
-.section-foot{
-  margin-top:16px;
+  padding:6px 10px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05);
   font-size:12px;
+  color:rgba(244,247,255,.92);
+  white-space:nowrap;
+}
+.badge.good{ border-color: rgba(46,229,157,.35); }
+.badge.warn{ border-color: rgba(246,195,86,.35); }
+.badge.bad{ border-color: rgba(255,90,112,.35); }
+.badge.info{ border-color: rgba(109,96,255,.35); }
+
+.slateCard{ padding:14px; }
+.slateHeader{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+.slateTitle{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-weight:900;
+}
+
+.logo{
+  width:22px; height:22px; border-radius:7px;
+  background: rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);
+  object-fit: cover;
+}
+
+.leagueMark{
+  width:22px; height:22px; border-radius:8px;
+  border: 1px solid rgba(255,255,255,.14);
+  background:
+    radial-gradient(10px 10px at 30% 30%, rgba(46,229,157,.9), transparent 60%),
+    radial-gradient(12px 12px at 70% 65%, rgba(109,96,255,.9), transparent 60%),
+    rgba(255,255,255,.06);
+}
+
+.gameRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 10px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  background: rgba(255,255,255,.035);
+  margin-top:10px;
+}
+.matchup{ display:flex; align-items:center; gap:10px; font-weight:850; }
+.metaChips{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; align-items:center; }
+.chip{
+  padding:5px 9px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.05);
+  font-size:12px;
+  color:rgba(244,247,255,.90);
+}
+
+.sectionTitle{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin: 10px 0 8px;
+}
+
+.whyBox{
+  margin-top:10px;
+  padding:10px 10px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.035);
+}
+.whyHead{ font-weight:900; font-size:13px; }
+.whyList{ margin:6px 0 0; padding-left:16px; color:var(--muted); font-size:12px; }
+.whyList li{ margin:4px 0; }
+
+@media (max-width: 980px){
+  .grid{ grid-template-columns: 1fr; }
 }

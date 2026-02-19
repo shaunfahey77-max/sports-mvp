@@ -29,6 +29,14 @@ function safeArr(v) {
   return Array.isArray(v) ? v : [];
 }
 
+function clamp(x, lo, hi) {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+function logistic(z) {
+  return 1 / (1 + Math.exp(-z));
+}
+
 async function fetchJson(url, { timeoutMs = 20000 } = {}) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -89,14 +97,6 @@ function pickRankNumber(obj) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function clamp(x, lo, hi) {
-  return Math.max(lo, Math.min(hi, x));
-}
-
-function logistic(z) {
-  return 1 / (1 + Math.exp(-z));
-}
-
 function tierFromWinProb(p) {
   if (p >= 0.64) return "A";
   if (p >= 0.59) return "B";
@@ -105,38 +105,72 @@ function tierFromWinProb(p) {
 }
 
 function confidenceFromWinProb(p) {
-  const x = (p - 0.5) / 0.25;
+  // map 0.50..0.80 into ~0.50..0.95
+  const x = (p - 0.5) / 0.3;
   return clamp(0.5 + x * 0.45, 0.5, 0.95);
 }
 
-function makePick({ eventId, home, away, homeRec, awayRec, homeRank, awayRank }) {
+function pickLogo(teamObj) {
+  // ESPN often provides team.logos[0].href
+  const direct = teamObj?.logo;
+  if (direct) return direct;
+  const logos = safeArr(teamObj?.logos);
+  const href = logos?.[0]?.href;
+  return href || null;
+}
+
+function safeScore(competitor) {
+  const n = Number(competitor?.score);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeStatus(ev, comp) {
+  const s =
+    comp?.status?.type?.description ||
+    comp?.status?.type?.name ||
+    ev?.status?.type?.description ||
+    ev?.status?.type?.name ||
+    "Scheduled";
+  return String(s);
+}
+
+/**
+ * Premium pick builder:
+ * - Uses record% + rank bonus
+ * - Adds SMALL home-court prior to avoid “away bias” look
+ * - winProb ALWAYS refers to picked side (>= 0.50)
+ * - edge ALWAYS >= 0
+ */
+function makePick({ homeRec, awayRec, homeRank, awayRank }) {
   if (!homeRec?.pct || !awayRec?.pct) return null;
 
   const rankBonus = (rank) => {
     if (!rank) return 0;
+    // top 25 gets up to +0.035, fades to 0
     return clamp((26 - Math.min(rank, 26)) / 25, 0, 1) * 0.035;
   };
 
-  const homeStrength = homeRec.pct + rankBonus(homeRank);
+  // ✅ small home-court prior
+  const HOME_COURT = 0.015;
+
+  const homeStrength = homeRec.pct + rankBonus(homeRank) + HOME_COURT;
   const awayStrength = awayRec.pct + rankBonus(awayRank);
+
+  // Positive diff => away stronger
   const diff = awayStrength - homeStrength;
 
-  const awayWin = clamp(logistic(diff * 6), 0.52, 0.74);
-  const homeWin = 1 - awayWin;
+  // Convert diff into probability (clamp extremes)
+  const pAway = clamp(logistic(diff * 6), 0.05, 0.95);
+  const pHome = 1 - pAway;
 
-  const pickSide = diff >= 0 ? "away" : "home";
-  const winProb = pickSide === "away" ? awayWin : homeWin;
+  const pickSide = pAway >= pHome ? "away" : "home";
+  const winProb = pickSide === "away" ? pAway : pHome;
 
   const tier = tierFromWinProb(winProb);
   const confidence = confidenceFromWinProb(winProb);
   const edge = winProb - 0.5;
 
-  const matchup = `${away.abbr || away.name} @ ${home.abbr || home.name}`;
-  const gameId = `ncaam-${eventId}`;
-
   return {
-    gameId,
-    matchup,
     pickSide,
     winProb: Number(winProb.toFixed(4)),
     edge: Number(edge.toFixed(4)),
@@ -149,6 +183,9 @@ function makePick({ eventId, home, away, homeRec, awayRec, homeRank, awayRank })
       awayRank,
       homeStrength: Number(homeStrength.toFixed(4)),
       awayStrength: Number(awayStrength.toFixed(4)),
+      pAway: Number(pAway.toFixed(4)),
+      pHome: Number(pHome.toFixed(4)),
+      homeCourt: HOME_COURT,
     },
   };
 }
@@ -163,12 +200,13 @@ async function getEspnSlate(dateYYYYMMDD) {
 
 /**
  * ✅ Exported builder (used by /api/predictions + /api/upsets)
+ * Returns unified contract games[] with home/away + market
  */
 export async function buildNcaamEspnPredictions(dateYYYYMMDD) {
   const date = normalizeDateParam(dateYYYYMMDD) || todayUTCYYYYMMDD();
   const { events, sourceUrl } = await getEspnSlate(date);
 
-  const out = [];
+  const games = [];
   let noPickCount = 0;
 
   for (const ev of events) {
@@ -182,15 +220,15 @@ export async function buildNcaamEspnPredictions(dateYYYYMMDD) {
     const awayT = awayC?.team || {};
 
     const eventId = ev?.id ? String(ev.id) : null;
-    if (!eventId) {
-      noPickCount += 1;
-      continue;
-    }
+    if (!eventId) continue;
+
+    const status = normalizeStatus(ev, comp);
 
     const home = {
       id: `ncaam-${String(homeT?.abbreviation || homeT?.id || "home").toLowerCase()}`,
       name: homeT?.displayName || homeT?.shortDisplayName || homeT?.abbreviation || "Home",
       abbr: homeT?.abbreviation || null,
+      logo: pickLogo(homeT),
       espnTeamId: homeT?.id || null,
     };
 
@@ -198,6 +236,7 @@ export async function buildNcaamEspnPredictions(dateYYYYMMDD) {
       id: `ncaam-${String(awayT?.abbreviation || awayT?.id || "away").toLowerCase()}`,
       name: awayT?.displayName || awayT?.shortDisplayName || awayT?.abbreviation || "Away",
       abbr: awayT?.abbreviation || null,
+      logo: pickLogo(awayT),
       espnTeamId: awayT?.id || null,
     };
 
@@ -207,40 +246,89 @@ export async function buildNcaamEspnPredictions(dateYYYYMMDD) {
     const homeRank = pickRankNumber(homeC) || pickRankNumber(homeT) || null;
     const awayRank = pickRankNumber(awayC) || pickRankNumber(awayT) || null;
 
-    const pick = makePick({ eventId, home, away, homeRec, awayRec, homeRank, awayRank });
+    const pick = makePick({ homeRec, awayRec, homeRank, awayRank });
 
-    if (!pick) {
-      noPickCount += 1;
-      out.push({
-        gameId: `ncaam-${eventId}`,
-        matchup: `${away.abbr || away.name} @ ${home.abbr || home.name}`,
-        pickSide: null,
-        winProb: null,
-        edge: null,
-        tier: null,
-        confidence: null,
-        signals: { homeRecord: homeRec, awayRecord: awayRec, homeRank, awayRank },
-        pick: null,
-      });
-      continue;
-    }
+    const matchup = `${away.abbr || away.name} @ ${home.abbr || home.name}`;
+    const gameId = `ncaam-${eventId}`;
 
-    out.push({ ...pick, pick: { ...pick } });
+    // scores if available (often null when Scheduled)
+    const homeScore = safeScore(homeC);
+    const awayScore = safeScore(awayC);
+
+    if (!pick) noPickCount += 1;
+
+    const market = pick
+      ? {
+          pick: pick.pickSide, // "home" | "away"
+          winProb: pick.winProb, // picked-side win prob
+          confidence: pick.confidence,
+          edge: pick.edge,
+          tier: pick.tier,
+          recommendedTeamId: pick.pickSide === "home" ? home.id : away.id,
+          recommendedTeamName: pick.pickSide === "home" ? home.name : away.name,
+        }
+      : {
+          pick: null,
+          winProb: null,
+          confidence: null,
+          edge: null,
+          tier: null,
+          recommendedTeamId: null,
+          recommendedTeamName: null,
+        };
+
+    games.push({
+      // unified identifiers
+      gameId,
+      id: gameId,
+      league: "ncaam",
+      date,
+      status,
+      home,
+      away,
+      homeScore,
+      awayScore,
+      market,
+
+      // back-compat fields (your UI/upsets have seen these too)
+      matchup,
+      pickSide: market.pick,
+      winProb: market.winProb,
+      edge: market.edge,
+      tier: market.tier,
+      confidence: market.confidence,
+      signals: pick?.signals || { homeRecord: homeRec, awayRecord: awayRec, homeRank, awayRank },
+      pick: pick
+        ? {
+            gameId,
+            matchup,
+            pickSide: market.pick,
+            winProb: market.winProb,
+            edge: market.edge,
+            tier: market.tier,
+            confidence: market.confidence,
+            signals: pick.signals,
+          }
+        : null,
+    });
   }
 
   return {
+    ok: true,
+    league: "ncaam",
+    date,
     meta: {
       league: "ncaam",
       date,
-      model: "NCAAM espn-record-rank-v1",
+      model: "NCAAM espn-record-rank-v3-homecourt",
       source: "espn-scoreboard",
       sourceUrl,
       windowDays: null,
       noPickCount,
-      note: "NCAAM predictions generated from ESPN scoreboard data (stable; no CBBD quota).",
+      note: "Unified contract output (home/away/market) + ESPN logos. winProb refers to picked side.",
       warnings: [],
     },
-    games: out,
+    games,
   };
 }
 
@@ -255,10 +343,13 @@ router.get("/ncaam/predict", async (req, res) => {
     return res.json(payload);
   } catch (e) {
     return res.status(502).json({
+      ok: false,
+      league: "ncaam",
+      date,
       meta: {
         league: "ncaam",
         date,
-        model: "NCAAM espn-record-rank-v1",
+        model: "NCAAM espn-record-rank-v3-homecourt",
         source: "espn-scoreboard",
         sourceUrl: null,
         windowDays: null,

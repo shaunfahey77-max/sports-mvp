@@ -1,6 +1,6 @@
-// apps/web/src/lib/teamLogos.js
+// legacy/apps/web/src/lib/teamLogos.js
 
-// Official NBA CDN logos using canonical team IDs
+// High-quality official NBA SVGs (cdn.nba.com) using stable franchise IDs.
 const NBA_ID_BY_ABBR = {
   ATL: "1610612737",
   BOS: "1610612738",
@@ -34,6 +34,76 @@ const NBA_ID_BY_ABBR = {
   WAS: "1610612764",
 };
 
+function normLeague(league) {
+  const l = String(league || "").toLowerCase().trim();
+  if (l === "nba") return "nba";
+  if (l === "nhl") return "nhl";
+  if (l === "ncaam") return "ncaam";
+  return l || "nba";
+}
+
+function isLikelyAbbr(s) {
+  const t = String(s || "").trim();
+  return /^[A-Z]{2,4}$/.test(t);
+}
+
+function pickLogoFromTeamObj(team) {
+  return (
+    team?.logo ||
+    team?.logos?.[0]?.href ||
+    team?.team?.logo ||
+    team?.team?.logos?.[0]?.href ||
+    null
+  );
+}
+
+function tailFromId(id) {
+  const s = String(id || "").trim();
+  if (!s) return null;
+  const parts = s.split("-").filter(Boolean);
+  const tail = parts.length ? parts[parts.length - 1] : null;
+  if (!tail) return null;
+  // allow 2-4 letter tails like "mil", "bos", "nyr"
+  if (/^[a-z]{2,4}$/i.test(tail)) return tail.toUpperCase();
+  return null;
+}
+
+function deriveAbbr(team) {
+  if (!team) return null;
+
+  const direct =
+    team?.abbr ||
+    team?.abbreviation ||
+    team?.shortName ||
+    team?.displayAbbreviation ||
+    team?.code ||
+    null;
+
+  if (direct) return String(direct).trim().toUpperCase();
+
+  const fromId = tailFromId(team?.id);
+  if (fromId) return fromId;
+
+  const name = String(team?.name || team?.displayName || "").trim();
+  if (isLikelyAbbr(name)) return name.toUpperCase();
+
+  return null;
+}
+
+// last resort: derive from "AWAY @ HOME"
+function abbrFromMatchup(matchup, isHome) {
+  const m = String(matchup || "").trim();
+  if (!m.includes("@")) return null;
+
+  const [awayRaw, homeRaw] = m.split("@").map((x) => String(x || "").trim());
+  const token = isHome ? homeRaw : awayRaw;
+
+  const first = token.split(/\s+/)[0]; // "NOP" from "NOP"
+  if (isLikelyAbbr(first)) return first.toUpperCase();
+
+  return null;
+}
+
 export function nbaLogoFromAbbr(abbr) {
   const a = String(abbr || "").toUpperCase().trim();
   const id = NBA_ID_BY_ABBR[a];
@@ -41,24 +111,81 @@ export function nbaLogoFromAbbr(abbr) {
   return `https://cdn.nba.com/logos/nba/${id}/global/L/logo.svg`;
 }
 
-/**
- * UI helper:
- * - if API provides team.logo => use it
- * - NBA => derive logo from abbr or id "nba-xxx"
- */
-export function getTeamLogo(league, team) {
-  const l = String(league || "").toLowerCase();
-  if (team?.logo) return team.logo;
+function espnCdnLogoByAbbr(league, abbr, size = 80) {
+  const l = normLeague(league);
+  const a = String(abbr || "").trim().toLowerCase();
+  if (!a) return null;
 
+  // ESPN "scoreboard" logos are consistent for NHL, decent for NBA/NCAAM.
+  if (l === "nhl") {
+    return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/nhl/500/scoreboard/${a}.png&h=${size}&w=${size}`;
+  }
   if (l === "nba") {
-    const abbr =
-      team?.abbr ||
-      (team?.id && String(team.id).startsWith("nba-")
-        ? String(team.id).slice(4).toUpperCase()
-        : team?.name);
-
-    return nbaLogoFromAbbr(abbr);
+    return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/nba/500/scoreboard/${a}.png&h=${size}&w=${size}`;
+  }
+  if (l === "ncaam") {
+    return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/ncaa/500/scoreboard/${a}.png&h=${size}&w=${size}`;
   }
 
   return null;
+}
+
+/**
+ * getTeamLogo(league, team, opts?)
+ *
+ * opts:
+ *  - matchup: "AWAY @ HOME" (optional; improves abbr derivation)
+ *  - isHome: boolean (used with matchup)
+ *  - size: number (ESPN combiner output size; default 80)
+ */
+export function getTeamLogo(league, team, opts = {}) {
+  const l = normLeague(league);
+  const size = Number(opts?.size || 80);
+  const matchup = opts?.matchup || null;
+  const isHome = Boolean(opts?.isHome);
+
+  // 1) If backend already gave us a logo, use it.
+  const direct = pickLogoFromTeamObj(team);
+  if (direct) return direct;
+
+  // 2) Derive abbr from team shape; fallback to matchup parsing.
+  const abbr = deriveAbbr(team) || (matchup ? abbrFromMatchup(matchup, isHome) : null);
+
+  // 3) League-specific best source.
+  if (l === "nba") {
+    // Prefer official NBA SVG when possible
+    const nba = nbaLogoFromAbbr(abbr);
+    if (nba) return nba;
+
+    // fallback to ESPN if NBA map misses
+    return espnCdnLogoByAbbr(l, abbr, size);
+  }
+
+  if (l === "nhl") {
+    return espnCdnLogoByAbbr(l, abbr, size);
+  }
+
+  if (l === "ncaam") {
+    return espnCdnLogoByAbbr(l, abbr, size);
+  }
+
+  return null;
+}
+
+/**
+ * Convenience helper for a matchup row:
+ * returns { awayLogo, homeLogo, awayAbbr, homeAbbr }
+ */
+export function getMatchupLogos(league, awayTeam, homeTeam, matchup, opts = {}) {
+  const size = Number(opts?.size || 80);
+
+  const awayAbbr = deriveAbbr(awayTeam) || abbrFromMatchup(matchup, false);
+  const homeAbbr = deriveAbbr(homeTeam) || abbrFromMatchup(matchup, true);
+
+  return {
+    awayAbbr,
+    homeAbbr,
+    awayLogo: getTeamLogo(league, awayTeam, { matchup, isHome: false, size }),
+    homeLogo: getTeamLogo(league, homeTeam, { matchup, isHome: true, size }),
+  };
 }

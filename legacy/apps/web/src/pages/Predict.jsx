@@ -1,463 +1,379 @@
-// apps/web/src/pages/Predict.jsx
+// legacy/apps/web/src/pages/Predict.jsx
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { getTeamLogo } from "../lib/teamLogos";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
-function todayUTCYYYYMMDD() {
+/* =========================================================
+   Predict (Premium) — v2
+   Fixes + upgrades:
+   ✅ Logos: robust resolver + ESPN CDN fallbacks (NBA/NHL + NCAAM numeric IDs)
+   ✅ “Why” panel: supports BOTH string + object why (headline/bullets/deltas)
+   ✅ Better summary header (games, pick count, avg win%, avg edge, avg conf)
+   ✅ Clean hierarchy + click-safe UI
+   ========================================================= */
+
+function todayUTC() {
   const now = new Date();
   const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   return utc.toISOString().slice(0, 10);
 }
 
-function normalizeLeague(raw) {
-  const l = String(raw || "nba").toLowerCase();
-  if (l === "nba") return "nba";
-  if (l === "nhl") return "nhl";
-  if (l === "ncaam") return "ncaam";
-  return "nba";
+function pct(x, digits = 1) {
+  if (x == null || !Number.isFinite(Number(x))) return "—";
+  return `${(Number(x) * 100).toFixed(digits)}%`;
 }
 
-function clamp(x, a, b) {
-  return Math.max(a, Math.min(b, x));
+function safeArr(v) {
+  return Array.isArray(v) ? v : [];
 }
 
-function asNum(n) {
-  const x = Number(n);
-  return Number.isFinite(x) ? x : null;
-}
-
-function toPct(p) {
-  const x = asNum(p);
-  if (x == null) return "—";
-  return `${Math.round(x * 100)}%`;
-}
-
-function TierBadge({ tier }) {
-  const t = tier || "PASS";
+function pickLogoAny(team) {
   return (
-    <span className={`tier-badge tier-${t}`}>
-      <span className="tier-dot" />
-      {t}
-    </span>
+    team?.logo ||
+    team?.logos?.[0]?.href ||
+    team?.team?.logo ||
+    team?.team?.logos?.[0]?.href ||
+    team?.branding?.logo ||
+    team?.branding?.logos?.[0]?.href ||
+    null
   );
 }
 
-function EdgeText({ edge }) {
-  const val = typeof edge === "number" ? edge : null;
-  return <span className="edge-mono">EDGE: {val == null ? "—" : val.toFixed(3)}</span>;
+function inferAbbr(team) {
+  const t = team?.team || team || {};
+  const direct =
+    t?.abbr ||
+    t?.abbreviation ||
+    t?.shortName ||
+    t?.displayAbbreviation ||
+    t?.code ||
+    team?.abbr ||
+    team?.abbreviation ||
+    null;
+  if (direct) return String(direct).trim().toUpperCase();
+
+  const name = String(t?.name || t?.displayName || t?.shortDisplayName || team?.name || "").trim();
+  if (/^[A-Z]{2,4}$/.test(name)) return name;
+
+  const idLike = String(t?.id ?? t?.slug ?? team?.id ?? team?.slug ?? "").trim();
+  if (idLike) {
+    const parts = idLike.split("-").filter(Boolean);
+    const last = parts[parts.length - 1];
+    if (/^[a-z]{2,4}$/i.test(last)) return String(last).toUpperCase();
+  }
+  return null;
 }
 
-function WhyPanel({ why }) {
-  // premium contract: {headline, bullets:[]}
-  const bullets = Array.isArray(why?.bullets) ? why.bullets : [];
-  if (!bullets.length) return null;
+function espnLogoByLeagueAbbr(league, abbr) {
+  const a = String(abbr || "").trim().toLowerCase();
+  if (!a) return null;
 
-  return (
-    <div className="why-panel">
-      <div className="why-title">{why?.headline || "Why"}</div>
-      <ul className="why-list">
-        {bullets.slice(0, 6).map((b, i) => (
-          <li key={i}>{b}</li>
-        ))}
-      </ul>
-    </div>
-  );
+  if (league === "nba") {
+    return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/nba/500/scoreboard/${a}.png&h=80&w=80`;
+  }
+  if (league === "nhl") {
+    return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/nhl/500/scoreboard/${a}.png&h=80&w=80`;
+  }
+  return null;
 }
 
-/**
- * Try to parse "AWAY @ HOME" (or "AWAY at HOME") into teams.
- */
-function splitMatchup(matchup) {
-  const s = String(matchup || "").trim();
-  if (!s) return null;
-
-  // common formats:
-  // "MICH @ PUR"
-  // "Michigan @ Purdue"
-  // "Michigan at Purdue"
-  const at = s.includes(" @ ") ? " @ " : s.toLowerCase().includes(" at ") ? " at " : null;
-  if (!at) return null;
-
-  const [a, h] = s.split(at);
-  const away = String(a || "").trim();
-  const home = String(h || "").trim();
-  if (!away || !home) return null;
-  return { away, home };
+function espnNcaamLogoByTeamId(team) {
+  const t = team?.team || team || {};
+  const cand = t?.espnTeamId || t?.teamId || t?.id || team?.espnTeamId || team?.teamId || null;
+  const n = Number(cand);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return `https://a.espncdn.com/i/teamlogos/ncaa/500/${n}.png`;
 }
 
-/**
- * Convert NCAAM ESPN-predict rows (gameId, matchup, pickSide, winProb, edge, tier, confidence)
- * into the premium-ish contract used by the UI (home/away/market).
- * Optionally merge with /api/ncaam/games for better team names/abbr.
- */
-function normalizeNcaamToPremium(predictJson, gamesJson) {
-  const meta = predictJson?.meta || {};
-  const predGames = Array.isArray(predictJson?.games) ? predictJson.games : [];
+function resolveLogo(league, team) {
+  const direct = pickLogoAny(team);
+  if (direct) return direct;
 
-  const slateGames = Array.isArray(gamesJson?.games) ? gamesJson.games : [];
-  const byGameId = new Map();
-  for (const g of slateGames) {
-    if (g?.gameId) byGameId.set(String(g.gameId), g);
+  const abbr = inferAbbr(team);
+
+  if (league === "ncaam") {
+    // NCAAM prefers numeric ESPN team IDs when available
+    return espnNcaamLogoByTeamId(team) || null;
   }
 
-  const out = predGames.map((p) => {
-    const gameId = p?.gameId ? String(p.gameId) : null;
-    const slate = gameId ? byGameId.get(gameId) : null;
-
-    // Slate games endpoint you showed returns {home, away} objects with names.
-    const slateHome = slate?.home || slate?.homeTeam || null;
-    const slateAway = slate?.away || slate?.awayTeam || null;
-
-    // Fall back to parsing matchup
-    const parsed = splitMatchup(p?.matchup);
-    const awayLabel = parsed?.away || p?.away || "";
-    const homeLabel = parsed?.home || p?.home || "";
-
-    const away = {
-      id: slateAway?.id || null,
-      abbr: slateAway?.abbr || (awayLabel.length <= 5 ? awayLabel : null),
-      name: slateAway?.name || awayLabel || "AWAY",
-      logo: slateAway?.logo || null,
-    };
-
-    const home = {
-      id: slateHome?.id || null,
-      abbr: slateHome?.abbr || (homeLabel.length <= 5 ? homeLabel : null),
-      name: slateHome?.name || homeLabel || "HOME",
-      logo: slateHome?.logo || null,
-    };
-
-    const pickSide = p?.pickSide || null; // "home" | "away" | null
-    const winProb = asNum(p?.winProb);
-    const edge = asNum(p?.edge);
-    const confidence = asNum(p?.confidence);
-
-    let recommendedTeamName = null;
-    if (pickSide === "home") recommendedTeamName = home?.name || home?.abbr || "Home";
-    if (pickSide === "away") recommendedTeamName = away?.name || away?.abbr || "Away";
-
-    const tier = p?.tier || null;
-
-    return {
-      gameId: gameId || null,
-      league: "ncaam",
-      date: meta?.date || null,
-      status: slate?.status || slate?.state || p?.status || "Scheduled",
-
-      home,
-      away,
-
-      // premium-ish market contract expected by your UI + upsets route
-      market: {
-        tier: tier || (winProb != null ? (winProb >= 0.64 ? "A" : winProb >= 0.59 ? "B" : winProb >= 0.55 ? "C" : "D") : "PASS"),
-        pick: pickSide,
-        winProb: winProb, // picked-side win probability
-        edge: edge,
-        confidence: confidence != null ? clamp(confidence, 0.05, 0.95) : null,
-        recommendedTeamName,
-        recommendedTeamId: pickSide === "home" ? home?.id : pickSide === "away" ? away?.id : null,
-      },
-
-      // minimal factors so Upset Watch can still compute a gap without CBBD
-      // (record rank model doesn’t have margins/recent; keep them null)
-      factors: {
-        homeWinPct: null,
-        awayWinPct: null,
-        homeMarginPerGame: null,
-        awayMarginPerGame: null,
-        homeRecentWinPct: null,
-        awayRecentWinPct: null,
-      },
-
-      why: null,
-      _raw: { predict: p, slate },
-    };
-  });
-
-  return { meta, games: out };
+  return espnLogoByLeagueAbbr(league, abbr);
 }
 
-/**
- * Detect whether a response looks like the premium contract.
- */
-function looksPremium(j) {
-  const games = Array.isArray(j?.games) ? j.games : Array.isArray(j?.predictions) ? j.predictions : null;
-  if (!games || !games.length) return false;
-  const g0 = games[0];
-  return !!(g0?.home && g0?.away && (g0?.market || g0?.pick));
+function getTeamsFromGame(g) {
+  const home = g?.home || g?.homeTeam || g?.teams?.home || {};
+  const away = g?.away || g?.awayTeam || g?.teams?.away || {};
+  return { home, away };
+}
+
+function extractUnified(g) {
+  const pick =
+    g?.market?.pick ??
+    g?.pick?.pickSide ??
+    g?.pickSide ??
+    g?.pick ??
+    null;
+
+  const winProb =
+    g?.market?.winProb ??
+    g?.pick?.winProb ??
+    g?.winProb ??
+    null;
+
+  const edge =
+    g?.market?.edge ??
+    g?.pick?.edge ??
+    g?.edge ??
+    null;
+
+  const conf =
+    g?.market?.confidence ??
+    g?.pick?.confidence ??
+    g?.confidence ??
+    null;
+
+  const why =
+    g?.market?.why ??
+    g?.pick?.why ??
+    g?.why ??
+    null;
+
+  const tier =
+    g?.market?.tier ??
+    g?.tier ??
+    null;
+
+  return { pick, winProb, edge, conf, why, tier };
+}
+
+// Accepts string OR {headline, bullets, deltas}
+function normalizeWhy(why) {
+  if (!why) return null;
+  if (typeof why === "string") {
+    const s = why.trim();
+    return s ? { mode: "string", text: s } : null;
+  }
+  if (typeof why === "object") {
+    const headline = typeof why.headline === "string" ? why.headline.trim() : "";
+    const bullets = safeArr(why.bullets).filter((b) => typeof b === "string" && b.trim());
+    const deltas = safeArr(why.deltas).filter((d) => d && typeof d === "object");
+    return {
+      mode: "object",
+      headline: headline || null,
+      bullets,
+      deltas,
+    };
+  }
+  return null;
+}
+
+function buildWhyFallback({ league, matchup, pick, winProb, edge, conf, tier }) {
+  const p = pick ? String(pick).toUpperCase() : "—";
+  const w = winProb != null && Number.isFinite(Number(winProb)) ? pct(winProb, 1) : "—";
+  const e = edge != null && Number.isFinite(Number(edge)) ? Number(edge).toFixed(2) : "—";
+  const c = conf != null && Number.isFinite(Number(conf)) ? pct(conf, 0) : "—";
+  const t = tier ? String(tier).toUpperCase() : null;
+
+  // honest copy for NHL (picks can be paused)
+  const nhlNote = league === "nhl" && (!pick || winProb == null) ? " (picks paused / slate only)" : "";
+
+  return `Pick ${p}${nhlNote} • Win ${w} • Edge ${e} • Conf ${c}${t ? ` • Tier ${t}` : ""}`;
 }
 
 export default function Predict() {
-  const nav = useNavigate();
-  const { league: leagueParam } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { league } = useParams();
+  const l = String(league || "nba").toLowerCase();
 
-  const [league, setLeague] = useState(() => normalizeLeague(leagueParam));
-  const [date, setDate] = useState(() => searchParams.get("date") || todayUTCYYYYMMDD());
-  const [tournament, setTournament] = useState(
-    () => String(searchParams.get("mode") || "").toLowerCase() === "tournament"
-  );
+  const [sp, setSp] = useSearchParams();
+  const date = sp.get("date") || todayUTC();
 
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [data, setData] = useState(null); // normalized premium-ish payload: {meta, games}
-
-  // Sync league with route
-  useEffect(() => {
-    setLeague(normalizeLeague(leagueParam));
-  }, [leagueParam]);
-
-  // Sync date/mode with query (back/forward + direct loads)
-  useEffect(() => {
-    const qDate = searchParams.get("date");
-    const qTournament = String(searchParams.get("mode") || "").toLowerCase() === "tournament";
-
-    if (qDate && qDate !== date) setDate(qDate);
-    if (qTournament !== tournament) setTournament(qTournament);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
-
-  function goLeague(nextLeague) {
-    const l = normalizeLeague(nextLeague);
-    const qp = new URLSearchParams(searchParams);
-    qp.set("date", date);
-    if (l !== "ncaam") qp.delete("mode");
-    nav(`/league/${l}?${qp.toString()}`);
-  }
-
-  function toggleTournament() {
-    if (league !== "ncaam") return;
-    const next = !tournament;
-
-    const qp = new URLSearchParams(searchParams);
-    qp.set("date", date);
-    if (next) qp.set("mode", "tournament");
-    else qp.delete("mode");
-
-    setSearchParams(qp, { replace: true });
-    setTournament(next);
-  }
-
-  function setDateAndQuery(nextDate) {
-    setDate(nextDate);
-    const qp = new URLSearchParams(searchParams);
-    qp.set("date", nextDate);
-    if (league !== "ncaam") qp.delete("mode");
-    setSearchParams(qp, { replace: true });
-  }
-
-  const premiumUrl = useMemo(() => {
-    // Preferred unified endpoint
-    const params = new URLSearchParams();
-    params.set("league", league);
-    params.set("date", date);
-    if (league === "ncaam" && tournament) params.set("mode", "tournament");
-    return `/api/predictions?${params.toString()}`;
-  }, [league, date, tournament]);
+  const [payload, setPayload] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let alive = true;
-
-    async function fetchJson(url) {
-      const r = await fetch(url);
-      const j = await r.json().catch(() => null);
-      if (!r.ok) {
-        const msg = j?.error || `Request failed (${r.status})`;
-        const e = new Error(msg);
-        e.status = r.status;
-        throw e;
-      }
-      return j;
-    }
+    let dead = false;
 
     async function run() {
       setLoading(true);
-      setErr("");
-
+      setErr(null);
       try {
-        // 1) Try unified /api/predictions first
-        let j = null;
-        try {
-          j = await fetchJson(premiumUrl);
-        } catch (e) {
-          // if unified endpoint missing or fails, fallback below
-          j = null;
-        }
-
-        // If it already looks premium, normalize lightly and use it
-        if (j && looksPremium(j)) {
-          const meta = j?.meta || {};
-          const games = Array.isArray(j?.games) ? j.games : Array.isArray(j?.predictions) ? j.predictions : [];
-          if (!alive) return;
-          setData({ meta, games });
-          return;
-        }
-
-        // 2) League-specific fallbacks (keeps you stable)
-        if (league === "ncaam") {
-          // Fetch ESPN slate + ESPN picks and merge
-          const [slate, picks] = await Promise.all([
-            fetchJson(`/api/ncaam/games?date=${encodeURIComponent(date)}`),
-            fetchJson(`/api/ncaam/predict?date=${encodeURIComponent(date)}`),
-          ]);
-
-          const normalized = normalizeNcaamToPremium(picks, slate);
-
-          const meta = {
-            ...(normalized?.meta || {}),
-            league: "ncaam",
-            date,
-            mode: tournament ? "tournament" : "regular",
-            // show source/model clearly
-            model: picks?.meta?.model || normalized?.meta?.model || "NCAAM",
-            source: picks?.meta?.source || normalized?.meta?.source || "espn-scoreboard",
-          };
-
-          if (!alive) return;
-          setData({ meta, games: normalized.games || [] });
-          return;
-        }
-
-        // NBA/NHL: try /api/{league}/predict as a last resort
-        const legacy = await fetchJson(`/api/${league}/predict?date=${encodeURIComponent(date)}`);
-        const meta = legacy?.meta || { league, date };
-        const games = Array.isArray(legacy?.games) ? legacy.games : [];
-
-        if (!alive) return;
-        setData({ meta, games });
+        const r = await fetch(`/api/predictions?league=${encodeURIComponent(l)}&date=${encodeURIComponent(date)}`);
+        const j = await r.json();
+        if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
+        if (!dead) setPayload(j);
       } catch (e) {
-        if (!alive) return;
-        setData(null);
-        setErr(String(e?.message || e));
+        if (!dead) setErr(String(e?.message || e));
       } finally {
-        if (alive) setLoading(false);
+        if (!dead) setLoading(false);
       }
     }
 
     run();
-    return () => {
-      alive = false;
-    };
-  }, [premiumUrl, league, date, tournament]);
+    return () => { dead = true; };
+  }, [l, date]);
 
-  const meta = data?.meta || {};
-  const games = Array.isArray(data?.games) ? data.games : [];
+  const games = useMemo(() => (Array.isArray(payload?.games) ? payload.games : []), [payload]);
+  const metaSource = payload?.meta?.source || payload?.meta?.model || "premium-predictions";
+
+  const summary = useMemo(() => {
+    const rows = games.map((g) => extractUnified(g));
+    const picked = rows.filter((r) => r.pick && r.winProb != null);
+    const avgWin = picked.length ? picked.reduce((a, r) => a + Number(r.winProb), 0) / picked.length : null;
+    const avgEdge = picked.length ? picked.reduce((a, r) => a + Number(r.edge ?? 0), 0) / picked.length : null;
+    const avgConf = picked.length ? picked.reduce((a, r) => a + Number(r.conf ?? 0), 0) / picked.length : null;
+
+    return { games: games.length, picks: picked.length, avgWin, avgEdge, avgConf };
+  }, [games]);
+
+  function setDateParam(v) {
+    setSp((prev) => {
+      prev.set("date", v);
+      return prev;
+    });
+  }
 
   return (
-    <div className="container">
-      <div className="card">
-        <div className="cardHeader">
-          <div>
-            <div className="h1" style={{ fontSize: 22, margin: 0 }}>
-              Predictions
-            </div>
-            <p className="sub" style={{ marginTop: 6 }}>
-              Tier + Edge + Win% + Confidence (premium contract)
-            </p>
+    <div className="card" style={{ padding: 14 }}>
+      <div className="slateHeader">
+        <div style={{ minWidth: 0 }}>
+          <div className="h1" style={{ fontSize: 22 }}>
+            {l.toUpperCase()} Predictions
+          </div>
+          <div className="sub">
+            Date: {date} • source: {metaSource}
           </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <div className="tabs">
-              <button className={`tab ${league === "nba" ? "tabActive" : ""}`} onClick={() => goLeague("nba")}>
-                NBA
-              </button>
-              <button className={`tab ${league === "nhl" ? "tabActive" : ""}`} onClick={() => goLeague("nhl")}>
-                NHL
-              </button>
-              <button className={`tab ${league === "ncaam" ? "tabActive" : ""}`} onClick={() => goLeague("ncaam")}>
-                NCAAM
-              </button>
-            </div>
-
-            <input className="input" type="date" value={date} onChange={(e) => setDateAndQuery(e.target.value)} />
-
-            {league === "ncaam" && (
-              <button className={`btn ${tournament ? "btnPrimary" : ""}`} onClick={toggleTournament}>
-                Tournament: {tournament ? "ON" : "OFF"}
-              </button>
-            )}
+          <div className="pills" style={{ marginTop: 10, flexWrap: "wrap" }}>
+            <span className="badge">Games: {summary.games}</span>
+            <span className={`badge ${summary.picks > 0 ? "good" : ""}`}>Picks: {summary.picks}</span>
+            <span className="badge">Avg Win: {pct(summary.avgWin, 1)}</span>
+            <span className="badge">Avg Edge: {summary.avgEdge != null ? summary.avgEdge.toFixed(2) : "—"}</span>
+            <span className="badge">Avg Conf: {pct(summary.avgConf, 0)}</span>
           </div>
         </div>
 
-        <div className="cardBody">
-          <div className="row" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-            <div>
-              <div className="muted">
-                {(meta?.league ? String(meta.league).toUpperCase() : league.toUpperCase())} • {date} • Mode:{" "}
-                <span style={{ color: "rgba(255,255,255,0.86)" }}>
-                  {meta?.mode || (league === "ncaam" && tournament ? "tournament" : "regular")}
-                </span>
-              </div>
+        <div className="pills" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDateParam(e.target.value)}
+            className="pill"
+            style={{ padding: "6px 10px", background: "rgba(255,255,255,.04)" }}
+          />
+          <button className="pill" onClick={() => setDateParam("2026-02-04")}>Test: 2026-02-04</button>
+          <Link className="pill" to="/">Dashboard</Link>
+          <Link className="pill" to="/performance">Performance</Link>
+          <Link className="pill" to={`/upsets?league=${encodeURIComponent(l)}&date=${encodeURIComponent(date)}`}>Upsets</Link>
+        </div>
+      </div>
 
-              <div className="muted2" style={{ marginTop: 6 }}>
-                Model: {meta?.model || "—"} • Games: {games.length}
-                {typeof meta?.noPickCount === "number" ? ` • PASS: ${meta.noPickCount}` : ""}
-                {meta?.source ? ` • Source: ${meta.source}` : ""}
-              </div>
-            </div>
-
-            <div className="muted2" style={{ textAlign: "right" }}>
-              {loading ? "Loading…" : err ? `Error: ${err}` : ""}
-            </div>
-          </div>
-
-          {!loading && !err && games.length === 0 && (
-            <div className="muted" style={{ padding: "14px 0" }}>
-              No games returned.
-            </div>
-          )}
-
+      {loading ? (
+        <div className="sub">Loading…</div>
+      ) : err ? (
+        <div className="badge bad">{err}</div>
+      ) : games.length === 0 ? (
+        <div className="sub">No games returned for this date.</div>
+      ) : (
+        <div style={{ marginTop: 8 }}>
           {games.map((g) => {
-            const home = g?.home || g?.homeTeam || {};
-            const away = g?.away || g?.awayTeam || {};
+            const { home, away } = getTeamsFromGame(g);
 
-            // Support both shapes: g.market (preferred) or legacy top-level fields
-            const market = g?.market || g?.pick || {};
-            const tier = market?.tier || g?.tier || "PASS";
-            const edge = market?.edge ?? g?.edge ?? null;
-            const winProb = market?.winProb ?? g?.winProb ?? null;
-            const conf = market?.confidence ?? g?.confidence ?? null;
-            const pickSide = market?.pick ?? g?.pickSide ?? null;
+            const homeLogo = resolveLogo(l, home);
+            const awayLogo = resolveLogo(l, away);
 
-            const recName =
-              market?.recommendedTeamName ||
-              (pickSide === "home" ? (home?.name || home?.abbr) : pickSide === "away" ? (away?.name || away?.abbr) : "") ||
-              "";
+            const matchup =
+              g?.matchup ||
+              `${inferAbbr(away) || away?.abbr || away?.name || "AWAY"} @ ${inferAbbr(home) || home?.abbr || home?.name || "HOME"}`;
 
-            const awayLogo = getTeamLogo(league, away);
-            const homeLogo = getTeamLogo(league, home);
+            const { pick, winProb, edge, conf, why, tier } = extractUnified(g);
+
+            const whyNorm = normalizeWhy(why);
+            const hasPick = Boolean(pick) && winProb != null;
+
+            const fallbackLine = buildWhyFallback({
+              league: l,
+              matchup,
+              pick,
+              winProb,
+              edge,
+              conf,
+              tier,
+            });
 
             return (
-              <div className="row" key={g.gameId || `${away?.abbr || away?.name}-at-${home?.abbr || home?.name}`} style={{ alignItems: "flex-start" }}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="gameTop">
-                    <div className="teamLine">
-                      {awayLogo ? <img className="logo" src={awayLogo} alt="" /> : null}
-                      <strong>{away.abbr || away.name || "AWAY"}</strong>
-                      <span className="muted2">at</span>
-                      {homeLogo ? <img className="logo" src={homeLogo} alt="" /> : null}
-                      <strong>{home.abbr || home.name || "HOME"}</strong>
-                      <span className="muted2" style={{ marginLeft: 8 }}>
-                        {g.status || ""}
-                      </span>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <TierBadge tier={tier} />
-                      <EdgeText edge={typeof edge === "number" ? edge : asNum(edge)} />
-                      <span className="pill">Win: {toPct(winProb)}</span>
-                      <span className="pill">Conf: {toPct(conf)}</span>
-                      <span className="muted">{pickSide ? `Pick: ${recName}` : "No pick"}</span>
-                    </div>
+              <div
+                key={g?.gameId || matchup}
+                className="gameRow"
+                style={{ flexDirection: "column", alignItems: "stretch" }}
+              >
+                {/* top row */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <div className="matchup">
+                    {awayLogo ? <img className="logo" src={awayLogo} alt="" /> : <span className="logo" />}
+                    {homeLogo ? <img className="logo" src={homeLogo} alt="" /> : <span className="logo" />}
+                    <span>{matchup}</span>
                   </div>
 
-                  <WhyPanel why={g?.why} />
+                  <div className="metaChips">
+                    <span className="chip">{pick ? `Pick: ${String(pick).toUpperCase()}` : "Pick: —"}</span>
+                    <span className="chip">{winProb != null ? `Win: ${pct(winProb, 1)}` : "Win: —"}</span>
+                    <span className="chip">{edge != null ? `Edge: ${Number(edge).toFixed(2)}` : "Edge: —"}</span>
+                    <span className="chip">{conf != null ? `Conf: ${pct(conf, 0)}` : "Conf: —"}</span>
+                    {tier ? <span className="chip">{`Tier: ${String(tier).toUpperCase()}`}</span> : null}
+                  </div>
+                </div>
+
+                {/* premium why */}
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: "10px 12px",
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,.08)",
+                    background: "rgba(255,255,255,.025)",
+                  }}
+                >
+                  <div className="sub" style={{ margin: 0, display: "flex", justifyContent: "space-between", gap: 10 }}>
+                    <span style={{ fontWeight: 800, color: "rgba(234,240,255,.9)" }}>
+                      Why this pick
+                    </span>
+                    <span className={`badge ${hasPick ? "good" : ""}`}>{hasPick ? "Model pick" : "No pick"}</span>
+                  </div>
+
+                  {/* 1) headline (object why) */}
+                  {whyNorm?.mode === "object" && whyNorm.headline ? (
+                    <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.35, color: "rgba(234,240,255,.88)" }}>
+                      <b>{whyNorm.headline}</b>
+                    </div>
+                  ) : null}
+
+                  {/* 2) bullets (object why) */}
+                  {whyNorm?.mode === "object" && whyNorm.bullets.length > 0 ? (
+                    <ul className="whyList" style={{ marginTop: 8 }}>
+                      {whyNorm.bullets.slice(0, 6).map((b, idx) => (
+                        <li key={idx}>{b}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+
+                  {/* 3) string why */}
+                  {whyNorm?.mode === "string" ? (
+                    <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.35, color: "rgba(234,240,255,.82)" }}>
+                      {whyNorm.text}
+                    </div>
+                  ) : null}
+
+                  {/* 4) fallback if missing */}
+                  {!whyNorm ? (
+                    <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.35, color: "rgba(234,240,255,.82)" }}>
+                      {fallbackLine}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             );
           })}
         </div>
-      </div>
+      )}
     </div>
   );
 }

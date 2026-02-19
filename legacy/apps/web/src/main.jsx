@@ -1,9 +1,7 @@
-// apps/web/src/main.jsx
+// legacy/apps/web/src/main.jsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
-
-// ✅ import ONCE (visual design lives here)
 import "./styles/app.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(

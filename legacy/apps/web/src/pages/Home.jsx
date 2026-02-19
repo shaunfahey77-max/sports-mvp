@@ -1,658 +1,543 @@
 // legacy/apps/web/src/pages/Home.jsx
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getTeamLogo } from "../lib/teamLogos.js";
+import { getMatchupLogos } from "../lib/teamLogos";
 
-function todayUTCYYYYMMDD() {
+const LEAGUES = ["nba", "nhl", "ncaam"];
+
+function todayUTC() {
   const now = new Date();
   const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   return utc.toISOString().slice(0, 10);
 }
 
-function fmtPct(x, digits = 0) {
-  if (x == null || !Number.isFinite(Number(x))) return "—";
+function clamp01(x) {
   const n = Number(x);
-  const p = Math.round(n * 100 * Math.pow(10, digits)) / Math.pow(10, digits);
-  return `${p}%`;
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(1, n));
 }
 
-function fmtNum(x) {
-  if (x == null || !Number.isFinite(Number(x))) return "—";
-  return String(Number(x));
+function pct01(x, digits = 1) {
+  const n = clamp01(x);
+  if (n == null) return "—";
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+function fmtEdge(x) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return "—";
+  const s = n >= 0 ? "+" : "";
+  return `${s}${n.toFixed(2)}`;
+}
+
+function normLeague(raw) {
+  const l = String(raw || "nba").toLowerCase();
+  if (l === "nba" || l === "nhl" || l === "ncaam") return l;
+  return "nba";
+}
+
+/** Extract normalized pick fields from your unified-ish contract. */
+function extractPick(g) {
+  const pick =
+    g?.market?.pick ??
+    g?.pick?.pickSide ??
+    g?.pickSide ??
+    g?.pick ??
+    null;
+
+  // common "no pick" values in this project
+  const pickStr = pick == null ? null : String(pick).toLowerCase().trim();
+  const hasPick =
+    pickStr &&
+    pickStr !== "pass" &&
+    pickStr !== "no pick" &&
+    pickStr !== "nopick" &&
+    pickStr !== "none" &&
+    pickStr !== "—";
+
+  const winProb =
+    g?.market?.winProb ??
+    g?.pick?.winProb ??
+    g?.winProb ??
+    null;
+
+  const edge =
+    g?.market?.edge ??
+    g?.pick?.edge ??
+    g?.edge ??
+    null;
+
+  const confidence =
+    g?.market?.confidence ??
+    g?.pick?.confidence ??
+    g?.confidence ??
+    null;
+
+  const why =
+    g?.why ??
+    g?.pick?.why ??
+    g?.market?.why ??
+    null;
+
+  return {
+    pick: hasPick ? String(pick).toUpperCase() : null,
+    winProb: clamp01(winProb),
+    edge: Number.isFinite(Number(edge)) ? Number(edge) : null,
+    confidence: clamp01(confidence),
+    why: why && typeof why === "object" ? why : null,
+  };
+}
+
+/** Derive matchup + home/away objects across different payload shapes */
+function getTeamsFromGame(g) {
+  const home = g?.home || g?.homeTeam || {};
+  const away = g?.away || g?.awayTeam || {};
+  return { home, away };
+}
+
+function matchupText(g, home, away) {
+  return (
+    g?.matchup ||
+    `${away?.abbr || away?.name || "AWAY"} @ ${home?.abbr || home?.name || "HOME"}`
+  );
+}
+
+function tierFromConfidence(conf) {
+  const c = clamp01(conf);
+  if (c == null) return { label: "—", tone: "muted" };
+  if (c >= 0.7) return { label: "HIGH", tone: "good" };
+  if (c >= 0.6) return { label: "MED", tone: "warn" };
+  return { label: "LOW", tone: "bad" };
 }
 
 function safeArr(v) {
   return Array.isArray(v) ? v : [];
 }
 
-function leagueLabel(l) {
-  const x = String(l || "").toLowerCase();
-  if (x === "nba") return "NBA";
-  if (x === "nhl") return "NHL";
-  if (x === "ncaam") return "NCAAM";
-  return String(l || "").toUpperCase();
-}
-
-function sortByDateAsc(rows) {
-  return [...rows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-}
-
-function sortByDateDesc(rows) {
-  return [...rows].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-}
-
-function summarizeRows(rows) {
-  const r = safeArr(rows);
-
-  let games = 0;
-  let picks = 0;
-  let pass = 0;
-  let completed = 0;
-  let wins = 0;
-  let losses = 0;
-  let pushes = 0;
-
-  for (const x of r) {
-    games += Number(x?.games || 0);
-    picks += Number(x?.picks || 0);
-    pass += Number(x?.pass || 0);
-    completed += Number(x?.completed || 0);
-    wins += Number(x?.wins || 0);
-    losses += Number(x?.losses || 0);
-    pushes += Number(x?.pushes || 0);
-  }
-
-  const winRate = picks > 0 ? wins / Math.max(1, wins + losses) : null;
-  return { games, picks, pass, completed, wins, losses, pushes, winRate };
-}
-
-function dayRowLabel(row) {
-  const d = String(row?.date || "");
-  if (d.length >= 10) return d.slice(5, 10);
-  return d || "—";
-}
-
-function isFinalStatus(s) {
-  const x = String(s || "").toLowerCase();
-  return x.includes("final") || x === "f" || x === "ft";
-}
-
-/**
- * Normalize prediction list items into a consistent pick object:
- * { pickSide, winProb, edge, confidence, tier, raw }
- */
-function normalizePickFields(pickLike) {
-  const p = pickLike || {};
-
-  const pickSide = p?.pickSide ?? p?.side ?? p?.pick ?? null;
-  const winProb = p?.winProb ?? p?.prob ?? p?.p ?? null;
-  const edge = p?.edge ?? p?.ev ?? p?.value ?? null;
-
-  // Confidence should be numeric; if it’s a tier string, don’t treat it as confidence.
-  let confidence = p?.confidence ?? p?.conf ?? null;
-  if (typeof confidence === "string") {
-    const s = confidence.trim().toUpperCase();
-    if (["A", "B", "C", "D"].includes(s)) confidence = null;
-  }
-
-  const tier = p?.tier ?? (typeof p?.confidence === "string" ? p.confidence : null) ?? null;
-
-  return {
-    pickSide: pickSide == null ? null : String(pickSide),
-    winProb: winProb == null ? null : Number(winProb),
-    edge: edge == null ? null : Number(edge),
-    confidence: confidence == null ? null : Number(confidence),
-    tier: tier == null ? null : String(tier),
-    raw: p,
-  };
-}
-
-function pickGameId(item) {
-  return item?.gameId || item?.id || item?.game_id || item?.eventId || item?.espnEventId || null;
-}
-
-function predictionsEndpointForLeague(lg, date) {
-  if (lg === "nba") return `/api/nba/predict?date=${encodeURIComponent(date)}`;
-  if (lg === "nhl") return `/api/nhl/predict?date=${encodeURIComponent(date)}`;
-  if (lg === "ncaam") return `/api/ncaam/predict?date=${encodeURIComponent(date)}`;
-  return `/api/predictions?league=${encodeURIComponent(lg)}&date=${encodeURIComponent(date)}`;
-}
-
-function scheduleEndpointForLeague(lg, date) {
-  // unified schedule (your /api/games normalizes id/gameId + home/away)
-  const qs = new URLSearchParams({ league: lg, date, expand: "teams" });
-  return `/api/games?${qs.toString()}`;
-}
-
 export default function Home() {
-  const [slateDate] = useState(todayUTCYYYYMMDD());
-  const [rangeDays, setRangeDays] = useState(30);
+  const [date, setDate] = useState(todayUTC());
 
-  const [apiOk, setApiOk] = useState(null);
-  const [updatedAt, setUpdatedAt] = useState(null);
+  // performance (7d) for credibility strip
+  const [perf, setPerf] = useState(null);
 
-  const [perf, setPerf] = useState({ meta: null, rows: { nba: [], nhl: [], ncaam: [] } });
-  const [loadingPerf, setLoadingPerf] = useState(false);
-  const [perfErr, setPerfErr] = useState("");
+  // predictions by league for selected date
+  const [pred, setPred] = useState({ nba: null, nhl: null, ncaam: null });
 
-  const [slate, setSlate] = useState({
-    loading: false,
-    error: "",
-    byLeague: { nba: [], nhl: [], ncaam: [] },
-    predMeta: { nba: null, nhl: null, ncaam: null },
-  });
+  // upset candidates count + spotlight (we’ll prefer ncaam)
+  const [upsets, setUpsets] = useState({ nba: null, nhl: null, ncaam: null });
 
-  // Health check
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  // Load 7-day performance once
   useEffect(() => {
-    const controller = new AbortController();
+    let dead = false;
     (async () => {
       try {
-        const res = await fetch("/api/health", { signal: controller.signal });
-        const j = await res.json().catch(() => null);
-        setApiOk(Boolean(j?.ok));
-      } catch {
-        setApiOk(false);
+        const r = await fetch(`/api/performance?leagues=${LEAGUES.join(",")}&days=7`);
+        const j = await r.json();
+        if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
+        if (!dead) setPerf(j);
+      } catch (e) {
+        if (!dead) setErr(String(e?.message || e));
       }
     })();
-    return () => controller.abort();
+    return () => { dead = true; };
   }, []);
 
-  // Performance fetch
+  // Load predictions + upsets for the selected date
   useEffect(() => {
-    const controller = new AbortController();
+    let dead = false;
 
     (async () => {
-      setLoadingPerf(true);
-      setPerfErr("");
-
+      setLoading(true);
+      setErr(null);
       try {
-        const qs = new URLSearchParams({
-          leagues: "nba,nhl,ncaam",
-          days: String(rangeDays),
+        const predReqs = LEAGUES.map(async (l) => {
+          const r = await fetch(`/api/predictions?league=${encodeURIComponent(l)}&date=${encodeURIComponent(date)}`);
+          const j = await r.json();
+          if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status} (${l})`);
+          return [l, j];
         });
 
-        const res = await fetch(`/api/performance?${qs.toString()}`, { signal: controller.signal });
-        const j = await res.json();
+        // Upsets: cheap “count + top row” pull for each league
+        const upsetReqs = LEAGUES.map(async (l) => {
+          const r = await fetch(
+            `/api/upsets?league=${encodeURIComponent(l)}&date=${encodeURIComponent(date)}&mode=watch&minWin=0.20&limit=20`
+          );
+          const j = await r.json();
+          if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status} (upsets ${l})`);
+          return [l, j];
+        });
 
-        const rows = j?.rows || {};
-        const next = {
-          meta: j?.meta || null,
-          rows: {
-            nba: safeArr(rows.nba),
-            nhl: safeArr(rows.nhl),
-            ncaam: safeArr(rows.ncaam),
-          },
-        };
+        const predPairs = await Promise.all(predReqs);
+        const upsetPairs = await Promise.all(upsetReqs);
 
-        setPerf(next);
+        if (dead) return;
 
-        const all = [...next.rows.nba, ...next.rows.nhl, ...next.rows.ncaam];
-        const maxTs = all
-          .map((r) => (r?.updated_at ? Date.parse(r.updated_at) : NaN))
-          .filter((t) => Number.isFinite(t))
-          .sort((a, b) => b - a)[0];
+        const predObj = { nba: null, nhl: null, ncaam: null };
+        for (const [l, j] of predPairs) predObj[l] = j;
 
-        setUpdatedAt(Number.isFinite(maxTs) ? new Date(maxTs).toLocaleString() : null);
+        const upsetObj = { nba: null, nhl: null, ncaam: null };
+        for (const [l, j] of upsetPairs) upsetObj[l] = j;
+
+        setPred(predObj);
+        setUpsets(upsetObj);
       } catch (e) {
-        const msg = String(e?.message || e);
-        if (!msg.toLowerCase().includes("aborted")) setPerfErr(msg);
+        if (!dead) setErr(String(e?.message || e));
       } finally {
-        setLoadingPerf(false);
+        if (!dead) setLoading(false);
       }
     })();
 
-    return () => controller.abort();
-  }, [rangeDays]);
+    return () => { dead = true; };
+  }, [date]);
 
-  // Today's slate + predictions
-  useEffect(() => {
-    const controller = new AbortController();
+  const perfRows = useMemo(() => perf?.rows || {}, [perf]);
 
-    async function fetchJSON(url) {
-      const res = await fetch(url, { signal: controller.signal });
-      const j = await res.json().catch(() => null);
-      if (!res.ok) {
-        const msg = j?.error || j?.message || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
-      return j;
+  // -------- Aggregation (single source of truth for UI) --------
+  const leagueAgg = useMemo(() => {
+    const out = {};
+    for (const league of LEAGUES) {
+      const payload = pred?.[league];
+      const games = safeArr(payload?.games);
+
+      const normalized = games.map((g) => {
+        const { home, away } = getTeamsFromGame(g);
+        const matchup = matchupText(g, home, away);
+        const pickData = extractPick(g);
+
+        const logos = getMatchupLogos(league, away, home, matchup, { size: 56 });
+
+        return {
+          gameId: g?.gameId || `${league}-${date}-${matchup}`,
+          league,
+          matchup,
+          home,
+          away,
+          ...logos,
+          ...pickData,
+        };
+      });
+
+      const picks = normalized.filter((x) => x.pick);
+      const picksCount = picks.length;
+
+      const gamesCount = normalized.length;
+
+      const highConfCount = picks.filter((x) => clamp01(x.confidence) != null && x.confidence >= 0.7).length;
+
+      const avgEdge =
+        picksCount > 0
+          ? picks.reduce((a, x) => a + (Number.isFinite(x.edge) ? x.edge : 0), 0) / picksCount
+          : null;
+
+      const bestEdgePick =
+        picksCount > 0
+          ? picks
+              .filter((x) => Number.isFinite(x.edge))
+              .slice()
+              .sort((a, b) => (b.edge ?? -999) - (a.edge ?? -999))[0] || null
+          : null;
+
+      const strongestPick =
+        picksCount > 0
+          ? picks
+              .filter((x) => clamp01(x.winProb) != null)
+              .slice()
+              .sort((a, b) => (b.winProb ?? -1) - (a.winProb ?? -1))[0] || null
+          : null;
+
+      // performance rollup (last 7 days)
+      const rows7 = Array.isArray(perfRows?.[league]) ? perfRows[league] : [];
+      const wins7 = rows7.reduce((a, r) => a + (Number(r?.wins) || 0), 0);
+      const losses7 = rows7.reduce((a, r) => a + (Number(r?.losses) || 0), 0);
+      const wr7 = wins7 + losses7 > 0 ? wins7 / (wins7 + losses7) : null;
+
+      // upsets for this date
+      const upsetPayload = upsets?.[league];
+      const upsetRows = safeArr(upsetPayload?.rows);
+      const upsetCount = upsetRows.length;
+      const upsetSpotlight = upsetRows[0] || null;
+
+      out[league] = {
+        league,
+        source: payload?.meta?.source || payload?.meta?.model || "—",
+        gamesCount,
+        picksCount,
+        highConfCount,
+        avgEdge,
+        bestEdgePick,
+        strongestPick,
+        upsetCount,
+        upsetSpotlight,
+        wr7,
+        wins7,
+        losses7,
+        normalized, // for top picks table
+      };
     }
+    return out;
+  }, [pred, upsets, perfRows, date]);
 
-    (async () => {
-      setSlate((s) => ({ ...s, loading: true, error: "" }));
+  // Today signal strip (all leagues)
+  const todaySignals = useMemo(() => {
+    const allGames = LEAGUES.reduce((a, l) => a + (leagueAgg?.[l]?.gamesCount || 0), 0);
+    const allPicks = LEAGUES.reduce((a, l) => a + (leagueAgg?.[l]?.picksCount || 0), 0);
+    const highConf = LEAGUES.reduce((a, l) => a + (leagueAgg?.[l]?.highConfCount || 0), 0);
+    const upsetAlerts = LEAGUES.reduce((a, l) => a + (leagueAgg?.[l]?.upsetCount || 0), 0);
 
-      const leagues = ["nba", "nhl", "ncaam"];
+    const bestEdge = LEAGUES
+      .map((l) => leagueAgg?.[l]?.bestEdgePick)
+      .filter(Boolean)
+      .sort((a, b) => (b.edge ?? -999) - (a.edge ?? -999))[0] || null;
 
-      try {
-        const results = await Promise.allSettled(
-          leagues.map(async (lg) => {
-            // 1) schedule
-            const gamesPayload = await fetchJSON(scheduleEndpointForLeague(lg, slateDate));
-            const games = safeArr(gamesPayload?.games);
+    return { allGames, allPicks, highConf, upsetAlerts, bestEdge };
+  }, [leagueAgg]);
 
-            // 2) predictions (league-specific first, then fallbacks)
-            let predPayload = null;
-            let predErr = null;
+  // Top picks (across leagues) for Home table
+  const topPicks = useMemo(() => {
+    const merged = LEAGUES.flatMap((l) => (leagueAgg?.[l]?.normalized || []).filter((x) => x.pick));
+    // prioritize edge, then confidence, then winProb
+    merged.sort((a, b) => {
+      const ae = Number.isFinite(a.edge) ? a.edge : -999;
+      const be = Number.isFinite(b.edge) ? b.edge : -999;
+      if (be !== ae) return be - ae;
 
-            try {
-              predPayload = await fetchJSON(predictionsEndpointForLeague(lg, slateDate));
-            } catch (e1) {
-              predErr = e1;
-              try {
-                const qs = new URLSearchParams({ league: lg, date: slateDate });
-                predPayload = await fetchJSON(`/api/predictions?${qs.toString()}`);
-                predErr = null;
-              } catch (e2) {
-                predErr = e2;
-                try {
-                  const qs2 = new URLSearchParams({ league: lg, date: slateDate });
-                  predPayload = await fetchJSON(`/api/predict?${qs2.toString()}`);
-                  predErr = null;
-                } catch (e3) {
-                  predErr = e3;
-                  predPayload = null;
-                }
-              }
-            }
+      const ac = a.confidence ?? -1;
+      const bc = b.confidence ?? -1;
+      if (bc !== ac) return bc - ac;
 
-            // 3) map predictions by gameId
-            const byGameId = new Map();
-            const predList =
-              safeArr(predPayload?.games) ||
-              safeArr(predPayload?.rows) ||
-              safeArr(predPayload?.data) ||
-              safeArr(predPayload?.predictions) ||
-              [];
-
-            for (const item of predList) {
-              const gid = pickGameId(item);
-              if (!gid) continue;
-              const pickLike = item?.pick || item?.modelPick || item?.prediction || item;
-              byGameId.set(String(gid), normalizePickFields(pickLike));
-            }
-
-            // 4) merge picks onto schedule
-            const merged = games.map((g) => {
-              const gid = String(g?.gameId || g?.id || "");
-              const pick = gid ? byGameId.get(gid) : null;
-              return {
-                ...g,
-                _pick:
-                  pick ||
-                  ({
-                    pickSide: null,
-                    winProb: null,
-                    edge: null,
-                    confidence: null,
-                    tier: null,
-                    raw: null,
-                  }),
-              };
-            });
-
-            return {
-              lg,
-              games: merged,
-              predMeta: predPayload?.meta || null,
-              predError: predErr ? String(predErr?.message || predErr) : "",
-            };
-          })
-        );
-
-        const next = { nba: [], nhl: [], ncaam: [] };
-        const predMeta = { nba: null, nhl: null, ncaam: null };
-        let anyErr = "";
-
-        for (const r of results) {
-          if (r.status === "fulfilled") {
-            next[r.value.lg] = safeArr(r.value.games);
-            predMeta[r.value.lg] = r.value.predMeta || null;
-            if (r.value.predError) {
-              anyErr = anyErr || `Predictions unavailable for ${leagueLabel(r.value.lg)} (${r.value.predError})`;
-            }
-          } else {
-            anyErr = anyErr || String(r.reason?.message || r.reason || "Unknown slate error");
-          }
-        }
-
-        setSlate({ loading: false, error: anyErr, byLeague: next, predMeta });
-      } catch (e) {
-        const msg = String(e?.message || e);
-        if (!msg.toLowerCase().includes("aborted")) setSlate((s) => ({ ...s, loading: false, error: msg }));
-      }
-    })();
-
-    return () => controller.abort();
-  }, [slateDate]);
-
-  const leagueRows = useMemo(() => {
-    return {
-      nba: sortByDateAsc(perf.rows.nba),
-      nhl: sortByDateAsc(perf.rows.nhl),
-      ncaam: sortByDateAsc(perf.rows.ncaam),
-    };
-  }, [perf]);
-
-  const leagueSummaries = useMemo(() => {
-    return {
-      nba: summarizeRows(leagueRows.nba),
-      nhl: summarizeRows(leagueRows.nhl),
-      ncaam: summarizeRows(leagueRows.ncaam),
-    };
-  }, [leagueRows]);
-
-  const totals = useMemo(() => {
-    const s = ["nba", "nhl", "ncaam"].reduce(
-      (acc, l) => {
-        const x = leagueSummaries[l];
-        acc.games += x.games;
-        acc.picks += x.picks;
-        acc.pass += x.pass;
-        acc.completed += x.completed;
-        acc.wins += x.wins;
-        acc.losses += x.losses;
-        acc.pushes += x.pushes;
-        return acc;
-      },
-      { games: 0, picks: 0, pass: 0, completed: 0, wins: 0, losses: 0, pushes: 0 }
-    );
-
-    const winRate = s.picks > 0 ? s.wins / Math.max(1, s.wins + s.losses) : null;
-    return { ...s, winRate };
-  }, [leagueSummaries]);
-
-  const rangeLabel = rangeDays === 7 ? "Last 7 days" : rangeDays === 14 ? "Last 14 days" : "Last 30 days";
-
-  function teamMetaFromGame(g, side /* "home" | "away" */) {
-    const isHome = side === "home";
-
-    // unified games gives home/away objects; older screens may still have homeTeam/awayTeam
-    const obj = isHome ? g?.home || g?.homeTeam : g?.away || g?.awayTeam;
-
-    const id = obj?.id || (isHome ? g?.homeTeamId : g?.awayTeamId) || (isHome ? g?.home_team_id : g?.away_team_id) || null;
-    const name = obj?.name || obj?.abbr || id || (isHome ? "HOME" : "AWAY");
-    const abbr = obj?.abbr || null;
-
-    const logo = obj?.logo || null; // (NCAAM ESPN includes logo)
-    return { id, name, abbr, logo };
-  }
-
-  function renderSlateLeagueCard(lg) {
-    const rows = safeArr(slate.byLeague[lg]);
-
-    const sorted = [...rows].sort((a, b) => {
-      const aFinal = isFinalStatus(a?.status);
-      const bFinal = isFinalStatus(b?.status);
-      if (aFinal !== bFinal) return aFinal ? 1 : -1;
-      return String(a?.id || a?.gameId || "").localeCompare(String(b?.id || b?.gameId || ""));
+      const aw = a.winProb ?? -1;
+      const bw = b.winProb ?? -1;
+      return bw - aw;
     });
+    return merged.slice(0, 10);
+  }, [leagueAgg]);
 
-    const hasGames = sorted.length > 0;
+  // Upset spotlight: prefer NCAAM; else best by winProb
+  const upsetOfDay = useMemo(() => {
+    const preferred = leagueAgg?.ncaam?.upsetSpotlight;
+    if (preferred) return preferred;
 
-    return (
-      <div className="league card" key={`slate-${lg}`}>
-        <div className="league-head">
-          <div className="league-name">{leagueLabel(lg)}</div>
-          <div className="muted">{hasGames ? `${sorted.length} games` : "No games"}</div>
-        </div>
+    const merged = LEAGUES.flatMap((l) => safeArr(upsets?.[l]?.rows));
+    merged.sort((a, b) => (Number(b?.winProb) || 0) - (Number(a?.winProb) || 0));
+    return merged[0] || null;
+  }, [leagueAgg, upsets]);
 
-        <div className="league-body">
-          {slate.loading ? (
-            <div className="muted">Loading…</div>
-          ) : !hasGames ? (
-            <div className="muted">No games found for {slateDate}</div>
-          ) : (
-            <div className="day-list">
-              {sorted.map((g) => {
-                const home = teamMetaFromGame(g, "home");
-                const away = teamMetaFromGame(g, "away");
-
-                const homeLogo = home.logo || getTeamLogo(lg, home?.id || home?.name);
-                const awayLogo = away.logo || getTeamLogo(lg, away?.id || away?.name);
-
-                const hs = g?.homeScore ?? g?.home_score ?? home?.score ?? null;
-                const as = g?.awayScore ?? g?.away_score ?? away?.score ?? null;
-
-                const status = String(g?.status || "—");
-
-                const pickSide = g?._pick?.pickSide;
-                const winProb = g?._pick?.winProb;
-                const edge = g?._pick?.edge;
-                const confidence = g?._pick?.confidence;
-                const tier = g?._pick?.tier;
-
-                const pickTeam = pickSide === "home" ? home : pickSide === "away" ? away : null;
-
-                return (
-                  <div className="day-row" key={`${lg}-${g?.id || g?.gameId || Math.random()}`}>
-                    <div className="day-date" style={{ width: 56 }}>
-                      <span className="muted">{status}</span>
-                    </div>
-
-                    <div className="day-mid" style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 200 }}>
-                        {awayLogo ? (
-                          <img src={awayLogo} alt={away.name} style={{ width: 18, height: 18, borderRadius: 4 }} />
-                        ) : null}
-                        <span>{away.name}</span>
-                        <span className="muted">@</span>
-                        {homeLogo ? (
-                          <img src={homeLogo} alt={home.name} style={{ width: 18, height: 18, borderRadius: 4 }} />
-                        ) : null}
-                        <span>{home.name}</span>
-                      </div>
-
-                      <div className="muted" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                        <span>
-                          {as != null && hs != null ? <strong style={{ fontWeight: 600 }}>{as}-{hs}</strong> : "—"}
-                        </span>
-
-                        {pickTeam ? (
-                          <>
-                            <span className="tag">Pick: {pickTeam.name}</span>
-                            <span className="tag">Win: {fmtPct(winProb, 0)}</span>
-                            <span className="tag">Edge: {edge == null ? "—" : Number(edge).toFixed(2)}</span>
-                            <span className="tag">Tier: {tier ?? "—"}</span>
-                            <span className="tag">
-                              Conf: {confidence == null || !Number.isFinite(confidence) ? "—" : Number(confidence).toFixed(2)}
-                            </span>
-                          </>
-                        ) : (
-                          <span className="tag warn">No prediction</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="day-pct" style={{ width: 90, textAlign: "right" }}>
-                      <Link
-                        to={`/upsets?league=${encodeURIComponent(lg)}&date=${encodeURIComponent(slateDate)}`}
-                        className="btn secondary"
-                        style={{ padding: "6px 10px", fontSize: 12 }}
-                      >
-                        Upsets
-                      </Link>
-                    </div>
-                  </div>
-                );
-              })}
+  // -------- UI --------
+  return (
+    <div>
+      {/* Header */}
+      <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+        <div className="slateHeader">
+          <div style={{ minWidth: 0 }}>
+            <div className="h1" style={{ fontSize: 26 }}>Premium Dashboard</div>
+            <div className="sub">
+              Daily command center: signals → picks → upsets. Use <b>2026-02-04</b> as your demo test day.
             </div>
-          )}
+          </div>
+
+          <div className="pills">
+            <span className="badge">Date</span>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="pill"
+              style={{ padding: "6px 10px", background: "rgba(255,255,255,.04)" }}
+            />
+            <button className="pill" onClick={() => setDate("2026-02-04")}>Test: 2026-02-04</button>
+            <Link className="pill" to="/performance">Performance</Link>
+            <Link className="pill" to={`/upsets?league=ncaam&date=${encodeURIComponent(date)}`}>Upsets</Link>
+          </div>
         </div>
 
-        <div className="muted" style={{ marginTop: 10, display: "flex", justifyContent: "space-between" }}>
-          <span>Model: {slate.predMeta?.[lg]?.model || slate.predMeta?.[lg]?.engine || "—"}</span>
-          <Link className="muted" to={`/${lg}`}>
-            Open {leagueLabel(lg)} →
-          </Link>
+        {err && <div className="badge bad" style={{ marginTop: 10 }}>{err}</div>}
+      </div>
+
+      {/* Today Signal Strip */}
+      <div className="grid" style={{ marginBottom: 14 }}>
+        <div className="kpi" style={{ gridColumn: "span 12" }}>
+          <div className="label">Today signals • {date}</div>
+
+          <div className="row" style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <span className="badge">Games: <b>{todaySignals.allGames}</b></span>
+            <span className="badge">Picks issued: <b>{todaySignals.allPicks}</b></span>
+            <span className="badge good">High confidence: <b>{todaySignals.highConf}</b></span>
+            <span className="badge warn">Upset alerts: <b>{todaySignals.upsetAlerts}</b></span>
+            <span className="badge">
+              Best edge:{" "}
+              <b>
+                {todaySignals.bestEdge
+                  ? `${todaySignals.bestEdge.matchup} (${fmtEdge(todaySignals.bestEdge.edge)})`
+                  : "—"}
+              </b>
+            </span>
+          </div>
+
+          <div className="sub" style={{ marginTop: 8 }}>
+            Quick read: picks are sorted by edge; upset alerts use underdog win% threshold (min 20%).
+          </div>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="page">
-      <div className="shell">
-        <div className="hero">
+      {/* League summary cards (premium, informative) */}
+      <div className="grid" style={{ marginBottom: 14 }}>
+        {LEAGUES.map((l) => {
+          const a = leagueAgg?.[l];
+          if (!a) return null;
+
+          const strong = a.strongestPick;
+          const edgeBest = a.bestEdgePick;
+
+          return (
+            <div key={l} className="card" style={{ gridColumn: "span 4", padding: 14 }}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <div>
+                  <div className="label">{l.toUpperCase()}</div>
+                  <div className="sub">source: {a.source}</div>
+                </div>
+                <Link className="badge" to={`/league/${l}?date=${encodeURIComponent(date)}`}>
+                  Open
+                </Link>
+              </div>
+
+              <div className="hr" />
+
+              <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+                <span className="badge">Games: <b>{a.gamesCount}</b></span>
+                <span className="badge">Picks: <b>{a.picksCount}</b></span>
+                <span className="badge good">High conf: <b>{a.highConfCount}</b></span>
+                <span className="badge">Avg edge: <b>{a.avgEdge != null ? fmtEdge(a.avgEdge) : "—"}</b></span>
+                <span className="badge warn">Upsets: <b>{a.upsetCount}</b></span>
+              </div>
+
+              <div className="hr" />
+
+              <div className="sub">
+                <b>7-day win rate:</b> {pct01(a.wr7)} <span style={{ opacity: 0.7 }}>({a.wins7}-{a.losses7})</span>
+              </div>
+
+              <div className="sub" style={{ marginTop: 6 }}>
+                <b>Strongest:</b>{" "}
+                {strong
+                  ? `${strong.matchup} — ${strong.pick} ${pct01(strong.winProb)}`
+                  : "—"}
+              </div>
+
+              <div className="sub" style={{ marginTop: 4 }}>
+                <b>Best edge:</b>{" "}
+                {edgeBest
+                  ? `${edgeBest.matchup} — ${fmtEdge(edgeBest.edge)}`
+                  : "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Top Picks Table */}
+      <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+        <div className="slateHeader">
           <div>
-            <h1>Sports MVP</h1>
-            <p className="muted">Daily slate + premium predictions contract across NBA / NHL / NCAAM.</p>
+            <div className="h1" style={{ fontSize: 20 }}>Top Picks (by Edge)</div>
+            <div className="sub">Across all leagues for {date}. Click a league to drill in.</div>
           </div>
-
-          <div className="hero-actions">
-            <div className="pill">{slateDate}</div>
-            <Link className="btn" to="/nba">
-              Open NBA
-            </Link>
+          <div className="row" style={{ gap: 8 }}>
+            <Link className="badge" to={`/league/nba?date=${encodeURIComponent(date)}`}>NBA</Link>
+            <Link className="badge" to={`/league/nhl?date=${encodeURIComponent(date)}`}>NHL</Link>
+            <Link className="badge" to={`/league/ncaam?date=${encodeURIComponent(date)}`}>NCAAM</Link>
           </div>
         </div>
 
-        <div className="top-stats">
-          <div className="stat card">
-            <div className="label">API</div>
-            <div className="value">{apiOk === null ? "—" : apiOk ? "Online" : "Offline"}</div>
-          </div>
-
-          <div className="stat card">
-            <div className="label">Slate date</div>
-            <div className="value">{slateDate}</div>
-          </div>
-
-          <div className="stat card">
-            <div className="label">Updated</div>
-            <div className="value">{updatedAt || "—"}</div>
-          </div>
-
-          <div className="stat card">
-            <div className="label">Scored accuracy</div>
-            <div className="value">{fmtPct(totals.winRate, 0)}</div>
-          </div>
-        </div>
-
-        {/* SECTION 1: PERFORMANCE */}
-        <div className="card section">
-          <div className="section-header">
-            <div>
-              <div className="section-title">{rangeDays}-day performance</div>
-              <div className="muted">
-                Scored picks: {fmtNum(totals.picks)} • Total games: {fmtNum(totals.games)} • Completed: {fmtNum(totals.completed)}
-              </div>
-            </div>
-
-            <div className="section-controls">
-              <div className="muted">Accuracy trend</div>
-              <div className="toggle">
-                <button className={rangeDays === 7 ? "active" : ""} onClick={() => setRangeDays(7)} type="button">
-                  7 days
-                </button>
-                <button className={rangeDays === 14 ? "active" : ""} onClick={() => setRangeDays(14)} type="button">
-                  14 days
-                </button>
-                <button className={rangeDays === 30 ? "active" : ""} onClick={() => setRangeDays(30)} type="button">
-                  30 days
-                </button>
-              </div>
-              <div className="pill small">{rangeLabel}</div>
-            </div>
-          </div>
-
-          {perfErr ? (
-            <div className="error">
-              <div className="error-title">Performance error</div>
-              <div className="muted">{perfErr}</div>
-            </div>
-          ) : null}
-
-          <div className="league-grid">
-            {["nba", "nhl", "ncaam"].map((lg) => {
-              const rowsAsc = leagueRows[lg];
-              const rowsDesc = sortByDateDesc(rowsAsc);
-              const sum = leagueSummaries[lg];
-              const empty = sum.picks === 0 && sum.pass === 0 && sum.games === 0;
-
+        {loading ? (
+          <div className="sub">Loading…</div>
+        ) : topPicks.length === 0 ? (
+          <div className="sub">No picks issued for this date.</div>
+        ) : (
+          <div style={{ marginTop: 10 }}>
+            {topPicks.map((x) => {
+              const t = tierFromConfidence(x.confidence);
               return (
-                <div className="league card" key={lg}>
-                  <div className="league-head">
-                    <div className="league-name">{leagueLabel(lg)}</div>
-                    <div className="muted">Avg: {fmtPct(sum.winRate, 0)}</div>
+                <div key={x.gameId} className="gameRow">
+                  <div className="matchup">
+                    {x.awayLogo ? <img className="logo" src={x.awayLogo} alt="" /> : <span className="logo" />}
+                    {x.homeLogo ? <img className="logo" src={x.homeLogo} alt="" /> : <span className="logo" />}
+                    <span style={{ marginRight: 8, opacity: 0.8 }} className="badge">{x.league.toUpperCase()}</span>
+                    <span>{x.matchup}</span>
                   </div>
 
-                  <div className="league-body">
-                    {loadingPerf ? (
-                      <div className="muted">Loading…</div>
-                    ) : empty ? (
-                      <div className="muted">No scored picks yet</div>
-                    ) : (
-                      <div className="day-list">
-                        {rowsDesc.map((r) => {
-                          const scored = Number(r?.picks || 0);
-                          const pct = r?.win_rate;
-                          const note = r?.error ? String(r.error) : "";
-
-                          return (
-                            <div className="day-row" key={`${lg}-${r.date}`}>
-                              <div className="day-date">{dayRowLabel(r)}</div>
-                              <div className="day-mid">
-                                <span className="muted">{scored} scored</span>
-                                {note ? <span className="tag warn">{note}</span> : null}
-                              </div>
-                              <div className="day-pct">{fmtPct(pct, 0)}</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                  <div className="metaChips">
+                    <span className="chip">Pick: {x.pick || "—"}</span>
+                    <span className="chip">Win: {pct01(x.winProb)}</span>
+                    <span className="chip">Edge: {fmtEdge(x.edge)}</span>
+                    <span className={`chip ${t.tone}`}>Conf: {t.label}</span>
                   </div>
                 </div>
               );
             })}
           </div>
+        )}
+      </div>
 
-          <div className="section-foot muted">
-            Tip: Use <span className="tag">Tournament</span> mode on NCAAM pages for neutral-court feel + higher upset sensitivity.
+      {/* Upset Spotlight */}
+      <div className="card" style={{ padding: 14 }}>
+        <div className="slateHeader">
+          <div>
+            <div className="h1" style={{ fontSize: 20 }}>Upset Spotlight</div>
+            <div className="sub">Tournament-grade view. Defaults to NCAAM when available.</div>
           </div>
+          <Link className="badge" to={`/upsets?league=ncaam&date=${encodeURIComponent(date)}`}>
+            View Upset Watch
+          </Link>
         </div>
 
-        {/* SECTION 2: TODAY'S SLATE + MODEL PICKS */}
-        <div className="card section">
-          <div className="section-header">
-            <div>
-              <div className="section-title">Today’s slate (model picks)</div>
-              <div className="muted">
-                Date: {slateDate} • Schedule via <span className="tag">/api/games</span> • Predictions via{" "}
-                <span className="tag">/api/&lt;league&gt;/predict</span>
+        <div className="hr" />
+
+        {loading ? (
+          <div className="sub">Loading…</div>
+        ) : !upsetOfDay ? (
+          <div className="sub">No upset candidates for current filters.</div>
+        ) : (
+          <div className="gameRow" style={{ alignItems: "flex-start" }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="matchup">
+                {upsetOfDay?.away?.logo ? <img className="logo" src={upsetOfDay.away.logo} alt="" /> : <span className="logo" />}
+                {upsetOfDay?.home?.logo ? <img className="logo" src={upsetOfDay.home.logo} alt="" /> : <span className="logo" />}
+                <span>{upsetOfDay.matchup}</span>
               </div>
+
+              {(() => {
+                const why = upsetOfDay?.why || upsetOfDay?.pick?.why;
+                const whyObj = why && typeof why === "object" ? why : null;
+                if (!whyObj) return <div className="sub2" style={{ marginTop: 6 }}>Why: —</div>;
+
+                return (
+                  <div style={{ marginTop: 6 }}>
+                    <div className="sub2">
+                      <b>Why:</b> {whyObj.headline || "—"}
+                    </div>
+                    {safeArr(whyObj?.bullets).length > 0 && (
+                      <ul className="whyList" style={{ marginTop: 6 }}>
+                        {safeArr(whyObj.bullets).slice(0, 5).map((b, i) => (
+                          <li key={i}>{b}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
-            <div className="section-controls">
-              <Link className="btn secondary" to={`/upsets?league=nba&date=${encodeURIComponent(slateDate)}`}>
-                Upset Watch
-              </Link>
+            <div className="metaChips" style={{ flex: "0 0 auto" }}>
+              <span className="chip warn">Dog win: {pct01(upsetOfDay.winProb)}</span>
+              <span className="chip">Pick: {String(upsetOfDay?.pick?.pickSide || "—").toUpperCase()}</span>
+              <span className="chip">Edge: {fmtEdge(upsetOfDay?.pick?.edge)}</span>
+              <span className="chip">{upsetOfDay?.signals?.usedModelWinProb ? "Model winProb" : "Fallback"}</span>
             </div>
           </div>
-
-          {slate.error ? (
-            <div className="error">
-              <div className="error-title">Slate warning</div>
-              <div className="muted">{slate.error}</div>
-            </div>
-          ) : null}
-
-          <div className="league-grid">{["nba", "nhl", "ncaam"].map((lg) => renderSlateLeagueCard(lg))}</div>
-
-          <div className="section-foot muted">Note: Olympics are included as normal NHL games — no special filtering.</div>
-        </div>
-
-        <div className="bottom-actions">
-          <Link className="btn secondary" to="/parlay">
-            Parlay Lab
-          </Link>
-          <Link className="btn secondary" to="/upsets">
-            Upset Watch
-          </Link>
-          <Link className="btn secondary" to="/ncaam?tournament=1">
-            NCAAM Tournament Mode
-          </Link>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,35 @@
 // legacy/apps/api/src/index.js
-import "dotenv/config"; // ✅ loads legacy/apps/api/.env automatically
+import dotenv from "dotenv";
+
+/**
+ * ✅ Premium env loading (bulletproof)
+ * Your repo has used BOTH:
+ * - legacy/apps/api/.env
+ * - legacy/apps/.env
+ *
+ * This tries both paths so the API never “half boots” with missing env.
+ */
+const ENV_CANDIDATES = [
+  // legacy/apps/api/.env  (from src/)
+  new URL("../.env", import.meta.url),
+  // legacy/apps/.env      (from src/)
+  new URL("../../.env", import.meta.url),
+];
+
+let envLoaded = false;
+for (const u of ENV_CANDIDATES) {
+  try {
+    const out = dotenv.config({ path: u.pathname });
+    if (!out?.error) {
+      envLoaded = true;
+      break;
+    }
+  } catch {
+    // ignore
+  }
+}
+if (!envLoaded) dotenv.config();
+
 import express from "express";
 import cors from "cors";
 
@@ -7,72 +37,59 @@ import adminPerformanceRouter from "./routes/adminPerformance.js";
 import performanceRoutes from "./routes/performance.js";
 import upsetsRouter from "./routes/upsets.js";
 import scoreRouter from "./routes/score.js";
+
+// ✅ Premium unified predictions contract (/api/predictions?league=...&date=...)
+import predictionsRouter from "./routes/predictions.js";
+
+// ✅ unified /api/games + ESPN slates
 import gamesRouter from "./routes/games.js";
+
+// ✅ ESPN NCAAM predictions (/api/ncaam/predict) — MUST BE BEFORE predictRouter
 import ncaamPredictRouter from "./routes/ncaamPredict.js";
+
+// ⚠️ generic predictions router LAST
 import predictRouter from "./routes/predict.js";
 
 import { startDailyScoreJob } from "./cron/dailyScore.js";
 
+// ✅ Always-mount admin backfill router
+import adminRunCronRouter from "./routes/adminRunCron.js";
+
+/**
+ * Optional: Premium NBA router
+ * - Do NOT crash if file doesn't exist
+ */
+let nbaPremiumRouter = null;
+try {
+  const mod = await import("./routes/nbaPremium.js");
+  nbaPremiumRouter = mod?.default || null;
+} catch {
+  // ignore
+}
+
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 
-// ✅ allow disabling cron (useful for local dev / certain deploys)
+// ✅ allow disabling cron
 const ENABLE_CRON = String(process.env.ENABLE_CRON || "true").toLowerCase() !== "false";
-
-// ✅ optional guard for admin endpoints
-const ADMIN_KEY = String(process.env.ADMIN_KEY || "").trim();
-const isLocal = process.env.NODE_ENV !== "production";
 
 // hardening
 app.disable("x-powered-by");
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-// ✅ sanity route (proves we’re running THIS file)
+// sanity route
 app.get("/__ping", (_req, res) => res.json({ ok: true, from: "legacy/apps/api/src/index.js" }));
 
-/**
- * Health
- */
+// health
 app.get("/api/health", (_req, res) =>
   res.json({
     ok: true,
     service: "sports-mvp-api",
     time: new Date().toISOString(),
-    version: "legacy-api-index-premium-stable",
-    cronEnabled: ENABLE_CRON,
+    version: "legacy-api-index-premium-scoring-upsets-v3",
   })
 );
-
-/**
- * ✅ Admin guard helper
- */
-function requireAdmin(req) {
-  if (!ADMIN_KEY) return isLocal; // if no key set, allow only locally
-  const key = String(req.query.key || req.headers["x-admin-key"] || "").trim();
-  return Boolean(key && key === ADMIN_KEY);
-}
-
-/**
- * ✅ Optional routers (do not crash if missing)
- */
-async function tryImport(defaultPath) {
-  try {
-    const mod = await import(defaultPath);
-    return mod?.default || null;
-  } catch {
-    return null;
-  }
-}
-
-// Optional: Premium NBA router
-const nbaPremiumRouter = await tryImport("./routes/nbaPremium.js");
-
-// Optional: Premium unified predictions router
-const predictionsRouter = await tryImport("./routes/predictions.js");
-
-// Optional: Admin run-cron router
-const adminRunCronRouter = await tryImport("./routes/adminRunCron.js");
 
 /**
  * ✅ Mount routers (ORDER MATTERS)
@@ -80,68 +97,40 @@ const adminRunCronRouter = await tryImport("./routes/adminRunCron.js");
 app.use("/api", adminPerformanceRouter);
 app.use("/api", performanceRoutes);
 
-// ✅ premium unified predictions contract (if present)
-if (predictionsRouter) app.use("/api", predictionsRouter);
+// ✅ unified predictions (used by Upsets + UI)
+app.use("/api", predictionsRouter);
 
-// routes/upsets.js uses router.get("/") so mount it at /api/upsets
+// upsets
 app.use("/api/upsets", upsetsRouter);
 
-// score router
+// scoring utilities + scorer export uses Supabase safely
 app.use("/api/score", scoreRouter);
 
-// unified games router (includes /api/games and /api/ncaam/games)
+// games (NBA/NHL/NCAAM slate endpoints)
 app.use("/api", gamesRouter);
 
-// ✅ ESPN NCAAM predictions — MUST COME BEFORE predictRouter
+// ✅ NCAAM ESPN predict must come before generic predict
 app.use("/api", ncaamPredictRouter);
 
 // optional premium nba
-if (nbaPremiumRouter) {
-  app.use("/api/nba", nbaPremiumRouter);
-}
+if (nbaPremiumRouter) app.use("/api/nba", nbaPremiumRouter);
 
-/**
- * ✅ Admin run-cron
- * IMPORTANT: mount at /api (not /api/admin) to avoid double-prefixing,
- * because your current adminRunCron.js defines router.get("/admin/run-cron", ...)
- */
-if (adminRunCronRouter) {
-  app.use("/api", (req, res, next) => {
-    // guard only /api/admin/*
-    if (req.path.startsWith("/admin/") && !requireAdmin(req)) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
-    }
-    return next();
-  });
-  app.use("/api", adminRunCronRouter);
-} else {
-  // fallback stub
-  app.get("/api/admin/run-cron", (req, res) => {
-    if (!requireAdmin(req)) return res.status(401).json({ ok: false, error: "Unauthorized" });
-    res.json({ ok: true, note: "adminRunCron router not found (routes/adminRunCron.js missing)" });
-  });
-}
+// ✅ admin backfill runner (writes performance rows)
+app.use("/api/admin", adminRunCronRouter);
 
-// ⚠️ generic predictions router LAST (avoid shadowing /api/ncaam/predict)
+// generic predict LAST
 app.use("/api", predictRouter);
 
-// ✅ 404 JSON
+// 404 JSON
 app.use((req, res) => {
   res.status(404).json({ ok: false, error: `Not found: ${req.method} ${req.path}` });
 });
 
-/**
- * ✅ Central error handler (headers-safe)
- */
+// central error handler
 app.use((err, _req, res, next) => {
   if (res.headersSent) return next(err);
-
   const status = Number(err?.status) || 500;
-  res.status(status).json({
-    ok: false,
-    error: String(err?.message || err),
-    status,
-  });
+  res.status(status).json({ ok: false, error: String(err?.message || err), status });
 });
 
 app.listen(PORT, () => {
