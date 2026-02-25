@@ -19,3 +19,7 @@ build/
 # WIP (do not commit yet)
 apps/api/src/core/
 apps/api/src/engines/
+
+# local backups
+*.bak.*
+*.broken
