@@ -1,0 +1,827 @@
+// apps/api/src/routes/predict.js
+import "dotenv/config";
+import express from "express";
+
+const router = express.Router();
+
+/* =========================================================
+   ENV
+   ========================================================= */
+
+const NBA_API_KEY = process.env.NBA_API_KEY || process.env.BALLDONTLIE_API_KEY || "";
+const BALLDONTLIE_BASE = process.env.BALLDONTLIE_BASE || "https://api.balldontlie.io/v1";
+
+const ODDS_API_KEY = process.env.ODDS_API_KEY || "";
+const ODDS_API_BASE = process.env.ODDS_API_BASE || "https://api.the-odds-api.com/v4";
+
+const ESPN_BASE = process.env.ESPN_BASE || "https://site.api.espn.com/apis/site/v2";
+
+const NHL_PAUSED = String(process.env.NHL_PAUSED || "true").toLowerCase() === "true";
+
+/* =========================================================
+   Utils
+   ========================================================= */
+
+function clamp(x, a, b) {
+  return Math.max(a, Math.min(b, x));
+}
+
+function safeNum(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isoDateOnly(x) {
+  return String(x || "").slice(0, 10);
+}
+
+function toYYYYMMDD(dateYYYYMMDD) {
+  return String(dateYYYYMMDD || "").replaceAll("-", "");
+}
+
+function addDaysUTC(yyyyMmDd, deltaDays) {
+  const d = new Date(`${yyyyMmDd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + deltaDays);
+  return d.toISOString().slice(0, 10);
+}
+
+function normalizeTeamName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function impliedProbFromMoneyline(ml) {
+  const n = safeNum(ml);
+  if (!Number.isFinite(n) || n === 0) return null;
+  if (n > 0) return 100 / (n + 100);
+  return (-n) / ((-n) + 100);
+}
+
+/* =========================================================
+   Premium tiering + confidence caps (NBA)
+   ========================================================= */
+
+function tierFromProbEdgeAndWinProb(probEdgeAbs, winProb) {
+  const p = Number(winProb);
+  const e = Number(probEdgeAbs);
+  if (!Number.isFinite(p) || !Number.isFinite(e)) return "PASS";
+
+  // Premium thresholds (market-anchored)
+  if (e >= 0.08 && p >= 0.64) return "ELITE";
+  if (e >= 0.055 && p >= 0.58) return "STRONG";
+  if (e >= 0.03 && p >= 0.55) return "LEAN";
+  return "PASS";
+}
+
+function capConfidenceByWinProb(conf, winProb) {
+  let c = Number(conf);
+  const p = Number(winProb);
+  if (!Number.isFinite(c)) c = 0.5;
+
+  // hard cap confidence for coin-flips
+  if (Number.isFinite(p)) {
+    if (p < 0.52) c = Math.min(c, 0.54);
+    else if (p < 0.55) c = Math.min(c, 0.58);
+  }
+  return clamp(c, 0.50, 0.92);
+}
+
+/* =========================================================
+   Cache + in-flight dedupe
+   ========================================================= */
+
+const CACHE_TTL_MS = 60_000;
+const HEAVY_CACHE_TTL_MS = 15 * 60_000;
+
+const cache = new Map(); // key -> { t, ttl, v }
+const inFlight = new Map(); // key -> Promise
+
+function getCache(key) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.t > hit.ttl) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.v;
+}
+
+function setCache(key, v, ttl = CACHE_TTL_MS) {
+  cache.set(key, { t: Date.now(), ttl, v });
+}
+
+async function fetchJson(url, opts = {}, { ttl = CACHE_TTL_MS, timeoutMs = 20000, retries = 2 } = {}) {
+  const key = `FETCH:${url}`;
+  const cached = getCache(key);
+  if (cached) return cached;
+
+  if (inFlight.has(key)) return inFlight.get(key);
+
+  const p = (async () => {
+    let lastErr = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        const res = await fetch(url, { ...opts, signal: controller.signal });
+
+        clearTimeout(timer);
+
+        if (!res.ok) {
+          const ra = res.headers.get("retry-after");
+          const waitMs = ra ? Number(ra) * 1000 : 400 * Math.pow(2, attempt);
+          if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+            await new Promise((r) => setTimeout(r, waitMs));
+            continue;
+          }
+          throw new Error(`Upstream ${res.status} for ${url}`);
+        }
+
+        const json = await res.json();
+        setCache(key, json, ttl);
+        return json;
+      } catch (e) {
+        lastErr = e;
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 450 * Math.pow(2, attempt)));
+          continue;
+        }
+      }
+    }
+    throw lastErr || new Error(`Fetch failed for ${url}`);
+  })();
+
+  inFlight.set(key, p);
+  try {
+    return await p;
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+/* =========================================================
+   Concurrency pool (prevents “hang forever” on big slates)
+   ========================================================= */
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let idx = 0;
+
+  const workers = Array.from({ length: Math.max(1, limit) }, async () => {
+    while (true) {
+      const i = idx++;
+      if (i >= items.length) break;
+      out[i] = await fn(items[i], i);
+    }
+  });
+
+  await Promise.all(workers);
+  return out;
+}
+
+/* =========================================================
+   ODDS (Vegas anchoring) — optional, safe
+   ========================================================= */
+
+async function loadOddsNBA(dateYYYYMMDD) {
+  if (!ODDS_API_KEY) return { ok: false, note: "missing_odds_key", byMatch: new Map() };
+
+  const from = `${dateYYYYMMDD}T00:00:00Z`;
+  const to = `${addDaysUTC(dateYYYYMMDD, 1)}T00:00:00Z`;
+
+  const url =
+    `${ODDS_API_BASE}/sports/basketball_nba/odds` +
+    `?apiKey=${encodeURIComponent(ODDS_API_KEY)}` +
+    `&regions=us&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso` +
+    `&commenceTimeFrom=${encodeURIComponent(from)}` +
+    `&commenceTimeTo=${encodeURIComponent(to)}`;
+
+  const json = await fetchJson(url, {}, { ttl: HEAVY_CACHE_TTL_MS, timeoutMs: 25000, retries: 3 });
+  const arr = Array.isArray(json) ? json : [];
+
+  const byMatch = new Map();
+
+  for (const g of arr) {
+    const home = normalizeTeamName(g?.home_team);
+    const away = normalizeTeamName(g?.away_team);
+    if (!home || !away) continue;
+
+    const key = `${away} @ ${home}`;
+
+    const books = Array.isArray(g?.bookmakers) ? g.bookmakers : [];
+    const dk = books.find((b) => String(b?.key || "").toLowerCase() === "draftkings");
+    const book = dk || books[0] || null;
+
+    const mkts = Array.isArray(book?.markets) ? book.markets : [];
+    const h2h = mkts.find((m) => m.key === "h2h");
+    const spreads = mkts.find((m) => m.key === "spreads");
+    const totals = mkts.find((m) => m.key === "totals");
+
+    const findPrice = (mkt, teamNorm) => {
+      const outs = Array.isArray(mkt?.outcomes) ? mkt.outcomes : [];
+      const out = outs.find((o) => normalizeTeamName(o?.name) === teamNorm);
+      return safeNum(out?.price);
+    };
+
+    const findPoint = (mkt, teamNorm) => {
+      const outs = Array.isArray(mkt?.outcomes) ? mkt.outcomes : [];
+      const out = outs.find((o) => normalizeTeamName(o?.name) === teamNorm);
+      return safeNum(out?.point);
+    };
+
+    const homeML = findPrice(h2h, home);
+    const awayML = findPrice(h2h, away);
+
+    const homeSpread = findPoint(spreads, home);
+    const awaySpread = findPoint(spreads, away);
+
+    const total = (() => {
+      const outs = Array.isArray(totals?.outcomes) ? totals.outcomes : [];
+      const o = outs.find((x) => String(x?.name || "").toLowerCase() === "over");
+      return safeNum(o?.point);
+    })();
+
+    byMatch.set(key, {
+      book: book?.title || book?.key || null,
+      moneyline: { home: homeML, away: awayML },
+      spread: { home: homeSpread, away: awaySpread },
+      total,
+    });
+  }
+
+  return { ok: true, byMatch };
+}
+
+/* =========================================================
+   NBA v2 — premium hybrid + market anchoring
+   - Fast: fetch team histories once per team (mapLimit)
+   ========================================================= */
+
+function nbaProbFromEdge_v2(edge, edgeScale = 0.11) {
+  if (!Number.isFinite(edge)) return 0.5;
+  const x = clamp(edge / edgeScale, -2.0, 2.0);
+  const p = 1 / (1 + Math.exp(-x));
+  return clamp(p, 0.52, 0.78);
+}
+
+function nbaEdge_v2(home, away, { neutral = false } = {}) {
+  const shrink = (p, n, prior = 0.5, k = 8) => (p * n + prior * k) / (n + k);
+
+  const homePlayed = Math.max(1, home.played || 1);
+  const awayPlayed = Math.max(1, away.played || 1);
+
+  const homeWin = shrink(home.winPct, homePlayed, 0.5, 8);
+  const awayWin = shrink(away.winPct, awayPlayed, 0.5, 8);
+
+  const winDiff = homeWin - awayWin;
+
+  const marginDiff = clamp((home.marginPerGame - away.marginPerGame) / 18, -1, 1);
+  const recent10Diff = (home.recent10WinPct ?? 0.5) - (away.recent10WinPct ?? 0.5);
+  const recent5MarginDiff = clamp(((home.recent5Margin ?? 0) - (away.recent5Margin ?? 0)) / 18, -1, 1);
+
+  const homeAdv = neutral ? 0 : 0.012;
+
+  return 0.44 * winDiff + 0.34 * marginDiff + 0.14 * recent10Diff + 0.08 * recent5MarginDiff + homeAdv;
+}
+
+async function nbaFetchGamesByDate(dateYYYYMMDD) {
+  if (!NBA_API_KEY) throw new Error("Missing NBA_API_KEY (set in apps/api/.env)");
+
+  const url = `${BALLDONTLIE_BASE}/games?per_page=100&dates[]=${encodeURIComponent(dateYYYYMMDD)}`;
+  const json = await fetchJson(
+    url,
+    { headers: { Authorization: NBA_API_KEY } },
+    { ttl: HEAVY_CACHE_TTL_MS, timeoutMs: 25000, retries: 4 }
+  );
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+async function nbaFetchTeamGames(teamId, dateYYYYMMDD, windowDays = 14) {
+  if (!NBA_API_KEY) throw new Error("Missing NBA_API_KEY (set in apps/api/.env)");
+
+  const start = addDaysUTC(dateYYYYMMDD, -windowDays);
+  const url =
+    `${BALLDONTLIE_BASE}/games?per_page=100` +
+    `&team_ids[]=${encodeURIComponent(teamId)}` +
+    `&start_date=${encodeURIComponent(start)}` +
+    `&end_date=${encodeURIComponent(dateYYYYMMDD)}`;
+
+  const json = await fetchJson(
+    url,
+    { headers: { Authorization: NBA_API_KEY } },
+    { ttl: HEAVY_CACHE_TTL_MS, timeoutMs: 25000, retries: 4 }
+  );
+  return Array.isArray(json?.data) ? json.data : [];
+}
+
+function nbaComputeTeamStats(games, teamId) {
+  const finals = games.filter((g) => String(g?.status || "").toLowerCase() === "final");
+
+  const played = finals.length;
+  if (!played) {
+    return {
+      ok: false,
+      played: 0,
+      winPct: 0.5,
+      marginPerGame: 0,
+      recent10WinPct: 0.5,
+      recent5Margin: 0,
+    };
+  }
+
+  let wins = 0;
+  let pf = 0;
+  let pa = 0;
+
+  const rows = finals
+    .map((g) => {
+      const homeId = String(g?.home_team?.id ?? "");
+      const awayId = String(g?.visitor_team?.id ?? "");
+      const isHome = homeId === String(teamId);
+      const my = isHome ? safeNum(g?.home_team_score) : safeNum(g?.visitor_team_score);
+      const opp = isHome ? safeNum(g?.visitor_team_score) : safeNum(g?.home_team_score);
+      const date = isoDateOnly(g?.date);
+      if (!Number.isFinite(my) || !Number.isFinite(opp)) return null;
+      return { date, my, opp };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  for (const r of rows) {
+    pf += r.my;
+    pa += r.opp;
+    if (r.my > r.opp) wins++;
+  }
+
+  const recent10 = rows.slice(0, 10);
+  const recent5 = rows.slice(0, 5);
+
+  const recent10WinPct =
+    recent10.length > 0 ? recent10.filter((r) => r.my > r.opp).length / recent10.length : 0.5;
+
+  const recent5Margin =
+    recent5.length > 0 ? recent5.reduce((s, r) => s + (r.my - r.opp), 0) / recent5.length : 0;
+
+  return {
+    ok: true,
+    played,
+    winPct: wins / played,
+    marginPerGame: (pf - pa) / played,
+    recent10WinPct,
+    recent5Margin,
+  };
+}
+
+/**
+ * NBA builder used by:
+ * - /api/predictions
+ * - cron
+ * - adminPerformance (named export)
+ */
+async function buildNbaPredictions(dateYYYYMMDD, windowDays = 14, { modelVersion = "v2" } = {}) {
+  const cacheKey = `PRED:nba:${dateYYYYMMDD}:w${windowDays}:m${modelVersion}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const p = (async () => {
+    const games = await nbaFetchGamesByDate(dateYYYYMMDD);
+
+    // Odds prefetch (optional)
+    const odds = await loadOddsNBA(dateYYYYMMDD).catch(() => ({ ok: false, byMatch: new Map() }));
+    const byMatch = odds?.byMatch || new Map();
+
+    // Gather unique team IDs (so we fetch team histories once per team)
+    const teamIds = new Set();
+    for (const g of games) {
+      if (g?.home_team?.id) teamIds.add(String(g.home_team.id));
+      if (g?.visitor_team?.id) teamIds.add(String(g.visitor_team.id));
+    }
+    const teamList = Array.from(teamIds);
+
+    // Fetch team games with concurrency limit (prevents endpoint “hang”)
+    const teamGamesArr = await mapLimit(teamList, 6, async (tid) => {
+      const tg = await nbaFetchTeamGames(tid, dateYYYYMMDD, windowDays);
+      return [tid, tg];
+    });
+
+    const teamGamesMap = new Map(teamGamesArr);
+
+    // Compute team stats once
+    const teamStatsMap = new Map();
+    for (const tid of teamList) {
+      const tg = teamGamesMap.get(tid) || [];
+      teamStatsMap.set(tid, nbaComputeTeamStats(tg, tid));
+    }
+
+    const out = [];
+
+    for (const g of games) {
+      const home = g?.home_team;
+      const away = g?.visitor_team;
+      if (!home?.id || !away?.id) continue;
+
+      const homeId = String(home.id);
+      const awayId = String(away.id);
+
+      const homeS = teamStatsMap.get(homeId) || nbaComputeTeamStats([], homeId);
+      const awayS = teamStatsMap.get(awayId) || nbaComputeTeamStats([], awayId);
+
+      const modelEdge = nbaEdge_v2(homeS, awayS, { neutral: false });
+
+      // PASS discipline (base threshold)
+      const MIN_MODEL_EDGE_FOR_PICK = 0.10;
+      let pick = "pass";
+      if (Number.isFinite(modelEdge) && Math.abs(modelEdge) >= MIN_MODEL_EDGE_FOR_PICK) {
+        pick = modelEdge >= 0 ? "home" : "away";
+      }
+
+      // model winProb (picked side)
+      const pHome = nbaProbFromEdge_v2(modelEdge, 0.11);
+      const modelWinProb =
+        pick === "home" ? pHome : pick === "away" ? (1 - pHome) : 0.5;
+
+      // Find vegas lines by normalized matchup key
+      const matchupKey =
+        `${normalizeTeamName(away?.full_name || away?.name || away?.abbreviation)} @ ${normalizeTeamName(home?.full_name || home?.name || home?.abbreviation)}`;
+      const vegas = byMatch.get(matchupKey) || null;
+
+      const impliedHome = impliedProbFromMoneyline(vegas?.moneyline?.home);
+      const impliedAway = impliedProbFromMoneyline(vegas?.moneyline?.away);
+
+      const vegasPickedProb =
+        pick === "home" ? impliedHome :
+        pick === "away" ? impliedAway :
+        null;
+
+      // Anchored winProb: blend model + vegas
+      const anchoredWinProb =
+        Number.isFinite(vegasPickedProb)
+          ? clamp(0.62 * modelWinProb + 0.38 * vegasPickedProb, 0.50, 0.90)
+          : modelWinProb;
+
+      // probEdge: probability gap vs vegas (clamped to sane range)
+      const probEdge =
+        Number.isFinite(vegasPickedProb)
+          ? clamp(anchoredWinProb - vegasPickedProb, -0.15, 0.15)
+          : null;
+
+      const absProbEdge = Number.isFinite(probEdge) ? Math.abs(probEdge) : 0;
+
+      // Tier must satisfy BOTH edge + winProb
+      let tier = "PASS";
+      if (pick !== "pass") {
+        tier = tierFromProbEdgeAndWinProb(absProbEdge, anchoredWinProb);
+        if (tier === "PASS") pick = "pass"; // enforce discipline
+      }
+
+      // Confidence primarily based on winProb distance from 0.5, then capped for low winProb
+      let confidence =
+        pick === "pass"
+          ? 0.50
+          : clamp(0.52 + 1.35 * Math.abs((anchoredWinProb ?? 0.5) - 0.5), 0.52, 0.90);
+
+      confidence = capConfidenceByWinProb(confidence, anchoredWinProb);
+
+      const recommendedTeamId =
+        pick === "home" ? `nba-${home?.abbreviation}` :
+        pick === "away" ? `nba-${away?.abbreviation}` :
+        null;
+
+      const recommendedTeamName =
+        pick === "home" ? home?.abbreviation :
+        pick === "away" ? away?.abbreviation :
+        null;
+
+      const whyDeltas = [
+        { label: "Model edge (unitless)", value: modelEdge, display: Number.isFinite(modelEdge) ? modelEdge.toFixed(3) : "n/a" },
+        { label: "Pick threshold", value: MIN_MODEL_EDGE_FOR_PICK, display: `+${MIN_MODEL_EDGE_FOR_PICK.toFixed(3)}` },
+      ];
+
+      if (vegas) {
+        whyDeltas.push({
+          label: "Vegas implied (picked side)",
+          value: Number.isFinite(vegasPickedProb) ? vegasPickedProb : null,
+          display: Number.isFinite(vegasPickedProb) ? `${Math.round(vegasPickedProb * 100)}%` : "n/a",
+        });
+        whyDeltas.push({
+          label: "Prob edge vs Vegas",
+          value: Number.isFinite(probEdge) ? probEdge : null,
+          display: Number.isFinite(probEdge) ? `${(probEdge * 100).toFixed(1)}%` : "n/a",
+        });
+      }
+
+      out.push({
+        gameId: `nba-${g?.id}`,
+        date: dateYYYYMMDD,
+        status: String(g?.status || ""),
+        homeScore: safeNum(g?.home_team_score),
+        awayScore: safeNum(g?.visitor_team_score),
+
+        home: {
+          id: `nba-${home?.abbreviation}`,
+          name: home?.abbreviation,
+          score: safeNum(g?.home_team_score),
+        },
+        away: {
+          id: `nba-${away?.abbreviation}`,
+          name: away?.abbreviation,
+          score: safeNum(g?.visitor_team_score),
+        },
+
+        market: {
+          pick,
+          recommendedTeamId,
+          recommendedTeamName,
+          // display edge as PROB edge (normalized), not the unitless modelEdge
+          edge: pick === "pass" ? null : (Number.isFinite(probEdge) ? probEdge : null),
+          tier: pick === "pass" ? "PASS" : tier,
+          confidence,
+          winProb: pick === "pass" ? null : anchoredWinProb,
+          lines: vegas
+            ? {
+                book: vegas.book || null,
+                moneyline: vegas.moneyline || null,
+                spread: vegas.spread || null,
+                total: vegas.total ?? null,
+              }
+            : null,
+        },
+
+        why: {
+          headline:
+            pick === "pass"
+              ? "PASS (no bet)"
+              : pick === "home"
+                ? "Home side value"
+                : "Away side value",
+          bullets: [
+            pick === "pass"
+              ? `PASS (model edge ${Number.isFinite(modelEdge) ? modelEdge.toFixed(3) : "n/a"} below premium thresholds)`
+              : `Pick: ${pick.toUpperCase()} — Tier: ${tier}`,
+            pick === "pass"
+              ? "No pick"
+              : `Anchored winProb: ${Math.round((anchoredWinProb ?? 0.5) * 100)}%`,
+            vegas ? `Vegas: ${vegas.book || "book"} (anchored)` : "Vegas: not available",
+          ],
+          deltas: whyDeltas,
+        },
+
+        factors: {
+          league: "nba",
+          windowDays,
+          modelVersion: "v2",
+          // keep internal unitless edge here for debug
+          edge: Number.isFinite(modelEdge) ? modelEdge : null,
+          pickNote: pick === "pass" ? "pass" : "ok",
+          winProb: pick === "pass" ? null : anchoredWinProb,
+
+          homePlayed: homeS.played,
+          awayPlayed: awayS.played,
+          homeWinPct: homeS.winPct,
+          awayWinPct: awayS.winPct,
+          homeMarginPerGame: homeS.marginPerGame,
+          awayMarginPerGame: awayS.marginPerGame,
+          homeRecent10WinPct: homeS.recent10WinPct,
+          awayRecent10WinPct: awayS.recent10WinPct,
+          homeRecent5Margin: homeS.recent5Margin,
+          awayRecent5Margin: awayS.recent5Margin,
+
+          note:
+            "NBA v2 premium: fast team-cache stats + market-anchored winProb + prob-edge vs Vegas + tier requires (edge AND winProb) + low-winProb confidence caps.",
+        },
+      });
+    }
+
+    const payload = {
+      ok: true,
+      league: "nba",
+      date: dateYYYYMMDD,
+      meta: {
+        model: "NBA premium-v4-hybrid",
+        modelVersion: "v2",
+        windowDays,
+        vegasAnchoring: Boolean(ODDS_API_KEY),
+      },
+      games: out,
+      predictions: out, // alias
+    };
+
+    setCache(cacheKey, payload, CACHE_TTL_MS);
+    return payload;
+  })();
+
+  inFlight.set(cacheKey, p);
+  try {
+    return await p;
+  } finally {
+    inFlight.delete(cacheKey);
+  }
+}
+
+/* =========================================================
+   NCAAM — ESPN ONLY (NO CBBD)
+   ========================================================= */
+
+function normalizeEspnEventToGame(event) {
+  const comp = event?.competitions?.[0];
+  const competitors = comp?.competitors;
+  if (!Array.isArray(competitors)) return null;
+
+  const home = competitors.find((c) => c?.homeAway === "home") ?? null;
+  const away = competitors.find((c) => c?.homeAway === "away") ?? null;
+  if (!home?.team?.id || !away?.team?.id) return null;
+
+  const homeTeam = home.team;
+  const awayTeam = away.team;
+
+  return {
+    id: String(event?.id ?? ""),
+    date: event?.date ?? null,
+    status: event?.status?.type?.description || event?.status?.type?.state || "Scheduled",
+    neutralSite: Boolean(comp?.neutralSite),
+
+    homeTeamId: String(homeTeam.id),
+    awayTeamId: String(awayTeam.id),
+
+    homeAbbr: homeTeam.abbreviation || homeTeam.shortDisplayName || homeTeam.displayName,
+    awayAbbr: awayTeam.abbreviation || awayTeam.shortDisplayName || awayTeam.displayName,
+
+    homeName: homeTeam.displayName || homeTeam.shortDisplayName || "",
+    awayName: awayTeam.displayName || awayTeam.shortDisplayName || "",
+    homeScore: safeNum(home?.score),
+    awayScore: safeNum(away?.score),
+  };
+}
+
+async function getNcaamScoreboard(dateYYYYMMDD) {
+  const ymd = toYYYYMMDD(dateYYYYMMDD);
+  const url =
+    `${ESPN_BASE}/sports/basketball/mens-college-basketball/scoreboard` +
+    `?dates=${encodeURIComponent(ymd)}&groups=50&limit=500`;
+
+  const json = await fetchJson(url, {}, { ttl: HEAVY_CACHE_TTL_MS, timeoutMs: 25000, retries: 4 });
+  const events = Array.isArray(json?.events) ? json.events : [];
+  const games = events.map(normalizeEspnEventToGame).filter(Boolean);
+
+  return { games, sourceUrl: url };
+}
+
+async function buildNcaamPredictions(dateYYYYMMDD, windowDays = 45, { tournamentMode = false } = {}) {
+  const { games, sourceUrl } = await getNcaamScoreboard(dateYYYYMMDD);
+
+  // Conservative: slate returns even if picks are PASS until premium ratings are wired.
+  const out = games.map((g) => ({
+    gameId: `ncaam-${g.id}`,
+    date: isoDateOnly(g.date) || dateYYYYMMDD,
+    status: g.status,
+
+    home: { id: `ncaam-${g.homeTeamId}`, name: g.homeAbbr, score: g.homeScore },
+    away: { id: `ncaam-${g.awayTeamId}`, name: g.awayAbbr, score: g.awayScore },
+
+    market: {
+      pick: "pass",
+      recommendedTeamId: null,
+      recommendedTeamName: null,
+      edge: null,
+      tier: "PASS",
+      confidence: 0.5,
+      winProb: null,
+      lines: null,
+    },
+
+    why: {
+      headline: "PASS (ESPN slate live)",
+      bullets: [
+        "NCAAM slate loaded from ESPN (groups=50, limit=500).",
+        tournamentMode ? "Tournament mode: ON (premium model pending)." : "Tournament mode: OFF (premium model pending).",
+        "Next: add ratings + Vegas anchoring for premium picks.",
+      ],
+      deltas: [],
+    },
+
+    factors: {
+      league: "ncaam",
+      windowDays,
+      modelVersion: "v1",
+      edge: null,
+      pickNote: "pass",
+      winProb: null,
+      note: "NCAAM ESPN-only slate. Picks disabled until premium ratings are wired.",
+    },
+  }));
+
+  return {
+    ok: true,
+    league: "ncaam",
+    date: dateYYYYMMDD,
+    meta: {
+      model: "NCAAM ESPN-slate (premium pending)",
+      windowDays,
+      tournamentMode,
+      sourceUrl,
+    },
+    games: out,
+    predictions: out,
+  };
+}
+
+/* =========================================================
+   NHL — paused, clean response
+   ========================================================= */
+
+async function buildNhlPredictions(dateYYYYMMDD) {
+  return {
+    ok: true,
+    league: "nhl",
+    date: dateYYYYMMDD,
+    meta: {
+      model: "NHL paused",
+      paused: NHL_PAUSED,
+      note: NHL_PAUSED ? "NHL paused for Olympics." : "NHL not implemented in this build.",
+    },
+    games: [],
+    predictions: [],
+  };
+}
+
+/* =========================================================
+   Request helpers
+   ========================================================= */
+
+function readModelFromReq(req, def = "v2") {
+  const raw = String(req.query.model || req.query.modelVersion || def).toLowerCase();
+  if (raw === "v2" || raw === "2" || raw === "premium" || raw === "hybrid") return "v2";
+  if (raw === "v1" || raw === "1") return "v1";
+  return def;
+}
+
+function readWindowDays(req, def = 14) {
+  const n = Number(req.query.windowDays || req.query.window || def);
+  if (!Number.isFinite(n)) return def;
+  return clamp(Math.round(n), 7, 90);
+}
+
+/* =========================================================
+   Routes
+   ========================================================= */
+
+/**
+ * GET /api/predictions?league=nba|ncaam|nhl&date=YYYY-MM-DD&model=v2&windowDays=14&tournament=1
+ */
+router.get("/predictions", async (req, res) => {
+  const league = String(req.query.league || "nba").toLowerCase();
+  const date = String(req.query.date || isoDateOnly(new Date().toISOString()));
+  const modelVersion = readModelFromReq(req, "v2");
+  const windowDays = readWindowDays(req, league === "ncaam" ? 45 : 14);
+  const tournamentMode = String(req.query.tournament || "0") === "1" || String(req.query.mode || "") === "tournament";
+
+  try {
+    if (league === "nba") {
+      return res.json(await buildNbaPredictions(date, windowDays, { modelVersion }));
+    }
+    if (league === "ncaam") {
+      return res.json(await buildNcaamPredictions(date, windowDays, { tournamentMode }));
+    }
+    if (league === "nhl") {
+      return res.json(await buildNhlPredictions(date));
+    }
+
+    return res.json({
+      ok: null,
+      league,
+      date,
+      error: `Unsupported league: ${league}`,
+      games: [],
+      predictions: [],
+    });
+  } catch (e) {
+    return res.json({
+      ok: null,
+      league,
+      date,
+      error: String(e?.message || e),
+      games: [],
+      predictions: [],
+    });
+  }
+});
+
+/**
+ * Back-compat alias:
+ * GET /api/predict?league=...
+ */
+router.get("/predict", async (req, res) => {
+  req.url = req.url.replace("/predict", "/predictions");
+  return router.handle(req, res);
+});
+
+/* =========================================================
+   Exports (required by other routes)
+   ========================================================= */
+
+export { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions };
+export default router;

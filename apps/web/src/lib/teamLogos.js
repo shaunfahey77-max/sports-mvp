@@ -1,6 +1,17 @@
 // apps/web/src/lib/teamLogos.js
 
-// Official NBA CDN logos using canonical team IDs
+/* =========================================================
+   Premium Multi-League Logo Resolver (NBA + NCAAM + NHL)
+
+   Goals:
+   - Always prefer API-provided team.logo when present.
+   - NBA: deterministic CDN mapping by team ID.
+   - NCAAM: ESPN logo is typically provided by API (confirmed in your curl).
+   - NHL: use NHL assets CDN with correct filename suffix:
+       /logos/nhl/svg/{ABBR}_light.svg  (and _dark.svg fallback)
+   - Never throw; return null when unknown so UI can show fallback.
+   ========================================================= */
+
 const NBA_ID_BY_ABBR = {
   ATL: "1610612737",
   BOS: "1610612738",
@@ -34,31 +45,127 @@ const NBA_ID_BY_ABBR = {
   WAS: "1610612764",
 };
 
+function cleanAbbr(x) {
+  const a = String(x || "").toUpperCase().trim();
+  return a || null;
+}
+
 export function nbaLogoFromAbbr(abbr) {
-  const a = String(abbr || "").toUpperCase().trim();
+  const a = cleanAbbr(abbr);
+  if (!a) return null;
   const id = NBA_ID_BY_ABBR[a];
   if (!id) return null;
   return `https://cdn.nba.com/logos/nba/${id}/global/L/logo.svg`;
 }
 
 /**
- * UI helper:
- * - if API provides team.logo => use it
- * - NBA => derive logo from abbr or id "nba-xxx"
+ * NHL logos:
+ * - BOS_light.svg is the correct pattern (BOS.svg 404s)
+ * - We return the light variant by default; UI can choose dark if needed.
  */
-export function getTeamLogo(league, team) {
+export function nhlLogoFromAbbr(abbr, variant = "light") {
+  const a = cleanAbbr(abbr);
+  if (!a) return null;
+
+  const v = String(variant || "light").toLowerCase() === "dark" ? "dark" : "light";
+  return `https://assets.nhle.com/logos/nhl/svg/${a}_${v}.svg`;
+}
+
+/**
+ * Extract abbreviation from various shapes.
+ * teamish can be:
+ * - object: { id, abbr, abbreviation, code, name, shortName, displayName, logo }
+ * - string: "nba-cle" / "nhl-bos" / "ncaam-duke" / "CLE" / "BOS" / "DUKE"
+ */
+function abbrFromAnything(teamish, league) {
+  if (!teamish) return null;
+
+  // String inputs
+  if (typeof teamish === "string") {
+    const s = teamish.trim();
+    const lower = s.toLowerCase();
+
+    if (lower.startsWith("nba-")) return cleanAbbr(s.slice(4));
+    if (lower.startsWith("nhl-")) return cleanAbbr(s.slice(4));
+    if (lower.startsWith("ncaam-")) return cleanAbbr(s.slice(6));
+
+    if (/^[A-Za-z]{2,6}$/.test(s)) return cleanAbbr(s);
+    return null;
+  }
+
+  // Object inputs
+  const idStr = teamish.id != null ? String(teamish.id) : "";
+  const idLower = idStr.toLowerCase();
+
+  // Explicit abbr-ish fields
+  const direct =
+    teamish.abbr ||
+    teamish.abbreviation ||
+    teamish.code ||
+    teamish.triCode || // sometimes used
+    null;
+
+  if (direct && /^[A-Za-z]{2,6}$/.test(String(direct).trim())) {
+    return cleanAbbr(direct);
+  }
+
+  // id-based extraction (league-aware)
+  if (league === "nba" && idLower.startsWith("nba-")) return cleanAbbr(idStr.slice(4));
+  if (league === "nhl" && idLower.startsWith("nhl-")) return cleanAbbr(idStr.slice(4));
+  if (league === "ncaam" && idLower.startsWith("ncaam-")) return cleanAbbr(idStr.slice(6));
+
+  // Sometimes name fields are already abbreviations
+  const n =
+    teamish.name ||
+    teamish.shortName ||
+    teamish.displayName ||
+    null;
+
+  if (n && /^[A-Za-z]{2,6}$/.test(String(n).trim())) return cleanAbbr(n);
+
+  return null;
+}
+
+/**
+ * Main UI helper:
+ * - Prefer API-provided team.logo always.
+ * - NBA => compute from abbr map.
+ * - NHL => compute from NHL assets CDN (_light.svg default).
+ * - NCAAM => typically uses ESPN team.logo provided by API; if missing, return null.
+ *
+ * Optional opts:
+ * - opts.nhlVariant: "light" | "dark"
+ */
+export function getTeamLogo(league, team, opts = {}) {
   const l = String(league || "").toLowerCase();
-  if (team?.logo) return team.logo;
+
+  // Prefer API-provided logo
+  if (team && typeof team === "object" && team.logo) return team.logo;
 
   if (l === "nba") {
-    const abbr =
-      team?.abbr ||
-      (team?.id && String(team.id).startsWith("nba-")
-        ? String(team.id).slice(4).toUpperCase()
-        : team?.name);
-
+    const abbr = abbrFromAnything(team, "nba");
     return nbaLogoFromAbbr(abbr);
   }
 
+  if (l === "nhl") {
+    const abbr = abbrFromAnything(team, "nhl");
+    // default to light logos (better on dark UI)
+    return nhlLogoFromAbbr(abbr, opts.nhlVariant || "light");
+  }
+
+  // NCAAM: rely on ESPN-provided logos in API payload
+  // (You already confirmed .games[0].home.logo exists)
   return null;
+}
+
+/**
+ * Optional helper:
+ * If your UI wants both NHL variants (for theme switching), you can use this.
+ */
+export function getNhlLogoVariants(team) {
+  const abbr = abbrFromAnything(team, "nhl");
+  return {
+    light: nhlLogoFromAbbr(abbr, "light"),
+    dark: nhlLogoFromAbbr(abbr, "dark"),
+  };
 }

@@ -1,100 +1,41 @@
 // apps/web/src/pages/Home.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import DailyPicks from "../components/DailyPicks.jsx";
 
+/* =========================
+   Date helpers (UTC-safe)
+   ========================= */
 function todayUTCYYYYMMDD() {
   const now = new Date();
   const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   return utc.toISOString().slice(0, 10);
 }
 
-function safeNum(x) {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : null;
+function addDaysUTC(ymd, deltaDays) {
+  const [y, m, d] = String(ymd).split("-").map((x) => Number(x));
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  dt.setUTCDate(dt.getUTCDate() + Number(deltaDays || 0));
+  return dt.toISOString().slice(0, 10);
 }
 
-function isFinalStatus(s) {
-  const v = String(s || "").toLowerCase();
-  return v === "final" || v === "post" || v === "completed";
-}
-
-function pct(n) {
-  if (!Number.isFinite(n)) return "—";
-  return `${Math.round(n * 100)}%`;
-}
-
-function clamp(n, lo, hi) {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function tierKey(t) {
-  const v = String(t || "PASS").toUpperCase();
-  if (v === "ELITE") return "ELITE";
-  if (v === "STRONG") return "STRONG";
-  if (v === "LEAN") return "LEAN";
-  return "PASS";
-}
-
-/**
- * Aggregates a slate (games[]) into KPIs.
- * IMPORTANT: completed/scoring is based on winnerTeamId OR final-ish status.
- * We only count wins/losses if we have BOTH predictedId and winnerId.
- */
-function aggGames(games) {
-  const out = {
-    games: games.length,
-    picks: 0,
-    pass: 0,
-    tiers: { ELITE: 0, STRONG: 0, LEAN: 0, PASS: 0 },
-    avgEdgeAbs: null,
-    completed: 0,
-    wins: 0,
-    losses: 0,
-    accuracy: null,
-  };
-
-  let sumAbsEdge = 0;
-  let nAbsEdge = 0;
-
-  for (const g of games) {
-    const t = tierKey(g?.market?.tier);
-    out.tiers[t]++;
-
-    const pick = g?.market?.pick;
-    if (pick) out.picks++;
-    else out.pass++;
-
-    const edge = safeNum(g?.market?.edge);
-    if (edge != null) {
-      sumAbsEdge += Math.abs(edge);
-      nAbsEdge++;
-    }
-
-    const predictedId = g?.market?.recommendedTeamId || null;
-    const winnerId = g?.result?.winnerTeamId || null;
-
-    // ✅ consider complete if we have a winnerId OR status is final-ish
-    const isComplete = Boolean(winnerId) || isFinalStatus(g?.status);
-
-    if (isComplete) {
-      out.completed++;
-
-      if (pick && predictedId && winnerId) {
-        if (predictedId === winnerId) out.wins++;
-        else out.losses++;
-      }
-    }
-  }
-
-  out.avgEdgeAbs = nAbsEdge ? sumAbsEdge / nAbsEdge : null;
-  const denom = out.wins + out.losses;
-  out.accuracy = denom ? out.wins / denom : null;
-
+function daysRangeUTC(endYMD, days) {
+  const out = [];
+  const n = Math.max(1, Number(days || 1));
+  const start = addDaysUTC(endYMD, -(n - 1));
+  for (let i = 0; i < n; i++) out.push(addDaysUTC(start, i));
   return out;
 }
 
-/** Fetch helper with timeout (and safe abort handling) */
-async function fetchJson(url, { timeoutMs = 12000, signal } = {}) {
+function pct(n, digits = 0) {
+  if (!Number.isFinite(n)) return "—";
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+/* =========================
+   Fetch helper (timeout + JSON)
+   ========================= */
+async function fetchJson(url, { signal, timeoutMs = 20000 } = {}) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
 
@@ -102,582 +43,737 @@ async function fetchJson(url, { timeoutMs = 12000, signal } = {}) {
   if (signal) signal.addEventListener("abort", onAbort, { once: true });
 
   try {
-    const r = await fetch(url, { signal: ctrl.signal });
-
-    const text = await r.text();
+    const res = await fetch(url, { signal: ctrl.signal });
+    const txt = await res.text().catch(() => "");
     let json = null;
+
     try {
-      json = text ? JSON.parse(text) : null;
+      json = txt ? JSON.parse(txt) : null;
     } catch {
-      const err = new Error("Bad JSON from API");
-      err._raw = text?.slice?.(0, 200);
+      const err = new Error(`Bad JSON from API (HTTP ${res.status})`);
+      err.status = res.status;
+      err._raw = txt?.slice?.(0, 250);
       throw err;
     }
 
-    return { ok: r.ok, status: r.status, json };
+    if (!res.ok) {
+      const err = new Error(json?.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      err.payload = json;
+      throw err;
+    }
+    return json;
   } finally {
     clearTimeout(t);
     if (signal) signal.removeEventListener("abort", onAbort);
   }
 }
 
-function Bar({ label, value, max, hint }) {
-  const w = max > 0 ? Math.round((value / max) * 100) : 0;
-  return (
-    <div className="barRow">
-      <div className="barLabel">{label}</div>
-      <div className="barTrack">
-        <div className="barFill" style={{ width: `${w}%` }} title={hint || ""} />
-      </div>
-      <div className="barVal">{value}</div>
-    </div>
-  );
-}
-
-function TrendLine({ points }) {
-  const w = 240;
-  const h = 56;
-  const pad = 6;
-
-  const valid = points.filter((p) => typeof p?.y === "number" && Number.isFinite(p.y));
-  if (!valid.length) {
-    return (
-      <div className="trendEmpty">
-        <div className="muted2" style={{ fontSize: 12 }}>
-          No scored picks yet
-        </div>
-      </div>
-    );
-  }
-
-  const xMax = Math.max(...points.map((p) => p.x));
-  const xScale = (x) => pad + (xMax ? (x / xMax) * (w - pad * 2) : 0);
-
-  const yScale = (y) => {
-    const yy = clamp(y, 0, 1);
-    return pad + (1 - yy) * (h - pad * 2);
-  };
-
-  const path = points
-    .map((p) => (Number.isFinite(p?.y) ? `${xScale(p.x).toFixed(1)},${yScale(p.y).toFixed(1)}` : null))
-    .filter(Boolean)
-    .join(" ");
-
-  return (
-    <svg
-      width={w}
-      height={h}
-      className="trendSvg"
-      viewBox={`0 0 ${w} ${h}`}
-      role="img"
-      aria-label="7-day accuracy trend"
-    >
-      <line x1="0" y1={h / 2} x2={w} y2={h / 2} className="trendGrid" />
-      <line x1="0" y1={h - 1} x2={w} y2={h - 1} className="trendGrid" />
-      <polyline points={path} className="trendLine" fill="none" />
-      {points.map((p) => {
-        if (!Number.isFinite(p?.y)) return null;
-        return <circle key={p.x} cx={xScale(p.x)} cy={yScale(p.y)} r="2.6" className="trendDot" />;
-      })}
-    </svg>
-  );
-}
-
-function KpiTile({ label, value, mono = false }) {
-  return (
-    <div className="kpiTile">
-      <div className="kpiLabel">{label}</div>
-      <div className={`kpiValue ${mono ? "kpiValueMono" : ""}`}>{value}</div>
-    </div>
-  );
-}
-
-function LeagueCard({ league, title, meta, games, loading, error, onOpenLink }) {
-  const a = useMemo(() => aggGames(games), [games]);
-  const maxTier = Math.max(a.tiers.ELITE, a.tiers.STRONG, a.tiers.LEAN, a.tiers.PASS, 1);
-
-  const scored = a.wins + a.losses;
-  const coverage = a.picks ? scored / a.picks : null;
-
-  return (
-    <div className="card leagueCard">
-      <div className="cardHeader">
-        <div className="leagueHead">
-          <div className="leagueTitle">{title}</div>
-          <div className="muted2 leagueMeta">
-            {meta?.model ? `Model: ${meta.model}` : "Model: —"}
-            {meta?.mode ? ` • Mode: ${meta.mode}` : ""}
-          </div>
-        </div>
-        <Link className="btn" to={onOpenLink || `/league/${league}`}>
-          Open
-        </Link>
-      </div>
-
-      <div className="cardBody">
-        {loading ? (
-          <div className="muted">Loading…</div>
-        ) : error ? (
-          <div className="muted">Error: {error}</div>
-        ) : (
-          <>
-            <div className="kpiGrid4">
-              <KpiTile label="Games" value={a.games} />
-              <KpiTile label="Picks" value={a.picks} />
-              <KpiTile label="Pass" value={a.pass} />
-              <KpiTile label="Avg |Edge|" value={a.avgEdgeAbs == null ? "—" : a.avgEdgeAbs.toFixed(3)} mono />
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div className="muted2" style={{ fontSize: 12, marginBottom: 8 }}>
-                Tier distribution
-              </div>
-              <div style={{ display: "grid", gap: 8 }}>
-                <Bar label="ELITE" value={a.tiers.ELITE} max={maxTier} />
-                <Bar label="STRONG" value={a.tiers.STRONG} max={maxTier} />
-                <Bar label="LEAN" value={a.tiers.LEAN} max={maxTier} />
-                <Bar label="PASS" value={a.tiers.PASS} max={maxTier} />
-              </div>
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div className="muted2" style={{ fontSize: 12, marginBottom: 8 }}>
-                Performance (completed games only)
-              </div>
-
-              <div className="kpiGrid3">
-                <KpiTile label="Completed" value={a.completed} />
-                <KpiTile label="Scored" value={scored} />
-                <KpiTile label="Accuracy" value={pct(a.accuracy)} />
-              </div>
-
-              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <div className="kpiTile" style={{ minWidth: 200 }}>
-                  <div className="kpiLabel">Score coverage</div>
-                  <div className="kpiValue">{coverage == null ? "—" : pct(coverage)}</div>
-                </div>
-                <div className="muted2" style={{ fontSize: 12 }}>
-                  Coverage = % of picks with a winner available to score.
-                </div>
-              </div>
-
-              <div className="muted2" style={{ fontSize: 12, marginTop: 8 }}>
-                *Accuracy uses <code>result.winnerTeamId</code> when available.
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Helpers for 7-day widgets */
-function avgAcc(rows) {
-  const arr = Array.isArray(rows) ? rows : [];
-  const valid = arr.map((r) => r?.acc).filter((x) => Number.isFinite(x));
-  if (!valid.length) return null;
-  return valid.reduce((a, b) => a + b, 0) / valid.length;
-}
-
-function PerfMiniTable({ rows }) {
-  const arr = Array.isArray(rows) ? rows : [];
-  return (
-    <div className="perfTable">
-      {arr.map((r) => (
-        <div className="perfRow" key={r.date}>
-          <div className="perfDate">{String(r.date).slice(5)}</div>
-          <div className="perfScored">{r.scored || 0} scored</div>
-          <div className="perfAcc">{pct(r.acc)}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/**
- * Normalizes /api/performance rows into exactly 7 days ending on `endDate`.
- * Fills missing days with { scored:0, acc:null } so the UI never breaks.
- */
-function normalizePerfRows(rows, endDate) {
-  const byDate = new Map();
-  for (const r of Array.isArray(rows) ? rows : []) {
-    if (!r?.date) continue;
-    byDate.set(String(r.date).slice(0, 10), {
-      date: String(r.date).slice(0, 10),
-      scored: Number(r?.scored || 0),
-      acc: Number.isFinite(r?.acc) ? r.acc : null,
-    });
-  }
-
-  const out = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(`${endDate}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() - i);
-    const ymd = d.toISOString().slice(0, 10);
-    out.push(byDate.get(ymd) || { date: ymd, scored: 0, acc: null });
+/* =========================
+   Model utils
+   ========================= */
+function tierCounts(games = []) {
+  const out = { picks: 0, ELITE: 0, STRONG: 0, EDGE: 0, LEAN: 0, PASS: 0 };
+  for (const g of games) {
+    const pick = g?.market?.pick ? 1 : 0;
+    if (pick) out.picks++;
+    const t = String(g?.market?.tier || (pick ? "LEAN" : "PASS")).toUpperCase();
+    out[t] = (out[t] || 0) + 1;
   }
   return out;
 }
 
-export default function Home() {
-  const [date, setDate] = useState(todayUTCYYYYMMDD());
-  const [apiOk, setApiOk] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState("");
+function sumPerf(rows = []) {
+  const picks = rows.reduce((a, r) => a + (Number(r.picks) || 0), 0);
+  const wins = rows.reduce((a, r) => a + (Number(r.wins) || 0), 0);
+  const losses = rows.reduce((a, r) => a + (Number(r.losses) || 0), 0);
+  const pushes = rows.reduce((a, r) => a + (Number(r.pushes) || 0), 0);
+  const scored = rows.reduce((a, r) => a + (Number(r.scored) || 0), 0);
+  const denom = wins + losses;
+  return { picks, wins, losses, pushes, scored, winRate: denom ? wins / denom : null };
+}
 
-  const [nba, setNba] = useState({ loading: true, error: "", data: null });
-  const [nhl, setNhl] = useState({ loading: true, error: "", data: null });
-  const [ncaam, setNcaam] = useState({ loading: true, error: "", data: null });
+function missingDates(rows = []) {
+  return rows
+    .filter((r) => String(r?.error || "") && String(r.error) !== "null" && String(r.error) !== "undefined")
+    .map((r) => r.date)
+    .filter(Boolean);
+}
 
-  const [perf7, setPerf7] = useState({
-    loading: false,
-    error: "",
-    rows: { nba: [], nhl: [], ncaam: [] }, // [{ date, scored, acc }]
-    meta: null, // optional meta from API
-  });
+/* =========================
+   UI helpers
+   ========================= */
+function Banner({ tone = "info", title, children }) {
+  const cls = tone === "danger" ? "banner bannerDanger" : tone === "warn" ? "banner bannerWarn" : "banner";
+  return (
+    <div className={cls}>
+      <div className="bannerTitle">{title}</div>
+      <div className="bannerBody">{children}</div>
+    </div>
+  );
+}
 
-  const perfAbortRef = useRef(null);
+function SnapshotCard({ title, subtitle, loading, error, meta, counts, href }) {
+  return (
+    <Link className="card game" to={href} style={{ textDecoration: "none" }}>
+      <div className="game-top">
+        <div className="game-main">
+          <div className="game-matchup">{title}</div>
+          <div className="subtle">{subtitle}</div>
+        </div>
+        <div className="game-badges">
+          {loading ? <span className="badge">LOADING</span> : null}
+          {error ? <span className="badge badge-bad">ERROR</span> : <span className="badge badge-ok">OK</span>}
+        </div>
+      </div>
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch("/api/health");
-        if (!alive) return;
-        setApiOk(r.ok);
-      } catch {
-        if (!alive) return;
-        setApiOk(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
+      {error ? (
+        <div className="subtle pre" style={{ marginTop: 10 }}>
+          {error}
+        </div>
+      ) : null}
 
-  // load today's slate for each league
-  useEffect(() => {
-    let alive = true;
+      {!loading && !error ? (
+        <>
+          <div className="subtle" style={{ marginTop: 10 }}>
+            <span className="mono">{meta?.model || "—"}</span>
+            {meta?.elapsedMs != null ? <span> · {meta.elapsedMs}ms</span> : null}
+          </div>
 
-    async function loadOne(league, setState) {
-      setState({ loading: true, error: "", data: null });
-      try {
-        const qs = new URLSearchParams({ league, date });
-        const { json } = await fetchJson(`/api/predictions?${qs.toString()}`, { timeoutMs: 20000 });
-        if (!alive) return;
-        setState({ loading: false, error: "", data: json });
-        setLastUpdated(new Date().toLocaleString());
-      } catch (e) {
-        if (!alive) return;
-        setState({ loading: false, error: String(e?.message || e), data: null });
-        setLastUpdated(new Date().toLocaleString());
-      }
-    }
+          <div className="game-metrics" style={{ marginTop: 10 }}>
+            <div className="metric">
+              <div className="k">Games</div>
+              <div className="v mono">{meta?.count ?? "—"}</div>
+            </div>
+            <div className="metric">
+              <div className="k">Picks</div>
+              <div className="v mono">{counts?.picks ?? "—"}</div>
+            </div>
+            <div className="metric">
+              <div className="k">ELITE</div>
+              <div className="v mono">{counts?.ELITE ?? 0}</div>
+            </div>
+            <div className="metric">
+              <div className="k">STRONG</div>
+              <div className="v mono">{counts?.STRONG ?? 0}</div>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </Link>
+  );
+}
 
-    if (apiOk === false) {
-      setNba({ loading: false, error: "API offline (port 3001)", data: null });
-      setNhl({ loading: false, error: "API offline (port 3001)", data: null });
-      setNcaam({ loading: false, error: "API offline (port 3001)", data: null });
-      return () => {
-        alive = false;
-      };
-    }
+function PerformancePanel({ days, setDays, perf, onRefresh }) {
+  const nba = perf?.rows?.nba || [];
+  const ncaam = perf?.rows?.ncaam || [];
+  const nhl = perf?.rows?.nhl || [];
 
-    loadOne("nba", setNba);
-    loadOne("nhl", setNhl);
-    loadOne("ncaam", setNcaam);
+  const nbaS = sumPerf(nba);
+  const ncaamS = sumPerf(ncaam);
+  const nhlS = sumPerf(nhl);
 
-    return () => {
-      alive = false;
-    };
-  }, [date, apiOk]);
+  const nbaMissing = missingDates(nba);
+  const ncaamMissing = missingDates(ncaam);
+  const nhlMissing = missingDates(nhl);
 
-  // ✅ 7-day performance fetch (single call to /api/performance)
-  // FIXES:
-  // - Uses routeTimeoutMs >= internalTimeoutMs * days (otherwise abort cascades)
-  // - Uses a slightly longer fetch timeout than route timeout
-  // - Normalizes rows to exactly 7 days ending on selected `date`
-  // - Handles partial responses (ok:false) without breaking UI
-  useEffect(() => {
-    if (apiOk !== true) return;
+  const NHL_BREAK_FROM = "2026-02-05";
+  const NHL_BREAK_TO = "2026-02-24";
 
-    if (perfAbortRef.current) perfAbortRef.current.abort();
-    const abort = new AbortController();
-    perfAbortRef.current = abort;
-
-    // prefill UI so it never looks "empty"
-    const empty = {
-      nba: normalizePerfRows([], date),
-      nhl: normalizePerfRows([], date),
-      ncaam: normalizePerfRows([], date),
-    };
-
-    setPerf7({ loading: true, error: "", rows: empty, meta: null });
-
-    const run = async () => {
-      try {
-        const leagues = ["nba", "nhl", "ncaam"].join(",");
-
-        // If your API is doing 7 days * 3 leagues, plan for worst-case.
-        // Keep concurrency low to avoid upstream bursts.
-        const internalTimeoutMs = 15000; // per internal /predictions call
-        const routeTimeoutMs = 80000; // must be comfortably > internalTimeoutMs * 7 / concurrency
-        const fetchTimeoutMs = routeTimeoutMs + 10000; // allow the server to finish before client aborts
-
-        const qs = new URLSearchParams({
-          days: "7",
-          leagues,
-          internalTimeoutMs: String(internalTimeoutMs),
-          routeTimeoutMs: String(routeTimeoutMs),
-          concurrency: "1",
-        });
-
-        const { ok, status, json } = await fetchJson(`/api/performance?${qs.toString()}`, {
-          timeoutMs: fetchTimeoutMs,
-          signal: abort.signal,
-        });
-
-        if (abort.signal.aborted) return;
-
-        if (!ok || !json) {
-          const msg = `Performance failed (HTTP ${status})`;
-          setPerf7({ loading: false, error: msg, rows: empty, meta: null });
-          return;
-        }
-
-        // If the route times out it may return ok:false with error/meta
-        if (!json?.ok) {
-          const msg = json?.error || "Performance failed";
-          setPerf7({ loading: false, error: msg, rows: empty, meta: json?.meta || null });
-          return;
-        }
-
-        const rows = json?.rows || {};
-        setPerf7({
-          loading: false,
-          error: "",
-          meta: json?.meta || null,
-          rows: {
-            nba: normalizePerfRows(rows.nba, date),
-            nhl: normalizePerfRows(rows.nhl, date),
-            ncaam: normalizePerfRows(rows.ncaam, date),
-          },
-        });
-      } catch (e) {
-        if (abort.signal.aborted) return;
-        if (e?.name === "AbortError") return;
-
-        setPerf7((p) => ({
-          loading: false,
-          error: String(e?.message || e),
-          rows: p.rows,
-          meta: p.meta || null,
-        }));
-      }
-    };
-
-    run();
-    return () => abort.abort();
-  }, [date, apiOk]);
-
-  const nbaAgg = useMemo(() => aggGames(nba.data?.games || []), [nba.data]);
-  const nhlAgg = useMemo(() => aggGames(nhl.data?.games || []), [nhl.data]);
-  const ncaamAgg = useMemo(() => aggGames(ncaam.data?.games || []), [ncaam.data]);
-
-  // Today's slate summary
-  const global = useMemo(() => {
-    const wins = (nbaAgg.wins || 0) + (nhlAgg.wins || 0) + (ncaamAgg.wins || 0);
-    const losses = (nbaAgg.losses || 0) + (nhlAgg.losses || 0) + (ncaamAgg.losses || 0);
-    const scored = wins + losses;
-    const acc = scored ? wins / scored : null;
-
-    const picks = (nbaAgg.picks || 0) + (nhlAgg.picks || 0) + (ncaamAgg.picks || 0);
-    const completed = (nbaAgg.completed || 0) + (nhlAgg.completed || 0) + (ncaamAgg.completed || 0);
-
-    return { scored, acc, picks, completed };
-  }, [nbaAgg, nhlAgg, ncaamAgg]);
-
-  // ✅ 7-day summary derived from perf7 (scored + weighted accuracy)
-  const global7 = useMemo(() => {
-    const sumLeague = (lg) => {
-      const arr = perf7.rows?.[lg] || [];
-      let scored = 0;
-      let winsApprox = 0;
-
-      for (const r of arr) {
-        const s = Number(r?.scored || 0);
-        scored += s;
-        if (Number.isFinite(r?.acc)) winsApprox += r.acc * s;
-      }
-
-      const acc = scored ? winsApprox / scored : null;
-      return { scored, acc };
-    };
-
-    const nba7 = sumLeague("nba");
-    const nhl7 = sumLeague("nhl");
-    const ncaam7 = sumLeague("ncaam");
-
-    const scored = nba7.scored + nhl7.scored + ncaam7.scored;
-    const winsApprox =
-      (nba7.acc ?? 0) * nba7.scored + (nhl7.acc ?? 0) * nhl7.scored + (ncaam7.acc ?? 0) * ncaam7.scored;
-    const acc = scored ? winsApprox / scored : null;
-
-    return { scored, acc };
-  }, [perf7.rows]);
-
-  const openNbaLink = useMemo(() => `/league/nba?date=${date}`, [date]);
-  const openNhlLink = useMemo(() => `/league/nhl?date=${date}`, [date]);
-  const openNcaamLink = useMemo(() => `/league/ncaam?date=${date}`, [date]);
-  const openNcaamTournamentLink = useMemo(() => `/league/ncaam?date=${date}&mode=tournament`, [date]);
-
-  const trendPoints = (league) =>
-    (perf7.rows?.[league] || []).map((r, i) => ({ x: i, y: Number.isFinite(r?.acc) ? r.acc : null }));
+  const anyMissing = (perf?.meta?.missingCount || 0) > 0;
 
   return (
-    <div className="container">
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="cardHeader">
-          <div>
-            <div className="h1" style={{ marginBottom: 6 }}>
-              Sports MVP
-            </div>
-            <p className="sub" style={{ margin: 0 }}>
-              Daily slate + premium predictions contract across NBA / NHL / NCAAM.
-            </p>
-          </div>
+    <div className="card">
+      <div className="panelHead">
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 900 }}>Performance</div>
+          <div className="subtle">Supabase (performance_daily) — last {days} days</div>
+        </div>
 
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            <Link className="btn btnPrimary" to={openNbaLink}>
-              Open NBA
-            </Link>
+        <div className="actions">
+          <div className="seg segSmall">
+            {[7, 14, 30].map((d) => (
+              <button key={d} className={`segBtn ${days === d ? "isOn" : ""}`} onClick={() => setDays(d)}>
+                {d}d
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-ghost" onClick={onRefresh}>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {perf?.meta ? (
+        <div className="subtle">
+          source: <span className="mono">{perf.meta.source}</span>
+          {" · "}missing: <span className="mono">{perf.meta.missingCount}</span>
+          {perf.meta.partial ? " · partial=true" : ""}
+          {" · "}elapsed: <span className="mono">{perf.meta.elapsedMs}ms</span>
+        </div>
+      ) : null}
+
+      <div className="divider" />
+
+      <Banner tone="info" title="NHL Olympic break">
+        NHL is paused from <span className="mono">{NHL_BREAK_FROM}</span> → <span className="mono">{NHL_BREAK_TO}</span>.
+        We still show last {days} days of performance rows (scored picks + record).
+      </Banner>
+
+      {anyMissing ? (
+        <Banner tone="warn" title="Missing performance rows in range">
+          Missing rows usually means scoring wasn’t run for those dates yet. Use <b>Run Scoring</b> (or Backfill 30d) below,
+          then refresh after ~2–5 seconds (Supabase write latency).
+        </Banner>
+      ) : null}
+
+      <div className="kpiGrid">
+        <div className="kpi">
+          <div className="kpiLabel">NBA win rate</div>
+          <div className="kpiValue mono">{pct(nbaS.winRate)}</div>
+          <div className="kpiFoot mono">
+            {nbaS.wins}-{nbaS.losses}-{nbaS.pushes} · picks {nbaS.picks} · scored {nbaS.scored}
+          </div>
+          {nbaMissing.length ? (
+            <div className="kpiFoot">
+              Missing: <span className="mono">{nbaMissing.join(", ")}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="kpi">
+          <div className="kpiLabel">NCAAM win rate</div>
+          <div className="kpiValue mono">{pct(ncaamS.winRate)}</div>
+          <div className="kpiFoot mono">
+            {ncaamS.wins}-{ncaamS.losses}-{ncaamS.pushes} · picks {ncaamS.picks} · scored {ncaamS.scored}
+          </div>
+          {ncaamMissing.length ? (
+            <div className="kpiFoot">
+              Missing: <span className="mono">{ncaamMissing.join(", ")}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="kpi">
+          <div className="kpiLabel">NHL win rate</div>
+          <div className="kpiValue mono">{pct(nhlS.winRate)}</div>
+          <div className="kpiFoot mono">
+            {nhlS.wins}-{nhlS.losses}-{nhlS.pushes} · picks {nhlS.picks} · scored {nhlS.scored}
+          </div>
+          {nhlMissing.length ? (
+            <div className="kpiFoot">
+              Missing: <span className="mono">{nhlMissing.join(", ")}</span>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="kpi">
+          <div className="kpiLabel">Data health</div>
+          <div className="kpiValue mono">{perf?.meta?.missingCount ?? "—"}</div>
+          <div className="kpiFoot">Missing DB rows in range</div>
+          <div className="kpiFoot subtle">If you just ran scoring, refresh after ~2–5s.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =========================
+   Scoring Console (premium)
+   ========================= */
+function ScoreConsole({
+  today,
+  requestedDate,
+  setRequestedDate,
+  leagues,
+  setLeagues,
+  running,
+  onRun,
+  result,
+  error,
+  backfill,
+  onBackfill30,
+  onCancelBackfill,
+}) {
+  const resultsArr = Array.isArray(result?.results) ? result.results : [];
+  const ranLeagues = Array.isArray(result?.leagues) ? result.leagues : [];
+
+  const backfillPct = backfill?.total ? Math.round((backfill.done / backfill.total) * 100) : 0;
+
+  return (
+    <div className="card">
+      <div className="panelHead">
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 900 }}>Run Scoring</div>
+          <div className="subtle">
+            Forces scoring + grading writes for NBA / NCAAM / NHL for a specific date (NHL will be 0 games during break).
           </div>
         </div>
 
-        <div className="cardBody">
-          <div className="kpiGrid4">
-            <KpiTile label="API" value={apiOk == null ? "Checking…" : apiOk ? "Online" : "Offline"} />
-            <KpiTile label="Slate date" value={date} mono />
-            <KpiTile label="Updated" value={lastUpdated || "—"} />
-            <KpiTile label="Scored accuracy" value={pct(global.acc)} />
+        <div className="actions" style={{ flexWrap: "wrap" }}>
+          <button className="btn btnPrimary" onClick={onRun} disabled={running || backfill?.running}>
+            {running ? "Running…" : "Run Scoring for date"}
+          </button>
+
+          <button className="btn btn-ghost" onClick={onBackfill30} disabled={running || backfill?.running}>
+            {backfill?.running ? "Backfilling…" : "Backfill last 30 days"}
+          </button>
+
+          {backfill?.running ? (
+            <button className="btn btn-ghost" onClick={onCancelBackfill}>
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="divider" />
+
+      <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+        <div className="metric" style={{ gap: 6 }}>
+          <div className="k">Date</div>
+          <input
+            className="input"
+            type="date"
+            value={requestedDate}
+            onChange={(e) => setRequestedDate(e.target.value)}
+            max={today}
+            style={{ width: "100%" }}
+          />
+          <div className="subtle">Use this to backfill day-by-day.</div>
+        </div>
+
+        <div className="metric" style={{ gap: 6 }}>
+          <div className="k">Leagues</div>
+          <select className="input" value={leagues} onChange={(e) => setLeagues(e.target.value)} style={{ width: "100%" }}>
+            <option value="nba,ncaam,nhl">nba,ncaam,nhl</option>
+            <option value="nba,ncaam">nba,ncaam</option>
+            <option value="nba">nba</option>
+            <option value="ncaam">ncaam</option>
+            <option value="nhl">nhl</option>
+          </select>
+          <div className="subtle">What to attempt for scoring.</div>
+        </div>
+
+        <div className="metric" style={{ gap: 6 }}>
+          <div className="k">Note</div>
+          <div className="subtle">
+            If <span className="mono">completed=0</span>, the slate has no finals yet — grading stays 0.
           </div>
+        </div>
+      </div>
 
-          <div className="perfStrip">
-            <div className="perfStripTop">
-              <div>
-                <div style={{ fontWeight: 900 }}>7-day performance</div>
-                <div className="muted2" style={{ fontSize: 12, marginTop: 4 }}>
-                  Scored picks:{" "}
-                  <span className="muted" style={{ fontWeight: 800 }}>
-                    {global7.scored || 0}
-                  </span>
-                  {" • "}
-                  7-day accuracy:{" "}
-                  <span className="muted" style={{ fontWeight: 800 }}>
-                    {pct(global7.acc)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="perfLegend">
-                <span className="muted2" style={{ fontSize: 12 }}>
-                  Accuracy trend
+      {backfill?.running ? (
+        <div style={{ marginTop: 10 }}>
+          <Banner tone="info" title="Backfill running">
+            <div className="subtle" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <span>
+                Progress: <span className="mono">{backfill.done}</span>/<span className="mono">{backfill.total}</span> (
+                <span className="mono">{backfillPct}%</span>)
+              </span>
+              {backfill.currentDate ? (
+                <span>
+                  Current date: <span className="mono">{backfill.currentDate}</span>
                 </span>
-                <span className="badge">Last 7 days</span>
+              ) : null}
+            </div>
+            {backfill.lastError ? (
+              <div className="subtle pre" style={{ marginTop: 8 }}>
+                Last error: {backfill.lastError}
               </div>
+            ) : null}
+          </Banner>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div style={{ marginTop: 10 }}>
+          <Banner tone="danger" title="Scoring failed">
+            <div className="pre subtle">{error}</div>
+          </Banner>
+        </div>
+      ) : null}
+
+      {result ? (
+        <div style={{ marginTop: 10 }}>
+          <Banner tone="info" title="Scoring complete">
+            <div className="subtle" style={{ marginBottom: 8 }}>
+              ranFor: <span className="mono">{result?.ranFor || requestedDate}</span>
+              {" · "}requested: <span className="mono">{leagues}</span>
+              {" · "}ran: <span className="mono">{ranLeagues.join(", ") || "—"}</span>
+              {" · "}scoredGames: <span className="mono">{result?.scoredGames ?? "—"}</span>
             </div>
 
-            {perf7.error ? (
-              <div className="muted" style={{ marginTop: 10 }}>
-                Error: {perf7.error}
-              </div>
-            ) : (
-              <div className="perfGrid">
-                <div className="perfCard">
-                  <div className="perfCardHead">
-                    <div style={{ fontWeight: 900 }}>NBA</div>
-                    <div className="muted2" style={{ fontSize: 12 }}>
-                      Avg: {pct(avgAcc(perf7.rows.nba))}
-                    </div>
-                  </div>
-                  <TrendLine points={trendPoints("nba")} />
-                  <PerfMiniTable rows={perf7.rows.nba} />
-                </div>
+            {resultsArr.length ? (
+              <>
+                <div className="divider" />
+                <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+                  {resultsArr.map((r, idx) => {
+                    const counts = r?.report?.counts || {};
+                    const metrics = r?.report?.metrics || {};
+                    const isOk = !!r?.ok;
+                    return (
+                      <div key={`${r?.league || "league"}-${idx}`} className="card" style={{ padding: 12 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                          <div style={{ fontWeight: 900 }}>{String(r?.league || "league").toUpperCase()}</div>
+                          <span className={`pill ${isOk ? "badge-ok" : "badge-bad"}`}>{isOk ? "OK" : "ERROR"}</span>
+                        </div>
 
-                <div className="perfCard">
-                  <div className="perfCardHead">
-                    <div style={{ fontWeight: 900 }}>NHL</div>
-                    <div className="muted2" style={{ fontSize: 12 }}>
-                      Avg: {pct(avgAcc(perf7.rows.nhl))}
-                    </div>
-                  </div>
-                  <TrendLine points={trendPoints("nhl")} />
-                  <PerfMiniTable rows={perf7.rows.nhl} />
-                </div>
+                        <div className="subtle" style={{ marginTop: 8 }}>
+                          input: <span className="mono">{counts.inputGames ?? 0}</span>
+                          {" · "}completed: <span className="mono">{counts.completed ?? 0}</span>
+                        </div>
 
-                <div className="perfCard">
-                  <div className="perfCardHead">
-                    <div style={{ fontWeight: 900 }}>NCAAM</div>
-                    <div className="muted2" style={{ fontSize: 12 }}>
-                      Avg: {pct(avgAcc(perf7.rows.ncaam))}
-                    </div>
-                  </div>
-                  <TrendLine points={trendPoints("ncaam")} />
-                  <PerfMiniTable rows={perf7.rows.ncaam} />
-                </div>
-              </div>
-            )}
+                        <div className="subtle" style={{ marginTop: 6 }}>
+                          picks: <span className="mono">{counts.picks ?? 0}</span>
+                          {" · "}graded: <span className="mono">{counts.graded ?? 0}</span>
+                        </div>
 
-            <div className="muted2" style={{ fontSize: 12, marginTop: 10 }}>
-              {perf7.loading ? "Updating…" : " "}
-              {" "}
-              Tip: Use <span className="badge">Tournament</span> mode on NCAAM pages for neutral-court feel + higher upset sensitivity.
-            </div>
+                        <div className="subtle" style={{ marginTop: 6 }}>
+                          W-L-P:{" "}
+                          <span className="mono">
+                            {counts.wins ?? 0}-{counts.losses ?? 0}-{counts.pushes ?? 0}
+                          </span>
+                          {" · "}winRate: <span className="mono">{pct(metrics.winRate, 0)}</span>
+                        </div>
+
+                        {r?.report?.error ? (
+                          <div className="subtle pre" style={{ marginTop: 8 }}>
+                            {r.report.error}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : null}
+          </Banner>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function Home() {
+  const date = todayUTCYYYYMMDD();
+
+  const [api, setApi] = useState({ ok: null, version: "", time: "" });
+
+  const [nba, setNba] = useState({ loading: true, error: "", meta: null, counts: null });
+  const [ncaam, setNcaam] = useState({ loading: true, error: "", meta: null, counts: null });
+
+  const [days, setDays] = useState(30);
+  const [perf, setPerf] = useState({ loading: true, error: "", data: null });
+
+  const [runDate, setRunDate] = useState(date);
+  const [runLeagues, setRunLeagues] = useState("nba,ncaam,nhl");
+  const [scoreRun, setScoreRun] = useState({ running: false, error: "", result: null });
+
+  const [backfill, setBackfill] = useState({
+    running: false,
+    done: 0,
+    total: 0,
+    currentDate: "",
+    lastError: "",
+  });
+  const backfillCancelRef = useRef(false);
+
+  const abortRef = useRef(null);
+  const refreshTimerRef = useRef(null);
+
+  const loadHealth = useCallback(() => {
+    fetchJson("/api/health", { timeoutMs: 8000 })
+      .then((j) => setApi({ ok: true, version: j?.version || "", time: j?.time || "" }))
+      .catch(() => setApi({ ok: false, version: "", time: "" }));
+  }, []);
+
+  const loadSnapshots = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setNba({ loading: true, error: "", meta: null, counts: null });
+    setNcaam({ loading: true, error: "", meta: null, counts: null });
+
+    (async () => {
+      try {
+        const nbaUrl = `/api/predictions?league=nba&date=${date}&windowDays=14&model=v2`;
+        const ncaamUrl = `/api/predictions?league=ncaam&date=${date}&windowDays=45`;
+
+        const [nbaData, ncaamData] = await Promise.all([
+          fetchJson(nbaUrl, { signal: controller.signal, timeoutMs: 30000 }),
+          fetchJson(ncaamUrl, { signal: controller.signal, timeoutMs: 30000 }),
+        ]);
+
+        const nbaGames = Array.isArray(nbaData?.games) ? nbaData.games : [];
+        const ncaamGames = Array.isArray(ncaamData?.games) ? ncaamData.games : [];
+
+        setNba({
+          loading: false,
+          error: "",
+          meta: { ...(nbaData?.meta || {}), count: nbaData?.count ?? nbaGames.length },
+          counts: tierCounts(nbaGames),
+        });
+
+        setNcaam({
+          loading: false,
+          error: "",
+          meta: { ...(ncaamData?.meta || {}), count: ncaamData?.count ?? ncaamGames.length },
+          counts: tierCounts(ncaamGames),
+        });
+      } catch (e) {
+        const msg = String(e?.message || e);
+        setNba((s) => ({ ...s, loading: false, error: s.error || msg }));
+        setNcaam((s) => ({ ...s, loading: false, error: s.error || msg }));
+      }
+    })();
+
+    return () => controller.abort();
+  }, [date]);
+
+  const loadPerformance = useCallback(() => {
+    const controller = new AbortController();
+    setPerf({ loading: true, error: "", data: null });
+
+    fetchJson(`/api/performance?leagues=nba,ncaam,nhl&days=${days}`, { signal: controller.signal, timeoutMs: 35000 })
+      .then((data) => setPerf({ loading: false, error: "", data }))
+      .catch((e) => setPerf({ loading: false, error: String(e?.message || e), data: null }));
+
+    return () => controller.abort();
+  }, [days]);
+
+  const refreshAll = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+    loadHealth();
+    loadSnapshots();
+    loadPerformance();
+  }, [loadHealth, loadSnapshots, loadPerformance]);
+
+  useEffect(() => {
+    loadHealth();
+    loadSnapshots();
+    loadPerformance();
+
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    };
+  }, [loadHealth, loadSnapshots, loadPerformance]);
+
+  useEffect(() => {
+    setRunDate((d) => d || date);
+  }, [date]);
+
+  const runScoringForDate = useCallback(async () => {
+    if (!runDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(runDate))) {
+      setScoreRun({ running: false, error: "Missing or invalid date (YYYY-MM-DD).", result: null });
+      return;
+    }
+
+    setScoreRun({ running: true, error: "", result: null });
+    try {
+      const url = `/api/admin/run-cron?date=${encodeURIComponent(runDate)}&leagues=${encodeURIComponent(
+        runLeagues
+      )}&force=1&grade=all`;
+
+      const res = await fetchJson(url, { timeoutMs: 60000 });
+      setScoreRun({ running: false, error: "", result: res });
+
+      // immediate refresh + delayed refresh (Supabase write latency)
+      refreshAll();
+      refreshTimerRef.current = setTimeout(() => refreshAll(), 2500);
+    } catch (e) {
+      setScoreRun({ running: false, error: String(e?.message || e), result: null });
+    }
+  }, [runDate, runLeagues, refreshAll]);
+
+  const cancelBackfill = useCallback(() => {
+    backfillCancelRef.current = true;
+    setBackfill((s) => ({ ...s, running: false, lastError: s.lastError || "Canceled by user." }));
+  }, []);
+
+  const backfillLast30 = useCallback(async () => {
+    const ok = window.confirm(
+      "Backfill last 30 days?\n\nThis will run scoring sequentially for 30 dates and write to Supabase.\nOK to proceed?"
+    );
+    if (!ok) return;
+
+    backfillCancelRef.current = false;
+
+    const dates = daysRangeUTC(date, 30);
+    setBackfill({ running: true, done: 0, total: dates.length, currentDate: "", lastError: "" });
+
+    let done = 0;
+
+    for (const d of dates) {
+      if (backfillCancelRef.current) break;
+
+      setBackfill((s) => ({ ...s, running: true, currentDate: d, done, lastError: s.lastError }));
+
+      try {
+        const url = `/api/admin/run-cron?date=${encodeURIComponent(d)}&leagues=${encodeURIComponent(
+          "nba,ncaam,nhl"
+        )}&force=1&grade=all`;
+
+        await fetchJson(url, { timeoutMs: 90000 });
+      } catch (e) {
+        setBackfill((s) => ({ ...s, lastError: String(e?.message || e) }));
+      }
+
+      done += 1;
+      setBackfill((s) => ({ ...s, done, running: !backfillCancelRef.current }));
+      await new Promise((r) => setTimeout(r, 350));
+    }
+
+    setBackfill((s) => ({ ...s, running: false }));
+    refreshAll();
+    refreshTimerRef.current = setTimeout(() => refreshAll(), 2500);
+  }, [date, refreshAll]);
+
+  const apiStatus = api.ok == null ? "Checking…" : api.ok ? "Online" : "Offline";
+
+  const perfUpdatedAt = useMemo(() => {
+    const rows = [
+      ...(perf?.data?.rows?.nba || []),
+      ...(perf?.data?.rows?.ncaam || []),
+      ...(perf?.data?.rows?.nhl || []),
+    ];
+    const ts = rows
+      .map((r) => r?.updated_at || r?.updatedAt || null)
+      .filter(Boolean)
+      .sort()
+      .slice(-1)[0];
+    return ts || "";
+  }, [perf?.data]);
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div className="page-title-row">
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h1 style={{ margin: 0 }}>Dashboard</h1>
+            <span className="pill pillSoft">Premium: value edge + tiers + why panels</span>
+          </div>
+
+          <div className="page-actions">
+            <Link className="btn" to={`/predict/nba?date=${date}&model=v2&windowDays=14`}>
+              Predict
+            </Link>
+            <Link className="btn btn-ghost" to={`/upsets?date=${date}`}>
+              Upset Watch
+            </Link>
+            <button className="btn btn-ghost" onClick={refreshAll}>
+              Refresh
+            </button>
           </div>
         </div>
+
+        <div className="subtle">
+          API <span className="mono">{apiStatus}</span>
+          {api.version ? (
+            <span>
+              {" "}
+              · <span className="mono">{api.version}</span>
+            </span>
+          ) : null}
+          {api.time ? (
+            <span>
+              {" "}
+              · <span className="mono">{api.time}</span>
+            </span>
+          ) : null}
+          {" · "}Date <span className="mono">{date}</span> · NBA model <span className="mono">v2</span> (14d) · NCAAM window{" "}
+          <span className="mono">45d</span>
+          {perfUpdatedAt ? (
+            <span>
+              {" "}
+              · perf updated <span className="mono">{String(perfUpdatedAt).slice(0, 19).replace("T", " ")}</span>
+            </span>
+          ) : null}
+        </div>
+
+        {api.ok === false ? (
+          <Banner tone="danger" title="API offline">
+            Your web is up, but the API is not responding. Start API at <span className="mono">127.0.0.1:3001</span>.
+          </Banner>
+        ) : null}
       </div>
 
-      <div className="leagueGrid">
-        <LeagueCard
-          league="nba"
-          title="NBA"
-          meta={nba.data?.meta}
-          games={nba.data?.games || []}
-          loading={nba.loading}
-          error={nba.error}
-          onOpenLink={openNbaLink}
-        />
-        <LeagueCard
-          league="nhl"
-          title="NHL"
-          meta={nhl.data?.meta}
-          games={nhl.data?.games || []}
-          loading={nhl.loading}
-          error={nhl.error}
-          onOpenLink={openNhlLink}
-        />
-        <LeagueCard
-          league="ncaam"
-          title="NCAAM"
-          meta={ncaam.data?.meta}
-          games={ncaam.data?.games || []}
-          loading={ncaam.loading}
-          error={ncaam.error}
-          onOpenLink={openNcaamLink}
-        />
-      </div>
+      <DailyPicks date={date} nbaModel="v2" windowNba={14} windowNcaam={45} maxPicksPerLeague={8} />
 
-      <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <Link className="btn" to="/parlay-lab">
-          Parlay Lab
-        </Link>
-        <Link className="btn" to="/upsets">
-          Upset Watch
-        </Link>
-        <Link className="btn" to={openNcaamTournamentLink}>
-          NCAAM Tournament Mode
-        </Link>
+      <div style={{ height: 12 }} />
+
+      <ScoreConsole
+        today={date}
+        requestedDate={runDate}
+        setRequestedDate={setRunDate}
+        leagues={runLeagues}
+        setLeagues={setRunLeagues}
+        running={scoreRun.running}
+        onRun={runScoringForDate}
+        result={scoreRun.result}
+        error={scoreRun.error}
+        backfill={backfill}
+        onBackfill30={backfillLast30}
+        onCancelBackfill={cancelBackfill}
+      />
+
+      <div style={{ height: 12 }} />
+
+      {perf.loading ? (
+        <div className="card">
+          <div style={{ fontWeight: 900 }}>Loading performance…</div>
+          <div className="subtle">Pulling {days} day performance rows.</div>
+        </div>
+      ) : perf.error ? (
+        <div className="card danger">
+          <div style={{ fontWeight: 900 }}>Performance error</div>
+          <div className="subtle pre">{perf.error}</div>
+        </div>
+      ) : (
+        <PerformancePanel days={days} setDays={setDays} perf={perf.data} onRefresh={loadPerformance} />
+      )}
+
+      <div style={{ height: 12 }} />
+
+      <div className="card">
+        <div className="panelHead">
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 900 }}>League Snapshots</div>
+            <div className="subtle">Quick sanity check: games, picks, tier distribution, model name, response time.</div>
+          </div>
+        </div>
+
+        <div className="grid">
+          <SnapshotCard
+            title="NBA — Premium v2"
+            subtitle="Market-style contract: edge/tier/winProb + why"
+            loading={nba.loading}
+            error={nba.error}
+            meta={nba.meta}
+            counts={nba.counts}
+            href={`/predict/nba?date=${date}&model=v2&windowDays=14`}
+          />
+
+          <SnapshotCard
+            title="NCAAM — Premium"
+            subtitle="ESPN slate + conservative picks"
+            loading={ncaam.loading}
+            error={ncaam.error}
+            meta={ncaam.meta}
+            counts={ncaam.counts}
+            href={`/predict/ncaam?date=${date}&windowDays=45`}
+          />
+        </div>
+
+        <div className="subtle" style={{ marginTop: 10 }}>
+          NHL resumes <span className="mono">02-24-2026</span> — performance still displays scored picks for the last 30 days during
+          the break.
+        </div>
       </div>
     </div>
   );

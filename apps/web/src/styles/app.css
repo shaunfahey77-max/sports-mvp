@@ -1,511 +1,552 @@
 /* apps/web/src/styles/app.css */
 
+/* =========================================================
+   Sports MVP — Premium dark shell (stabilized + polished)
+   - Guarantees core primitives across ALL pages (Home/Predict/Upsets)
+   - Fixes "UI blown up" by hardening root/layout containers
+   - Adds .input class used by Home.jsx / ScoreConsole
+   - Supports both badge-* and pillOk/pillWarn status variants
+   ========================================================= */
+
 :root{
-  --bg: #070A0F;
+  --bg0:#050711;
+  --bg1:#0A0F24;
 
-  /* core tokens */
-  --border: rgba(255,255,255,0.10);
-  --stroke: var(--border);
+  --card: rgba(255,255,255,.06);
+  --card2: rgba(255,255,255,.08);
+  --stroke: rgba(255,255,255,.11);
 
-  --text: rgba(255,255,255,0.92);
-  --muted: rgba(255,255,255,0.62);
-  --muted2: rgba(255,255,255,0.45);
+  --text:#EAF0FF;
+  --muted: rgba(234,240,255,.70);
 
-  --shadow: 0 10px 30px rgba(0,0,0,0.45);
+  --ok: rgba(140, 255, 200, .18);
+  --warn: rgba(255, 200, 120, .18);
+  --bad: rgba(255, 120, 140, .16);
+
+  --shadow: 0 16px 40px rgba(0,0,0,.35);
+  --shadowSoft: 0 10px 26px rgba(0,0,0,.25);
+
   --radius: 16px;
+  --radius2: 18px;
+
+  --ring: rgba(170,190,255,.35);
+  --ring2: rgba(170,190,255,.22);
 }
 
 *{ box-sizing:border-box; }
-html,body{ height:100%; }
+html, body { height:100%; }
 
 body{
   margin:0;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
-  color: var(--text);
+  color:var(--text);
   background:
-    radial-gradient(900px 600px at 20% 10%, rgba(77, 238, 234, 0.14), transparent 60%),
-    radial-gradient(900px 600px at 80% 20%, rgba(124, 92, 255, 0.14), transparent 60%),
-    radial-gradient(1200px 800px at 50% 100%, rgba(0, 180, 255, 0.10), transparent 55%),
-    var(--bg);
+    radial-gradient(1000px 600px at 20% 0%, rgba(120,180,255,.16), transparent 55%),
+    radial-gradient(900px 600px at 90% 10%, rgba(170,120,255,.12), transparent 55%),
+    linear-gradient(180deg, var(--bg0), var(--bg1));
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  text-rendering: geometricPrecision;
 }
 
-a{ color: inherit; text-decoration: none; }
-a:hover{ text-decoration: underline; }
+/* Harden React root layout so pages don't "blow up" when wrappers change */
+#root{
+  min-height: 100%;
+  display: block;
+}
+main{
+  display:block;
+}
 
+/* Safer media defaults */
+a{ color:inherit; text-decoration:none; }
+img{ display:block; max-width:100%; height:auto; }
+
+.mono{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.subtle{ color: var(--muted); font-size: 13px; }
+.muted{ color: var(--muted); font-size: 13px; }
+.muted2{ color: rgba(234,240,255,.58); font-size: 12px; }
+
+.pre{ white-space: pre-wrap; word-break: break-word; }
+
+/* =========================================================
+   Layout
+   ========================================================= */
+
+.page{
+  width:min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 56px;
+}
+
+/* Older variants used .container — keep it safe */
 .container{
-  max-width: 1120px;
+  width:min(1120px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 24px;
+  padding: 24px 0 56px;
 }
 
-.topbar{
-  position: sticky;
-  top: 0;
-  backdrop-filter: blur(14px);
-  background: rgba(7,10,15,0.55);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-  z-index: 20;
-}
+.page-head{ margin-bottom: 14px; }
 
-.topbar-inner{
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 14px 24px;
+.page-title-row{
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap: 12px;
+  gap: 14px;
 }
 
-.brand{
-  display:flex;
-  align-items:center;
-  gap: 10px;
-  font-weight: 800;
-}
-
-/* keep pills for nav/badges/chips — NOT KPI numbers */
-.pill{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(255,255,255,0.04);
-  min-width: 0;
-}
-
-.nav{
+.page-actions{
   display:flex;
   gap: 10px;
+  align-items:center;
   flex-wrap: wrap;
 }
 
-.btn{
-  cursor:pointer;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,0.05);
-  color: var(--text);
-  padding: 10px 12px;
-  border-radius: 12px;
-}
-.btn:hover{ background: rgba(255,255,255,0.08); }
-
-.btnPrimary{
-  border-color: rgba(255,255,255,0.16);
-  background: linear-gradient(135deg, rgba(77,238,234,0.18), rgba(124,92,255,0.18));
+h1{
+  margin:0;
+  font-size: 28px;
+  line-height: 1.1;
+  letter-spacing: .2px;
 }
 
-.card{
-  border: 1px solid var(--border);
-  background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.04));
+/* Older variants used .h1/.sub */
+.h1{ font-size: 28px; font-weight: 900; line-height: 1.1; margin: 0; }
+.sub{ color: var(--muted); font-size: 13px; }
+
+/* =========================================================
+   Cards
+   ========================================================= */
+
+.card,
+.panel{
+  background: var(--card);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  padding: 14px;
+  position: relative;
+  overflow: hidden;
 }
 
-.cardHeader{
-  padding: 14px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+/* Softer overlay that won't cause weird contrast shifts */
+.card::before{
+  content:"";
+  position:absolute;
+  inset:-1px;
+  pointer-events:none;
+  border-radius: inherit;
+  background:
+    radial-gradient(420px 180px at 18% 0%, rgba(170,190,255,.10), transparent 60%),
+    radial-gradient(420px 180px at 90% 10%, rgba(170,120,255,.08), transparent 60%);
+  opacity:.75;
+  mix-blend-mode: screen;
+}
+.card > *{ position: relative; }
+
+.divider{
+  height: 1px;
+  background: rgba(255,255,255,.08);
+  margin: 12px 0;
+}
+
+.danger{
+  border-color: rgba(255,120,140,.22) !important;
+  background: rgba(255,120,140,.08) !important;
+}
+
+/* Home.jsx expects these */
+.cardHeader,
+.panelHead{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   justify-content:space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.cardBody{ margin-top: 4px; }
+
+/* =========================================================
+   Grid helpers
+   ========================================================= */
+
+.grid{
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.cardBody{ padding: 14px 16px; }
-
-.h1{
-  font-size: 34px;
-  line-height: 1.1;
-  margin: 0 0 8px 0;
-}
-.sub{
-  color: var(--muted);
-  margin: 0;
+.leagueGrid{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.muted{ color: var(--muted); }
-.muted2{ color: var(--muted2); }
-
-.badge{
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.05);
+@media (max-width: 1020px){
+  .leagueGrid{ grid-template-columns: 1fr; }
 }
 
-.input{
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(0,0,0,0.25);
-  color: var(--text);
-  padding: 10px 12px;
-  border-radius: 12px;
-}
-
-/* Top nav links (Layout.jsx) */
-.navLink{
-  display:inline-flex;
-  align-items:center;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  color: var(--muted);
-  text-decoration: none;
-  background: transparent;
-}
-.navLink:hover{
-  color: var(--text);
-  border-color: rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.04);
-  text-decoration: none;
-}
-.navLinkActive{
-  color: var(--text);
-  border-color: rgba(255,255,255,0.16);
-  background: rgba(255,255,255,0.07);
+@media (max-width: 860px){
+  .page, .container{ width: min(980px, calc(100% - 28px)); }
+  .page-title-row{ flex-direction:column; align-items:flex-start; }
+  .grid{ grid-template-columns: 1fr; }
 }
 
 /* =========================================================
-   Bloomberg-style KPI tiles
+   Buttons
    ========================================================= */
 
-.kpiGrid4{
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-.kpiGrid3{
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
+.actions{ display:flex; gap: 8px; align-items:center; flex-wrap: wrap; }
 
-@media (max-width: 980px){
-  .kpiGrid4{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .kpiGrid3{ grid-template-columns: 1fr; }
-}
-@media (max-width: 520px){
-  .kpiGrid4{ grid-template-columns: 1fr; }
-}
-
-.kpiTile{
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 14px;
-  background: rgba(0,0,0,0.18);
-  padding: 10px 12px;
-  min-width: 0;
-}
-
-.kpiLabel{
-  color: var(--muted2);
-  font-size: 12px;
-  display:flex;
+.btn{
+  display:inline-flex;
   align-items:center;
-  justify-content:space-between;
-  gap: 10px;
-  min-width: 0;
+  justify-content:center;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.10);
+  color: var(--text);
+  font-size: 12px;
+  cursor:pointer;
+  user-select:none;
+  transition: background .15s ease, transform .08s ease, border-color .15s ease;
 }
 
-/* KPI value: prevents baseline clipping + handles long timestamps cleanly */
-.kpiValue{
-  margin-top: 6px;
-  font-weight: 900;
-  font-size: 16px;
-  line-height: 1.25;
-  letter-spacing: .02em;
+.btn:hover{ background: rgba(255,255,255,.13); border-color: rgba(255,255,255,.18); }
+.btn:active{ transform: translateY(1px); }
 
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
+.btn:disabled{ opacity: .5; cursor:not-allowed; }
+
+.btn-ghost{
+  background: transparent;
+  border: 1px solid rgba(255,255,255,.12);
 }
+.btn-ghost:hover{ background: rgba(255,255,255,.06); }
 
-.kpiValueMono{
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-variant-numeric: tabular-nums;
+.btnPrimary{
+  background: rgba(170,190,255,.14);
+  border-color: rgba(170,190,255,.22);
 }
-
-/* League overview grid */
-.leagueGrid{
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 16px;
-}
-.leagueCard{ overflow: hidden; }
-
-.leagueHead{
-  display:flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.leagueTitle{ font-weight: 900; }
-
-.leagueMeta{
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 520px;
+.btnPrimary:hover{
+  background: rgba(170,190,255,.18);
+  border-color: rgba(170,190,255,.28);
 }
 
-/* Bar rows */
-.barRow{
-  display: grid;
-  grid-template-columns: 86px 1fr 44px;
-  gap: 10px;
-  align-items: center;
-}
-.barLabel{ color: var(--muted2); font-size: 12px; }
-.barTrack{
-  height: 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(255,255,255,0.03);
-  overflow: hidden;
-}
-.barFill{
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(77,238,234,0.35), rgba(124,92,255,0.35));
-}
-.barVal{ color: var(--muted); font-size: 12px; text-align: right; }
+/* =========================================================
+   Inputs
+   ========================================================= */
 
-/* 7-day performance strip */
-.perfStrip{
-  margin-top: 12px;
-  padding: 12px;
+/* You use className="input" in Home.jsx — add it explicitly */
+.input,
+select,
+input[type="text"],
+input[type="number"],
+input[type="date"]{
+  background: rgba(255,255,255,.06);
+  border: 1px solid var(--stroke);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 12px;
+  outline:none;
+  min-width: 160px;
+}
+
+.input:focus,
+select:focus,
+input:focus{
+  border-color: rgba(170,190,255,.45);
+  box-shadow: 0 0 0 4px rgba(170,190,255,.12);
+}
+
+:focus:not(:focus-visible){ outline:none; box-shadow:none; }
+:focus-visible{
+  outline:none;
+  box-shadow: 0 0 0 4px rgba(170,190,255,.16);
+  border-color: rgba(170,190,255,.45);
+}
+
+/* =========================================================
+   Segmented controls
+   ========================================================= */
+
+.seg{
+  display:inline-flex;
+  background: rgba(255,255,255,.05);
+  border: 1px solid var(--stroke);
   border-radius: 14px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
-  box-shadow: none;
+  padding: 3px;
+  gap: 3px;
 }
-.perfStripTop{
+.segSmall{ border-radius: 12px; }
+
+.segBtn{
+  appearance:none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-radius: 12px;
+  cursor:pointer;
+  font-size: 12px;
+  letter-spacing: .2px;
+  transition: background .15s ease, color .15s ease, transform .08s ease;
+}
+.segBtn:hover{ background: rgba(255,255,255,.06); }
+.segBtn.isOn{
+  background: rgba(255,255,255,.10);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.10);
+}
+
+/* =========================================================
+   Badges / pills
+   ========================================================= */
+
+.badge, .pill{
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: .2px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pillSoft{
+  background: rgba(170,190,255,.10);
+  border-color: rgba(170,190,255,.16);
+  color: rgba(234,240,255,.86);
+}
+
+/* Status variants (support multiple naming schemes used across files) */
+.badge-ok,
+.pillOk{
+  background: var(--ok);
+  border-color: rgba(140,255,200,.25);
+  color: rgba(234,240,255,.88);
+}
+
+.badge-bad,
+.pillWarn{
+  background: var(--bad);
+  border-color: rgba(255,120,140,.25);
+  color: rgba(234,240,255,.92);
+}
+
+/* tier badges for Predict */
+.badge-elite{ background: rgba(140,255,200,.12); border-color: rgba(140,255,200,.20); color: rgba(234,240,255,.92); }
+.badge-strong{ background: rgba(170,190,255,.12); border-color: rgba(170,190,255,.20); color: rgba(234,240,255,.92); }
+.badge-edge{ background: rgba(255,200,120,.12); border-color: rgba(255,200,120,.20); color: rgba(234,240,255,.92); }
+.badge-lean{ background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14); color: rgba(234,240,255,.86); }
+
+/* =========================================================
+   Game cards / metrics
+   ========================================================= */
+
+.game{
+  padding: 14px;
+  transition: transform .10s ease, border-color .15s ease, background .15s ease;
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: var(--radius);
+  box-shadow: var(--shadowSoft);
+}
+.game:hover{
+  transform: translateY(-1px);
+  border-color: rgba(170,190,255,.22);
+  background: rgba(255,255,255,.06);
+}
+
+.game-top{
   display:flex;
-  justify-content: space-between;
+  align-items:flex-start;
+  justify-content:space-between;
   gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
 }
-.perfLegend{
+.game-main{ min-width: 0; }
+
+.game-matchup{
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+
+.game-badges{
   display:flex;
   gap: 8px;
-  align-items: center;
+  align-items:center;
+  flex-wrap: wrap;
+  justify-content:flex-end;
 }
-.perfGrid{
-  margin-top: 12px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+
+.game-metrics{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
 }
-@media (max-width: 980px){
-  .perfGrid{ grid-template-columns: 1fr; }
-}
-.perfCard{
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(0,0,0,0.18);
+.metric{
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
   border-radius: 14px;
   padding: 10px;
 }
-.perfCardHead{
-  display:flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: baseline;
-  margin-bottom: 8px;
-}
+.metric .k{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.metric .v{ font-size: 16px; letter-spacing: .2px; }
 
-/* Trend chart */
-.trendSvg{
-  display:block;
-  width: 100%;
-  height: auto;
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(0,0,0,0.18);
+@media (max-width: 860px){
+  .game-metrics{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-.trendGrid{ stroke: rgba(255,255,255,0.08); stroke-width: 1; }
-.trendLine{ stroke: rgba(124,92,255,0.75); stroke-width: 2.2; }
-.trendDot{ fill: rgba(77,238,234,0.85); }
-
-.trendEmpty{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  height: 56px;
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(0,0,0,0.18);
-}
-
-/* Mini table */
-.perfTable{
-  margin-top: 10px;
-  display: grid;
-  gap: 6px;
-}
-.perfRow{
-  display: grid;
-  grid-template-columns: 58px 1fr 56px;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 8px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.06);
-  background: rgba(255,255,255,0.03);
-}
-.perfDate{ color: var(--muted2); font-size: 12px; }
-.perfScored{ color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.perfAcc{ color: var(--text); font-size: 12px; font-weight: 800; text-align: right; white-space: nowrap; }
 
 /* =========================================================
-   Predict page essentials (THIS is what stops huge logos + weird layout)
+   Predict toolbar
    ========================================================= */
 
-.row{
+.toolbar{ display: grid; gap: 10px; }
+.toolbar-row{
   display:flex;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 0;
-}
-
-.tabs{
-  display:inline-flex;
-  gap: 6px;
-  padding: 4px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(0,0,0,0.20);
-}
-
-.tab{
-  cursor:pointer;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  padding: 6px 10px;
-  border-radius: 999px;
-  font-weight: 800;
-  font-size: 12px;
-}
-.tab:hover{
-  color: var(--text);
-  background: rgba(255,255,255,0.05);
-  border-color: rgba(255,255,255,0.10);
-}
-.tabActive{
-  color: var(--text);
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.14);
-}
-
-/* Clamp all team logos so they never explode */
-.logo{
-  width: 28px;
-  height: 28px;
-  max-width: 28px;
-  max-height: 28px;
-  object-fit: contain;
-  display:inline-block;
-  vertical-align: middle;
-  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.35));
-}
-
-.gameTop{
-  display:flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.teamLine{
-  display:flex;
-  align-items:center;
-  gap: 8px;
+  gap: 10px;
+  align-items:flex-end;
   flex-wrap: wrap;
-  min-width: 0;
 }
 
-.edge-mono{
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: rgba(255,255,255,0.82);
+.field{
+  display:grid;
+  gap: 6px;
+  min-width: 170px;
 }
+.field.wide{ min-width: 260px; flex: 1; }
+.field span{ font-size: 12px; color: var(--muted); }
 
-.tier-badge{
-  display:inline-flex;
+.inline-toggle{
+  display:flex;
   align-items:center;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.05);
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.05);
+}
+
+/* =========================================================
+   Why / deltas / details (Predict)
+   ========================================================= */
+
+.why{ margin-top: 10px; }
+.why-head{ font-weight: 900; font-size: 13px; margin-bottom: 6px; color: rgba(234,240,255,.90); }
+.why-bullets{ margin: 0; padding-left: 16px; color: rgba(234,240,255,.84); }
+.why-bullets li{ margin: 4px 0; }
+
+.details{ margin-top: 10px; }
+.details summary{
+  cursor:pointer;
+  color: rgba(234,240,255,.86);
   font-size: 12px;
-  font-weight: 900;
-  letter-spacing: .02em;
 }
-
-.tier-dot{
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.35);
-}
-
-.tier-ELITE{ border-color: rgba(77,238,234,0.30); }
-.tier-ELITE .tier-dot{ background: rgba(77,238,234,0.90); }
-
-.tier-STRONG{ border-color: rgba(124,92,255,0.30); }
-.tier-STRONG .tier-dot{ background: rgba(124,92,255,0.85); }
-
-.tier-LEAN{ border-color: rgba(255,255,255,0.18); }
-.tier-LEAN .tier-dot{ background: rgba(255,255,255,0.55); }
-
-.tier-PASS{ border-color: rgba(255,255,255,0.10); }
-.tier-PASS .tier-dot{ background: rgba(255,255,255,0.28); }
-
-.why-panel{
+.deltas{
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 10px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(0,0,0,0.16);
+}
+.delta{
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
   border-radius: 14px;
-  padding: 10px 12px;
+  padding: 10px;
+}
+.delta .k{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.delta .v{ font-size: 13px; }
+
+@media (max-width: 860px){
+  .deltas{ grid-template-columns: 1fr; }
 }
 
-.why-title{
-  font-weight: 900;
-  font-size: 12px;
-  color: rgba(255,255,255,0.86);
-  margin-bottom: 6px;
+/* =========================================================
+   KPIs
+   ========================================================= */
+
+.kpiGrid{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+@media (max-width: 860px){
+  .kpiGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-.why-list{
-  margin: 0;
-  padding-left: 18px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+.kpi{
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 14px;
+  padding: 12px;
+}
+.kpiLabel{ font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.kpiValue{ font-size: 22px; letter-spacing: .2px; line-height: 1.1; }
+.kpiFoot{ margin-top: 6px; font-size: 12px; color: var(--muted); }
+
+/* Older Home variants */
+.kpiGrid4{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.kpiGrid3{
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+@media (max-width: 860px){
+  .kpiGrid4{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpiGrid3{ grid-template-columns: 1fr; }
 }
 
-/* Prevent KPI number truncation in tight tiles */
-.kpiTile { min-width: 0; }
-.kpiValue { min-width: 0; }
-
-/* Numbers look better + fit better */
-.kpiValueMono{
-  font-variant-numeric: tabular-nums;
+.kpiTile{
+  background: rgba(255,255,255,.05);
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 14px;
+  padding: 12px;
 }
+.kpiValueMono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
 
-/* On narrow cards, shrink KPI values slightly */
-@media (max-width: 520px){
-  .kpiValue{ font-size: 14px; }
+/* =========================================================
+   Banners
+   ========================================================= */
+
+.banner{
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,.12);
+  padding: 12px 14px;
+  margin: 12px 0 0;
+  box-shadow: var(--shadow);
+  background: rgba(255,255,255,.05);
 }
+.bannerWarn{
+  background: rgba(255,200,120,.10);
+  border-color: rgba(255,200,120,.18);
+}
+.bannerDanger{
+  background: rgba(255,120,140,.10);
+  border-color: rgba(255,120,140,.20);
+}
+.bannerTitle{ font-weight: 800; font-size: 13px; }
+.bannerBody{ margin-top: 6px; color: var(--muted); font-size: 13px; }
 
-/* Optional: for league cards only, allow values to show fully */
-.leagueCard .kpiValue{
-  overflow: visible;
-  text-overflow: clip;
+/* =========================================================
+   Motion safety
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce){
+  *{
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

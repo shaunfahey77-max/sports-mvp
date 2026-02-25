@@ -10,14 +10,18 @@ const router = express.Router();
 const NBA_API_BASE = "https://api.balldontlie.io/v1";
 const NBA_API_KEY = process.env.NBA_API_KEY || "";
 
+const NHL_API_BASE = "https://api-web.nhle.com/v1"; // kept for later, but NHL is paused right now
+
 // ✅ ESPN
 const ESPN_SITE_V2 = "https://site.api.espn.com/apis/site/v2/sports";
 const ESPN_NCAAM_PATH = "basketball/mens-college-basketball";
+
 
 // ✅ The Odds API (Vegas market lines) — optional but enables market anchoring for NBA
 const ODDS_API_BASE = process.env.ODDS_API_BASE || "https://api.the-odds-api.com/v4";
 const ODDS_API_KEY = process.env.ODDS_API_KEY || "";
 const ODDS_BOOKMAKER = (process.env.ODDS_BOOKMAKER || "draftkings").toLowerCase();
+
 
 /**
  * Cache (TTL + in-flight de-dupe + simple pruning)
@@ -215,8 +219,12 @@ async function computeCached(key, ttlMs, fn) {
   }
 }
 
+
 /**
  * Vegas helpers (The Odds API) — NBA anchoring only (safe no-op if no key)
+ *
+ * We treat moneyline as the primary anchor because it encodes market win probability.
+ * Spread/total are returned for UI context and future upgrades.
  */
 function normTeamName(s) {
   return String(s || "")
@@ -242,16 +250,18 @@ function normalizeNoVig(pA, pB) {
   return { pA: pA / sum, pB: pB / sum, vig: sum - 1 };
 }
 
-// ✅ Odds API is picky sometimes; use no-milliseconds ISO to avoid INVALID_COMMENCE_TIME_FROM
-function ymdToOddsIsoRange(ymd) {
-  const startIso = `${ymd}T00:00:00Z`;
-  const endIso = `${ymd}T23:59:59Z`;
-  return { startIso, endIso };
+function ymdToUtcRange(ymd) {
+  // The Odds API wants ISO times; we query the full day in UTC
+  const start = new Date(ymd + "T00:00:00.000Z");
+  const end = new Date(ymd + "T23:59:59.999Z");
+  return { startIso: start.toISOString(), endIso: end.toISOString() };
 }
 
-function buildOddsUrlForDate(ymd) {
-  const { startIso, endIso } = ymdToOddsIsoRange(ymd);
-  return (
+async function fetchNbaVegasForDate(ymd) {
+  if (!ODDS_API_KEY) return { ok: false, reason: "missing_odds_key", map: new Map(), meta: {} };
+
+  const { startIso, endIso } = ymdToUtcRange(ymd);
+  const url =
     `${ODDS_API_BASE.replace(/\/$/, "")}` +
     `/sports/basketball_nba/odds` +
     `?apiKey=${encodeURIComponent(ODDS_API_KEY)}` +
@@ -261,29 +271,17 @@ function buildOddsUrlForDate(ymd) {
     `&dateFormat=iso` +
     `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}` +
     `&commenceTimeFrom=${encodeURIComponent(startIso)}` +
-    `&commenceTimeTo=${encodeURIComponent(endIso)}`
-  );
-}
-
-async function fetchNbaVegasForDate(ymd) {
-  if (!ODDS_API_KEY) return { ok: false, reason: "missing_odds_key", map: new Map(), meta: {} };
-
-  const url = buildOddsUrlForDate(ymd);
+    `&commenceTimeTo=${encodeURIComponent(endIso)}`;
 
   // keep this snappy: 1 retry, hard 7s timeout
-  const data = await fetchJson(
-    url,
-    {},
-    { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 1, timeoutMs: 7_000, hostConcurrency: 1 }
-  ).catch((e) => ({ __error: String(e?.message || e) }));
+  const data = await fetchJson(url, {}, { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 1, timeoutMs: 7_000, hostConcurrency: 1 })
+    .catch((e) => ({ __error: String(e?.message || e) }));
 
-  if (data?.__error && String(data.__error).includes("INVALID_COMMENCE_TIME_FROM")) {
-    return { ok: false, reason: data.__error, map: new Map(), meta: {} };
-  }
   if (!data || data.__error) {
     return { ok: false, reason: data?.__error || "odds_fetch_failed", map: new Map(), meta: {} };
   }
 
+  // Build map keyed by "HOME|AWAY" normalized team names (Odds API returns home_team + away_team)
   const map = new Map();
   let matched = 0;
 
@@ -298,11 +296,12 @@ async function fetchNbaVegasForDate(ymd) {
     const out = {
       bookmaker: bk?.key || ODDS_BOOKMAKER,
       lastUpdate: bk?.last_update || null,
-      h2h: null,
-      spreads: null,
-      totals: null,
+      h2h: null, // { home, away, pHome, pAway, vig }
+      spreads: null, // { homeSpread, awaySpread, homePrice, awayPrice }
+      totals: null, // { total, overPrice, underPrice }
     };
 
+    // h2h (moneyline)
     const h2h = markets.find((m) => m?.key === "h2h");
     if (h2h?.outcomes?.length >= 2) {
       const oHome = h2h.outcomes.find((o) => normTeamName(o?.name) === home);
@@ -319,6 +318,7 @@ async function fetchNbaVegasForDate(ymd) {
       };
     }
 
+    // spreads
     const sp = markets.find((m) => m?.key === "spreads");
     if (sp?.outcomes?.length >= 2) {
       const oHome = sp.outcomes.find((o) => normTeamName(o?.name) === home);
@@ -331,16 +331,13 @@ async function fetchNbaVegasForDate(ymd) {
       };
     }
 
+    // totals
     const tt = markets.find((m) => m?.key === "totals");
     if (tt?.outcomes?.length >= 2) {
       const oOver = tt.outcomes.find((o) => String(o?.name || "").toLowerCase() === "over");
       const oUnder = tt.outcomes.find((o) => String(o?.name || "").toLowerCase() === "under");
       out.totals = {
-        total: Number.isFinite(Number(oOver?.point))
-          ? Number(oOver.point)
-          : Number.isFinite(Number(oUnder?.point))
-            ? Number(oUnder.point)
-            : null,
+        total: Number.isFinite(Number(oOver?.point)) ? Number(oOver.point) : (Number.isFinite(Number(oUnder?.point)) ? Number(oUnder.point) : null),
         overPrice: oOver?.price ?? null,
         underPrice: oUnder?.price ?? null,
       };
@@ -359,13 +356,15 @@ function lookupVegasNba(vegasMap, homeName, awayName) {
   return vegasMap.get(key) || null;
 }
 
-// shrink + clamp value edges so they stay in a believable NBA band.
-function normalizeValueEdge(homeValueEdgeSigned) {
-  const e = Number(homeValueEdgeSigned);
+// Shrink + clamp value edges so they stay in a believable NBA band.
+// This prevents “-0.35 edge” type outputs that look broken to users.
+function normalizeValueEdge(edge) {
+  const e = Number(edge);
   if (!Number.isFinite(e)) return null;
-  const shrunk = 0.55 * e;
-  return clampNum(shrunk, -0.20, 0.20);
+  const shrunk = 0.55 * e; // shrink raw gap
+  return clamp(shrunk, -0.20, 0.20);
 }
+
 
 /**
  * Date + params
@@ -382,7 +381,7 @@ function readDateFromReq(req) {
   return d1 || d2 || new Date().toISOString().slice(0, 10);
 }
 
-function clampNum(x, a, b) {
+function clamp(x, a, b) {
   return Math.max(a, Math.min(b, x));
 }
 
@@ -390,7 +389,7 @@ function readWindowFromReq(req, def, min, max) {
   const raw = req.query.windowDays ?? req.query.window ?? def;
   const n = Number(raw);
   if (!Number.isFinite(n)) return def;
-  return clampNum(n, min, max);
+  return clamp(n, min, max);
 }
 
 function readModeFromReq(req) {
@@ -400,7 +399,7 @@ function readModeFromReq(req) {
   return { mode: isTournament ? "tournament" : "regular", tournament: isTournament };
 }
 
-// ✅ model version switch (A/B safe)
+// ✅ NEW: model version switch (A/B safe)
 function readModelFromReq(req, def = "v1") {
   const raw = String(req.query.model || req.query.modelVersion || def).toLowerCase();
   if (raw === "v2" || raw === "2" || raw === "premium" || raw === "hybrid") return "v2";
@@ -433,18 +432,13 @@ function safeNum(v) {
 function confidenceFromEdge(edge, edgeScale, capLo = 0.52, capHi = 0.95) {
   if (!Number.isFinite(edge)) return 0.5;
   const p = 1 / (1 + Math.exp(-edge / edgeScale));
-  return clampNum(p, capLo, capHi);
+  return clamp(p, capLo, capHi);
 }
 
-/**
- * NOTE: edge here is SIGNED HOME-side value edge:
- *  - edge > 0 means HOME value
- *  - edge < 0 means AWAY value
- */
-function pickFromEdge(homeValueEdgeSigned, minEdgeForPick) {
-  if (!Number.isFinite(homeValueEdgeSigned)) return { side: null, note: "invalid_edge" };
-  if (Math.abs(homeValueEdgeSigned) < minEdgeForPick) return { side: null, note: "pass_toss_up" };
-  return { side: homeValueEdgeSigned > 0 ? "home" : "away", note: "ok" };
+function pickFromEdge(edge, minEdgeForPick) {
+  if (!Number.isFinite(edge)) return { side: null, note: "invalid_edge" };
+  if (Math.abs(edge) < minEdgeForPick) return { side: null, note: "pass_toss_up" };
+  return { side: edge > 0 ? "home" : "away", note: "ok" };
 }
 
 function tierFromEdge(edgeAbs, { lean, edge } = {}) {
@@ -459,9 +453,8 @@ function tierFromEdge(edgeAbs, { lean, edge } = {}) {
 
 /**
  * Why builder (structured)
- * ✅ edgeForPick is ALWAYS POSITIVE for picks (value for the recommended side)
  */
-function buildWhyPanel({ pickSide, pickNote, edgeForPick, conf, deltas = [] }) {
+function buildWhyPanel({ pickSide, pickNote, edge, conf, deltas = [] }) {
   const bullets = [];
 
   if (!pickSide) {
@@ -470,14 +463,15 @@ function buildWhyPanel({ pickSide, pickNote, edgeForPick, conf, deltas = [] }) {
         ? "Pass: edge not strong enough (toss-up)."
         : "Pass: insufficient signal."
     );
-    if (Number.isFinite(edgeForPick)) bullets.push(`Edge: ${edgeForPick.toFixed(3)} (below threshold).`);
+    if (Number.isFinite(edge)) bullets.push(`Edge: ${edge.toFixed(3)} (below threshold).`);
     return { headline: "PASS (no bet)", bullets: bullets.slice(0, 5), deltas: [] };
   }
 
   bullets.push(
-    `Pick: ${pickSide.toUpperCase()} (edge ${Number.isFinite(edgeForPick) ? edgeForPick.toFixed(3) : "—"})`
+    `Pick: ${pickSide.toUpperCase()} (edge ${Number.isFinite(edge) ? edge.toFixed(3) : "—"})`
   );
-  if (Number.isFinite(conf)) bullets.push(`Confidence proxy: ${Math.round(conf * 100)}% (not a bar metric)`);
+  if (Number.isFinite(conf))
+    bullets.push(`Confidence proxy: ${Math.round(conf * 100)}% (not a bar metric)`);
 
   const outDeltas = [];
   for (const d of deltas) {
@@ -486,11 +480,7 @@ function buildWhyPanel({ pickSide, pickNote, edgeForPick, conf, deltas = [] }) {
     const sign = d.delta > 0 ? "+" : "";
     const dp = d.dp ?? 3;
     const suffix = d.suffix ?? "";
-    outDeltas.push({
-      label: d.label,
-      value: d.delta,
-      display: `${sign}${d.delta.toFixed(dp)}${suffix}`,
-    });
+    outDeltas.push({ label: d.label, value: d.delta, display: `${sign}${d.delta.toFixed(dp)}${suffix}` });
   }
 
   for (const dd of outDeltas.slice(0, 3)) bullets.push(`${dd.label}: ${dd.display}`);
@@ -504,7 +494,6 @@ function buildWhyPanel({ pickSide, pickNote, edgeForPick, conf, deltas = [] }) {
 
 /**
  * Unified game response builder
- * ✅ edgeForPick: always positive when pick exists, null for PASS
  */
 function toUnifiedGame({
   league,
@@ -515,7 +504,7 @@ function toUnifiedGame({
   away,
   pickSide,
   pickNote,
-  edgeForPick,
+  edge,
   conf,
   tier,
   whyPanel,
@@ -534,15 +523,21 @@ function toUnifiedGame({
     status,
     homeScore,
     awayScore,
+
     home,
     away,
+
     market: {
       pick: pickSide,
       recommendedTeamId: recommended ? recommended.id : null,
-      recommendedTeamName: recommended ? (recommended.abbr || recommended.name || "") : "",
-      edge: recommended && Number.isFinite(edgeForPick) ? edgeForPick : null,
+      recommendedTeamName: recommended ? (recommended.name || "") : "",
+      edge: Number.isFinite(edge) ? edge : null,
       tier,
-      confidence: recommended ? conf : null, // PASS -> null
+
+      // ✅ PASS games: do not show “0.50 confidence”
+      confidence: recommended ? conf : null,
+
+      // ✅ real probability for the recommended side (only when computed + only when pick exists)
       winProb: recommended && Number.isFinite(factors?.winProb) ? factors.winProb : null,
     },
     why: whyPanel,
@@ -556,34 +551,11 @@ function toUnifiedGame({
 function toNbaTeamId(abbr) {
   return `nba-${String(abbr || "").toLowerCase()}`;
 }
+function toNhlTeamId(tri) {
+  return `nhl-${String(tri || "").toLowerCase()}`;
+}
 function toNcaamTeamId(espnTeamId) {
   return `ncaam-${String(espnTeamId || "")}`;
-}
-
-/**
- * Response helpers (premium contract stability)
- */
-function addPredictionsAlias(out) {
-  return { ...out, predictions: out.games };
-}
-function okWrap(league, date, out) {
-  return { ok: true, league, date, count: Array.isArray(out?.games) ? out.games.length : 0, ...addPredictionsAlias(out) };
-}
-function errWrap({ league, date, windowDays, model, modelVersion, mode, error }) {
-  return okWrap(league, date, {
-    meta: {
-      league,
-      date,
-      windowDays,
-      model,
-      modelVersion: modelVersion ?? null,
-      mode,
-      error: String(error || "unknown_error"),
-      warnings: [],
-      elapsedMs: 0,
-    },
-    games: [],
-  });
 }
 
 /* =========================================================
@@ -603,32 +575,18 @@ async function getNbaGamesByDate(dateYYYYMMDD) {
   const rows = json?.data || [];
 
   return rows.map((g) => {
-    const homeAbbr = g?.home_team?.abbreviation || null;
-    const awayAbbr = g?.visitor_team?.abbreviation || null;
+    const homeAbbr = g?.home_team?.abbreviation;
+    const awayAbbr = g?.visitor_team?.abbreviation;
 
     const homeScore = typeof g?.home_team_score === "number" ? g.home_team_score : null;
     const awayScore = typeof g?.visitor_team_score === "number" ? g.visitor_team_score : null;
 
-    // balldontlie: status can be "Final" or other strings
-    const rawStatus = String(g?.status || "");
-    const status = rawStatus.toLowerCase().includes("final") ? "Final" : rawStatus;
-
     return {
       gameId: `nba-${g.id}`,
       date: String(g?.date || "").slice(0, 10),
-      status,
-      home: {
-        id: toNbaTeamId(homeAbbr),
-        name: homeAbbr || "",
-        abbr: homeAbbr,
-        score: homeScore,
-      },
-      away: {
-        id: toNbaTeamId(awayAbbr),
-        name: awayAbbr || "",
-        abbr: awayAbbr,
-        score: awayScore,
-      },
+      status: g?.status || "",
+      home: { id: toNbaTeamId(homeAbbr), name: homeAbbr || "", score: homeScore },
+      away: { id: toNbaTeamId(awayAbbr), name: awayAbbr || "", score: awayScore },
       homeScore,
       awayScore,
     };
@@ -754,7 +712,7 @@ function buildTeamStatsFromHistory_Generic(histRows, { recent5 = 5, recent10 = 1
   return out;
 }
 
-// === NBA model helpers ===
+// === NBA model helpers (NEW) ===
 function sigmoid(x) {
   return 1 / (1 + Math.exp(-x));
 }
@@ -769,11 +727,11 @@ function shrink(x, prior, n, k) {
 function pickThresholdFromUncertainty(homePlayed, awayPlayed, base = 0.07) {
   const n = Math.min(Number(homePlayed) || 0, Number(awayPlayed) || 0);
   const unc = n > 0 ? 1 / Math.sqrt(n) : 1;
-  return clampNum(base + 0.06 * unc, 0.07, 0.13);
+  return clamp(base + 0.06 * unc, 0.07, 0.13);
 }
 
 /**
- * NBA v1 edge
+ * NBA v1 edge (your current)
  */
 function nbaEdge_v1(home, away) {
   if (!home?.ok || !away?.ok) return NaN;
@@ -784,9 +742,9 @@ function nbaEdge_v1(home, away) {
   const wR5 = 0.12;
 
   const winDiff = home.winPct - away.winPct;
-  const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 12, -1, 1);
+  const marginScaled = clamp((home.marginPerGame - away.marginPerGame) / 12, -1, 1);
   const r10Diff = (safeNum(home.recent10?.winPct) ?? 0.5) - (safeNum(away.recent10?.winPct) ?? 0.5);
-  const r5MarginScaled = clampNum(
+  const r5MarginScaled = clamp(
     ((safeNum(home.recent5?.margin) ?? 0) - (safeNum(away.recent5?.margin) ?? 0)) / 14,
     -1,
     1
@@ -821,9 +779,9 @@ function nbaEdge_v2(home, away) {
   const aR5m = shrink(away.recent5?.margin, priorMargin, away.recent5?.played ?? 0, 5);
 
   const winDiff = homeWin - awayWin;
-  const marginDiff = clampNum((homeMargin - awayMargin) / 12, -1, 1);
-  const r10Diff = clampNum(hR10 - aR10, -1, 1);
-  const r5MarginDiff = clampNum((hR5m - aR5m) / 14, -1, 1);
+  const marginDiff = clamp((homeMargin - awayMargin) / 12, -1, 1);
+  const r10Diff = clamp(hR10 - aR10, -1, 1);
+  const r5MarginDiff = clamp((hR5m - aR5m) / 14, -1, 1);
 
   const wWin = 0.38;
   const wMargin = 0.32;
@@ -840,19 +798,18 @@ function nbaEdge_v2(home, away) {
  */
 function nbaProbFromEdge_v2(edge, edgeScale = 0.11) {
   if (!Number.isFinite(edge)) return 0.5;
-  return clampNum(sigmoid(edge / edgeScale), 0.33, 0.77);
+  return clamp(sigmoid(edge / edgeScale), 0.33, 0.77);
 }
 
 /**
  * ✅ Wrapped with compute cache + in-flight de-dupe
  */
+
 async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
+  // v2 is the premium default (market-anchored + calibrated).
   const mv = String(modelVersion || "v2").toLowerCase() === "v1" ? "v1" : "v2";
   const key = `PRED:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
-
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
-    const t0 = Date.now();
-
     const schedule = await getNbaGamesByDate(dateYYYYMMDD);
     if (!schedule.length) {
       return {
@@ -865,16 +822,14 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
           mode: "regular",
           note: "No NBA games scheduled.",
           vegasAnchoring: false,
-          vegasBookmaker: mv === "v2" ? ODDS_BOOKMAKER : null,
           warnings: [],
-          elapsedMs: Date.now() - t0,
         },
         games: [],
       };
     }
 
-    const vegas =
-      mv === "v2" ? await fetchNbaVegasForDate(dateYYYYMMDD) : { ok: false, map: new Map(), reason: "disabled" };
+    // Pull vegas once per slate (safe no-op if no ODDS key)
+    const vegas = mv === "v2" ? await fetchNbaVegasForDate(dateYYYYMMDD) : { ok: false, map: new Map(), reason: "disabled" };
     const vegasMap = vegas?.ok ? vegas.map : new Map();
     const warnings = [];
     if (mv === "v2" && !vegas?.ok) warnings.push(`Vegas anchoring disabled: ${vegas?.reason || "unknown"}`);
@@ -906,64 +861,62 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
     const games = [];
     let noPickCount = 0;
 
+    // Premium thresholds (value edge = modelProb - marketProb)
     const BASE_PICK_EDGE = 0.03; // 3% value edge baseline (then adjusted by uncertainty)
 
     for (const g of schedule) {
       const homeS = teamStats.get(g.home.id) || { ok: false };
       const awayS = teamStats.get(g.away.id) || { ok: false };
 
+      // Stat edge → model probability (home)
       const statEdge = mv === "v2" ? nbaEdge_v2(homeS, awayS) : nbaEdge_v1(homeS, awayS);
       const pHomeModel = mv === "v2" ? nbaProbFromEdge_v2(statEdge, 0.11) : null;
 
+      // Market probability (home) from moneyline (no-vig if possible)
       const vegasRow = mv === "v2" ? lookupVegasNba(vegasMap, g.home.name, g.away.name) : null;
       const pHomeMkt = Number.isFinite(vegasRow?.h2h?.pHome) ? vegasRow.h2h.pHome : null;
 
+      // Market anchoring (only when we have moneyline)
       let pHomeAdj = pHomeModel;
       let anchorAlpha = 0;
       if (mv === "v2" && Number.isFinite(pHomeModel) && Number.isFinite(pHomeMkt)) {
         const gap = Math.abs(pHomeModel - pHomeMkt);
+        // If model is close to market, anchor strongly (reduces noise).
+        // If model is far from market, anchor lightly (still allows true edges).
         anchorAlpha = gap <= 0.04 ? 0.65 : gap <= 0.08 ? 0.45 : 0.25;
-        pHomeAdj = clampNum((1 - anchorAlpha) * pHomeModel + anchorAlpha * pHomeMkt, 0.35, 0.80);
+        pHomeAdj = clamp((1 - anchorAlpha) * pHomeModel + anchorAlpha * pHomeMkt, 0.35, 0.80);
       }
 
-      const rawHomeValueEdge =
-        Number.isFinite(pHomeAdj) && Number.isFinite(pHomeMkt)
-          ? pHomeAdj - pHomeMkt
-          : mv === "v2"
-            ? pHomeAdj - 0.5
-            : statEdge;
+      // Value edge in probability points (home vs market). If we don't have market, fall back to statEdge.
+      const rawValueEdge = Number.isFinite(pHomeAdj) && Number.isFinite(pHomeMkt) ? (pHomeAdj - pHomeMkt) : (mv === "v2" ? (pHomeAdj - 0.5) : statEdge);
+      const edge = mv === "v2" ? normalizeValueEdge(rawValueEdge) : statEdge;
 
-      const homeValueEdgeSigned = mv === "v2" ? normalizeValueEdge(rawHomeValueEdge) : statEdge;
-
+      // Uncertainty-aware pick threshold
       const MIN_EDGE_FOR_PICK =
         mv === "v2"
           ? Math.max(BASE_PICK_EDGE, pickThresholdFromUncertainty(homeS.played, awayS.played, BASE_PICK_EDGE))
           : 0.075;
 
-      const pick = pickFromEdge(homeValueEdgeSigned, MIN_EDGE_FOR_PICK);
+      const pick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
 
-      const edgeForPick =
-        pick.side === "home"
-          ? Number.isFinite(homeValueEdgeSigned) ? homeValueEdgeSigned : null
-          : pick.side === "away"
-            ? Number.isFinite(homeValueEdgeSigned) ? -homeValueEdgeSigned : null
-            : null;
-
-      if (!pick.side) noPickCount++;
-
+      // winProb = picked-side win probability (premium v2 only)
       let winProb = null;
       if (mv === "v2" && Number.isFinite(pHomeAdj)) {
         if (pick.side === "home") winProb = pHomeAdj;
         else if (pick.side === "away") winProb = 1 - pHomeAdj;
+        else winProb = 0.5;
       }
 
-      let conf = mv === "v2" ? 0.5 : confidenceFromEdge(homeValueEdgeSigned, 0.17, 0.53, 0.94);
+      // Confidence: based on winProb + (small) edge reinforcement, capped when winProb < 0.55
+      let conf = mv === "v2" ? 0.5 : confidenceFromEdge(edge, 0.17, 0.53, 0.94);
       if (mv === "v2") {
         const wp = Number.isFinite(winProb) ? winProb : 0.5;
-        const e = Number.isFinite(edgeForPick) ? edgeForPick : 0;
-        conf = clampNum(0.52 + 0.9 * Math.abs(wp - 0.5) + 0.35 * e, 0.52, 0.88);
+        const eabs = Number.isFinite(edge) ? Math.abs(edge) : 0;
+        conf = clamp(0.52 + 0.9 * Math.abs(wp - 0.5) + 0.35 * eabs, 0.52, 0.88);
         if (wp < 0.55) conf = Math.min(conf, 0.60);
       }
+
+      if (!pick.side) noPickCount++;
 
       const deltas = [
         { label: "Win% diff (home-away)", delta: (homeS.winPct ?? 0.5) - (awayS.winPct ?? 0.5), dp: 3 },
@@ -975,20 +928,15 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
         ...(mv === "v2" && Number.isFinite(pHomeAdj) ? [{ label: "Model win prob (home)", delta: pHomeAdj, dp: 3 }] : []),
       ];
 
-      const whyPanel = buildWhyPanel({
-        pickSide: pick.side,
-        pickNote: pick.note,
-        edgeForPick: Number.isFinite(edgeForPick) ? edgeForPick : null,
-        conf,
-        deltas,
-      });
+      const whyPanel = buildWhyPanel({ pickSide: pick.side, pickNote: pick.note, edge, conf, deltas });
 
+      // Tier logic (premium): edge + winProb gate
       let tier = "PASS";
       if (pick.side) {
-        const e = Number.isFinite(edgeForPick) ? edgeForPick : 0;
+        const eabs = Math.abs(edge);
         const wp = Number.isFinite(winProb) ? winProb : 0.5;
-        if (e >= 0.09 && wp >= 0.62) tier = "ELITE";
-        else if (e >= 0.06 && wp >= 0.58) tier = "STRONG";
+        if (eabs >= 0.09 && wp >= 0.62) tier = "ELITE";
+        else if (eabs >= 0.06 && wp >= 0.58) tier = "STRONG";
         else tier = "LEAN";
       }
 
@@ -1002,36 +950,42 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
           away: g.away,
           pickSide: pick.side,
           pickNote: pick.note,
-          edgeForPick,
+          edge,
           conf,
           tier,
           whyPanel,
           factors: {
             windowDays,
             modelVersion: mv,
-            edgeForPick,
-            homeValueEdgeSigned,
+            edge,
+            pickNote: pick.note,
+
             winProb: mv === "v2" ? winProb : null,
+
+            // Market context (optional)
             vegas: mv === "v2" ? (vegasRow || null) : null,
             vegasAnchoring: mv === "v2" ? Boolean(vegasRow?.h2h && Number.isFinite(pHomeMkt) && anchorAlpha > 0) : false,
             vegasAlpha: mv === "v2" ? (anchorAlpha || 0) : 0,
+
+            // Stat inputs
             statEdge: mv === "v2" ? statEdge : null,
             homePlayed: homeS.played ?? null,
             awayPlayed: awayS.played ?? null,
+
             homeWinPct: homeS.winPct ?? null,
             awayWinPct: awayS.winPct ?? null,
             homeMarginPerGame: homeS.marginPerGame ?? null,
             awayMarginPerGame: awayS.marginPerGame ?? null,
+
             homeRecent10WinPct: homeS.recent10?.winPct ?? null,
             awayRecent10WinPct: awayS.recent10?.winPct ?? null,
+
             homeRecent5Margin: homeS.recent5?.margin ?? null,
             awayRecent5Margin: awayS.recent5?.margin ?? null,
-            pHomeModel: mv === "v2" ? pHomeModel : null,
-            pHomeMarket: mv === "v2" ? pHomeMkt : null,
-            pHomeAnchored: mv === "v2" ? pHomeAdj : null,
+
             note:
               mv === "v2"
-                ? "NBA v2+: stat hybrid → probability + market (moneyline) anchoring + shrunk/clamped value edge + uncertainty-aware thresholds + winProb-gated tiers. Edge shown is value for the recommended side."
+                ? "NBA v2+: stat hybrid → probability + market (moneyline) anchoring + shrunk/clamped value edge + uncertainty-aware thresholds + winProb-gated tiers."
                 : "NBA v1: win% + margin + recent 10 + recent 5 margin + small home adv. PASS discipline enabled.",
           },
         })
@@ -1048,16 +1002,15 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
         mode: "regular",
         noPickCount,
         vegasAnchoring: mv === "v2" ? Boolean(vegas?.ok) : false,
-        vegasBookmaker: mv === "v2" ? (vegas?.meta?.bookmaker || ODDS_BOOKMAKER || null) : null,
+        vegasBookmaker: mv === "v2" ? (vegas?.meta?.bookmaker || null) : null,
         warnings,
-        elapsedMs: Date.now() - t0,
       },
       games,
     };
   });
 }
 
-// NHL remains paused here intentionally (your API meta tells the UI it’s paused)
+
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   return {
     meta: {
@@ -1068,14 +1021,13 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
       mode: "regular",
       note: "NHL paused (Olympics) — no games scheduled.",
       warnings: [],
-      elapsedMs: 0,
     },
     games: [],
   };
 }
 
 /* =========================================================
-   NCAAM — ESPN (premium)
+   NCAAM — ESPN (unchanged)
    ========================================================= */
 
 // ESPN logo CDN fallback for NCAAM
@@ -1083,28 +1035,6 @@ function espnNcaamLogoFromTeamId(teamId) {
   const id = String(teamId || "").trim();
   if (!id) return null;
   return `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png`;
-}
-
-// ✅ Robust score extraction for ESPN competitors
-function espnCompetitorScore(competitor) {
-  const direct = safeNum(competitor?.score);
-  if (Number.isFinite(direct)) return direct;
-
-  const ls = Array.isArray(competitor?.linescores) ? competitor.linescores : null;
-  if (ls && ls.length) {
-    let sum = 0;
-    let any = false;
-    for (const row of ls) {
-      const v = safeNum(row?.value ?? row?.displayValue ?? row?.score);
-      if (Number.isFinite(v)) {
-        sum += v;
-        any = true;
-      }
-    }
-    if (any) return sum;
-  }
-
-  return null;
 }
 
 function normalizeEspnEventToGame(event) {
@@ -1134,24 +1064,13 @@ function normalizeEspnEventToGame(event) {
   const homeAbbr = homeTeam?.abbreviation || "";
   const awayAbbr = awayTeam?.abbreviation || "";
 
-  const rawState = event?.status?.type?.state || event?.status?.type?.name || "scheduled";
-  const state = String(rawState || "").toLowerCase();
-  const normStatus =
-    state === "post" || state === "final" ? "post" :
-    state === "in" ? "in" :
-    state === "pre" ? "scheduled" :
-    state || "scheduled";
-
-  const homeScore = espnCompetitorScore(home);
-  const awayScore = espnCompetitorScore(away);
-
   return {
     id: String(event?.id ?? `${homeId}-${awayId}-${event?.date ?? ""}`),
     date: event?.date ?? null,
     homeTeamId: homeId,
     awayTeamId: awayId,
-    homeScore,
-    awayScore,
+    homeScore: safeNum(home?.score),
+    awayScore: safeNum(away?.score),
     homeName,
     awayName,
     homeAbbr,
@@ -1159,24 +1078,20 @@ function normalizeEspnEventToGame(event) {
     homeLogo: pickLogo(homeTeam),
     awayLogo: pickLogo(awayTeam),
     neutralSite: Boolean(comp?.neutralSite),
-    status: normStatus,
+    status: event?.status?.type?.state || "scheduled",
   };
 }
 
 async function getNcaamScoreboardByDate(dateYYYYMMDD) {
   const ymd = toEspnYYYYMMDD(dateYYYYMMDD);
   const url = `${ESPN_SITE_V2}/${ESPN_NCAAM_PATH}/scoreboard?dates=${encodeURIComponent(ymd)}`;
-  const json = await fetchJson(
-    url,
-    {},
-    {
-      cacheTtlMs: HEAVY_CACHE_TTL_MS,
-      retries: 5,
-      baseBackoffMs: 650,
-      hostConcurrency: 3,
-      timeoutMs: 25_000,
-    }
-  );
+  const json = await fetchJson(url, {}, {
+    cacheTtlMs: HEAVY_CACHE_TTL_MS,
+    retries: 5,
+    baseBackoffMs: 650,
+    hostConcurrency: 3,
+    timeoutMs: 25_000,
+  });
   const events = Array.isArray(json?.events) ? json.events : [];
   return events.map(normalizeEspnEventToGame).filter(Boolean);
 }
@@ -1186,30 +1101,14 @@ async function getNcaamSlate(dateYYYYMMDD) {
   return rows.filter((g) => g.homeTeamId && g.awayTeamId);
 }
 
-/**
- * Premium upgrade: parallel history fetch with a small pool
- * - much faster for cron backfills
- * - still protected by fetchJson hostConcurrency + cache
- */
 async function getNcaamHistory(endDateYYYYMMDD, historyDays) {
-  const days = [];
-  for (let i = historyDays; i >= 1; i--) days.push(addDaysUTC(endDateYYYYMMDD, -i));
-
-  const POOL = 3;
   const out = [];
-  let idx = 0;
-
-  async function worker() {
-    while (idx < days.length) {
-      const myIdx = idx++;
-      const d = days[myIdx];
-      const dayRows = await getNcaamScoreboardByDate(d);
-      out.push(...dayRows);
-      await sleep(35);
-    }
+  for (let i = historyDays; i >= 1; i--) {
+    const d = addDaysUTC(endDateYYYYMMDD, -i);
+    const dayRows = await getNcaamScoreboardByDate(d);
+    out.push(...dayRows);
+    await sleep(45);
   }
-
-  await Promise.all(Array.from({ length: Math.min(POOL, days.length) }, () => worker()));
   return out.filter((g) => g.homeTeamId && g.awayTeamId);
 }
 
@@ -1275,7 +1174,7 @@ function ncaamEdge(home, away, neutralSite, tournamentMode) {
   const wRecent = 0.20;
 
   const winDiff = home.winPct - away.winPct;
-  const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 14, -1, 1);
+  const marginScaled = clamp((home.marginPerGame - away.marginPerGame) / 14, -1, 1);
 
   const recentDiff =
     (Number.isFinite(home.recentWinPct) ? home.recentWinPct : 0.5) -
@@ -1286,176 +1185,161 @@ function ncaamEdge(home, away, neutralSite, tournamentMode) {
 }
 
 async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode, modeLabel }) {
-  const historyDays = clampNum(Number(windowDays) || 45, 14, 90);
-  const key = `PRED:ncaam:${dateYYYYMMDD}:w${historyDays}:t${tournamentMode ? 1 : 0}`;
+  const historyDays = clamp(Number(windowDays) || 45, 14, 90);
 
-  return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
-    const t0 = Date.now();
-
-    const slate = await getNcaamSlate(dateYYYYMMDD);
-    if (!slate.length) {
-      return {
-        meta: {
-          league: "ncaam",
-          date: dateYYYYMMDD,
-          windowDays: historyDays,
-          model: "NCAAM premium-v3",
-          mode: modeLabel,
-          note: "No NCAAM games scheduled.",
-          warnings: [],
-          elapsedMs: Date.now() - t0,
-        },
-        games: [],
-      };
-    }
-
-    const history = await getNcaamHistory(dateYYYYMMDD, historyDays);
-    const teamStats = buildNcaamTeamStatsFromHistory(history, dateYYYYMMDD, 10);
-
-    const games = [];
-    let noPickCount = 0;
-
-    const BASE_MIN_EDGE = 0.095;
-    const MIN_EDGE_FOR_PICK = tournamentMode ? 0.075 : BASE_MIN_EDGE;
-
-    for (const g of slate) {
-      const homeS = teamStats.get(g.homeTeamId) || { ok: false };
-      const awayS = teamStats.get(g.awayTeamId) || { ok: false };
-
-      const neutral = Boolean(g.neutralSite) || Boolean(tournamentMode);
-      let edgeSigned = ncaamEdge(homeS, awayS, neutral, tournamentMode);
-
-      const tentativePick = pickFromEdge(edgeSigned, MIN_EDGE_FOR_PICK);
-      if (tournamentMode && tentativePick.side) {
-        const homeUnderdog = (homeS.winPct ?? 0.5) < (awayS.winPct ?? 0.5);
-        const awayUnderdog = (awayS.winPct ?? 0.5) < (homeS.winPct ?? 0.5);
-        const pickedUnderdog =
-          (tentativePick.side === "home" && homeUnderdog) ||
-          (tentativePick.side === "away" && awayUnderdog);
-        if (pickedUnderdog) edgeSigned = edgeSigned * 1.08;
-      }
-
-      const pick = pickFromEdge(edgeSigned, MIN_EDGE_FOR_PICK);
-      const conf = confidenceFromEdge(edgeSigned, tournamentMode ? 0.24 : 0.22, 0.53, 0.92);
-
-      // ✅ carry scores into home/away objects so UI + scoreCompletedGames can grade
-      const homeObj = {
-        id: toNcaamTeamId(g.homeTeamId),
-        name: g.homeName || "",
-        abbr: g.homeAbbr || "",
-        logo: g.homeLogo || espnNcaamLogoFromTeamId(g.homeTeamId),
-        score: Number.isFinite(g.homeScore) ? g.homeScore : null,
-      };
-
-      const awayObj = {
-        id: toNcaamTeamId(g.awayTeamId),
-        name: g.awayName || "",
-        abbr: g.awayAbbr || "",
-        logo: g.awayLogo || espnNcaamLogoFromTeamId(g.awayTeamId),
-        score: Number.isFinite(g.awayScore) ? g.awayScore : null,
-      };
-
-      if (!pick.side) noPickCount++;
-
-      const edgeForPick =
-        pick.side === "home" ? Math.abs(edgeSigned) : pick.side === "away" ? Math.abs(edgeSigned) : null;
-
-      const deltas = [
-        { label: "Win% diff (home-away)", delta: (homeS.winPct ?? 0.5) - (awayS.winPct ?? 0.5), dp: 3 },
-        { label: "Margin diff", delta: (homeS.marginPerGame ?? 0) - (awayS.marginPerGame ?? 0), dp: 2, suffix: " pts/g" },
-        { label: "Recent win% diff", delta: (homeS.recentWinPct ?? 0.5) - (awayS.recentWinPct ?? 0.5), dp: 3 },
-        { label: "Neutral court", delta: neutral ? 1 : 0, dp: 0, suffix: neutral ? " (yes)" : " (no)" },
-      ];
-
-      const whyPanel = buildWhyPanel({
-        pickSide: pick.side,
-        pickNote: pick.note,
-        edgeForPick: Number.isFinite(edgeForPick) ? edgeForPick : null,
-        conf,
-        deltas,
-      });
-
-      const tier = pick.side
-        ? tierFromEdge(Math.abs(edgeSigned), { lean: MIN_EDGE_FOR_PICK, edge: tournamentMode ? 0.105 : 0.11 })
-        : "PASS";
-
-      games.push(
-        toUnifiedGame({
-          league: "ncaam",
-          gameId: `ncaam-${g.id}`,
-          date: dateYYYYMMDD,
-          status: g.status || "scheduled",
-          home: homeObj,
-          away: awayObj,
-          pickSide: pick.side,
-          pickNote: pick.note,
-          edgeForPick,
-          conf,
-          tier,
-          whyPanel,
-          factors: {
-            windowDays: historyDays,
-            edgeForPick,
-            homeEdgeSigned: edgeSigned,
-            pickNote: pick.note,
-            neutralSite: neutral,
-            tournamentMode: Boolean(tournamentMode),
-            homeWinPct: homeS.winPct ?? null,
-            awayWinPct: awayS.winPct ?? null,
-            homeMarginPerGame: homeS.marginPerGame ?? null,
-            awayMarginPerGame: awayS.marginPerGame ?? null,
-            homeRecentWinPct: homeS.recentWinPct ?? null,
-            awayRecentWinPct: awayS.recentWinPct ?? null,
-            note: tournamentMode
-              ? "Tournament mode: neutral court assumption + higher upset sensitivity + PASS discipline."
-              : "Premium blend (conservative): win% + margin + recent 10 + small home adv. PASS discipline enabled.",
-          },
-        })
-      );
-    }
-
+  const slate = await getNcaamSlate(dateYYYYMMDD);
+  if (!slate.length) {
     return {
       meta: {
         league: "ncaam",
         date: dateYYYYMMDD,
         windowDays: historyDays,
-        historyGamesFetched: history.length,
-        noPickCount,
         model: "NCAAM premium-v3",
         mode: modeLabel,
+        note: "No NCAAM games scheduled.",
         warnings: [],
-        elapsedMs: Date.now() - t0,
       },
-      games,
+      games: [],
     };
-  });
+  }
+
+  const history = await getNcaamHistory(dateYYYYMMDD, historyDays);
+  const teamStats = buildNcaamTeamStatsFromHistory(history, dateYYYYMMDD, 10);
+
+  const games = [];
+  let noPickCount = 0;
+
+  const BASE_MIN_EDGE = 0.095;
+  const MIN_EDGE_FOR_PICK = tournamentMode ? 0.075 : BASE_MIN_EDGE;
+
+  for (const g of slate) {
+    const homeS = teamStats.get(g.homeTeamId) || { ok: false };
+    const awayS = teamStats.get(g.awayTeamId) || { ok: false };
+
+    const neutral = Boolean(g.neutralSite) || Boolean(tournamentMode);
+    let edge = ncaamEdge(homeS, awayS, neutral, tournamentMode);
+
+    const homeUnderdog = (homeS.winPct ?? 0.5) < (awayS.winPct ?? 0.5);
+    const awayUnderdog = (awayS.winPct ?? 0.5) < (homeS.winPct ?? 0.5);
+
+    const tentativePick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
+    if (tournamentMode && tentativePick.side) {
+      const pickedUnderdog =
+        (tentativePick.side === "home" && homeUnderdog) || (tentativePick.side === "away" && awayUnderdog);
+      if (pickedUnderdog) edge = edge * 1.08;
+    }
+
+    const pick = pickFromEdge(edge, MIN_EDGE_FOR_PICK);
+    const conf = confidenceFromEdge(edge, tournamentMode ? 0.24 : 0.22, 0.53, 0.92);
+
+    const homeObj = {
+      id: toNcaamTeamId(g.homeTeamId),
+      name: g.homeName || "",
+      abbr: g.homeAbbr || "",
+      logo: g.homeLogo || espnNcaamLogoFromTeamId(g.homeTeamId),
+    };
+
+    const awayObj = {
+      id: toNcaamTeamId(g.awayTeamId),
+      name: g.awayName || "",
+      abbr: g.awayAbbr || "",
+      logo: g.awayLogo || espnNcaamLogoFromTeamId(g.awayTeamId),
+    };
+
+    if (!pick.side) noPickCount++;
+
+    const deltas = [
+      { label: "Win% diff (home-away)", delta: (homeS.winPct ?? 0.5) - (awayS.winPct ?? 0.5), dp: 3 },
+      { label: "Margin diff", delta: (homeS.marginPerGame ?? 0) - (awayS.marginPerGame ?? 0), dp: 2, suffix: " pts/g" },
+      { label: "Recent win% diff", delta: (homeS.recentWinPct ?? 0.5) - (awayS.recentWinPct ?? 0.5), dp: 3 },
+      { label: "Neutral court", delta: neutral ? 1 : 0, dp: 0, suffix: neutral ? " (yes)" : " (no)" },
+    ];
+
+    const whyPanel = buildWhyPanel({ pickSide: pick.side, pickNote: pick.note, edge, conf, deltas });
+    const tier = pick.side
+      ? tierFromEdge(Math.abs(edge), { lean: MIN_EDGE_FOR_PICK, edge: tournamentMode ? 0.105 : 0.11 })
+      : "PASS";
+
+    games.push(
+      toUnifiedGame({
+        league: "ncaam",
+        gameId: `ncaam-${g.id}`,
+        date: dateYYYYMMDD,
+        status: g.status || "scheduled",
+        home: homeObj,
+        away: awayObj,
+        pickSide: pick.side,
+        pickNote: pick.note,
+        edge,
+        conf,
+        tier,
+        whyPanel,
+        factors: {
+          windowDays: historyDays,
+          edge,
+          pickNote: pick.note,
+          neutralSite: neutral,
+          tournamentMode: Boolean(tournamentMode),
+          homeWinPct: homeS.winPct ?? null,
+          awayWinPct: awayS.winPct ?? null,
+          homeMarginPerGame: homeS.marginPerGame ?? null,
+          awayMarginPerGame: awayS.marginPerGame ?? null,
+          homeRecentWinPct: homeS.recentWinPct ?? null,
+          awayRecentWinPct: awayS.recentWinPct ?? null,
+          note: tournamentMode
+            ? "Tournament mode: neutral court assumption + higher upset sensitivity + PASS discipline."
+            : "Premium blend (conservative): win% + margin + recent 10 + small home adv. PASS discipline enabled.",
+        },
+      })
+    );
+  }
+
+  return {
+    meta: {
+      league: "ncaam",
+      date: dateYYYYMMDD,
+      windowDays: historyDays,
+      historyGamesFetched: history.length,
+      noPickCount,
+      model: "NCAAM premium-v3",
+      mode: modeLabel,
+      warnings: [],
+    },
+    games,
+  };
+}
+
+/**
+ * Backward compat adaptor
+ */
+function addPredictionsAlias(out) {
+  return { ...out, predictions: out.games };
 }
 
 /**
  * Routes
  */
-router.get("/ping", (_req, res) => {
-  res.json({ ok: true, route: "predict", version: "predict-premium-v6" });
-});
-
 router.get("/nba/predict", async (req, res) => {
   const date = readDateFromReq(req);
   const windowDays = readWindowFromReq(req, 14, 3, 30);
   const modelVersion = readModelFromReq(req, "v2");
 
   try {
-    const out = await buildNbaPredictions(date, windowDays, { modelVersion });
-    return res.json(okWrap("nba", date, out));
+    res.json(addPredictionsAlias(await buildNbaPredictions(date, windowDays, { modelVersion })));
   } catch (e) {
-    return res.json(
-      errWrap({
-        league: "nba",
-        date,
-        windowDays,
-        model: modelVersion === "v2" ? "NBA premium-v5-market-anchored" : "NBA premium-v3",
-        modelVersion,
-        mode: "regular",
-        error: e?.message || e,
+    res.json(
+      addPredictionsAlias({
+        meta: {
+          league: "nba",
+          date,
+          windowDays,
+          model: modelVersion === "v2" ? "NBA premium-v4-hybrid" : "NBA premium-v3",
+          modelVersion,
+          mode: "regular",
+          error: String(e?.message || e),
+          warnings: [],
+        },
+        games: [],
       })
     );
   }
@@ -1466,18 +1350,20 @@ router.get("/nhl/predict", async (req, res) => {
   const windowDays = readWindowFromReq(req, 60, 3, 120);
 
   try {
-    const out = await buildNhlPredictions(date, windowDays);
-    return res.json(okWrap("nhl", date, out));
+    res.json(addPredictionsAlias(await buildNhlPredictions(date, windowDays)));
   } catch (e) {
-    return res.json(
-      errWrap({
-        league: "nhl",
-        date,
-        windowDays,
-        model: "NHL paused-v1",
-        modelVersion: null,
-        mode: "regular",
-        error: e?.message || e,
+    res.json(
+      addPredictionsAlias({
+        meta: {
+          league: "nhl",
+          date,
+          windowDays,
+          model: "NHL paused-v1",
+          mode: "regular",
+          error: String(e?.message || e),
+          warnings: [],
+        },
+        games: [],
       })
     );
   }
@@ -1489,18 +1375,24 @@ router.get("/ncaam/predict", async (req, res) => {
   const { tournament, mode } = readModeFromReq(req);
 
   try {
-    const out = await buildNcaamPredictions(date, windowDays, { tournamentMode: tournament, modeLabel: mode });
-    return res.json(okWrap("ncaam", date, out));
+    res.json(
+      addPredictionsAlias(
+        await buildNcaamPredictions(date, windowDays, { tournamentMode: tournament, modeLabel: mode })
+      )
+    );
   } catch (e) {
-    return res.json(
-      errWrap({
-        league: "ncaam",
-        date,
-        windowDays,
-        model: "NCAAM premium-v3",
-        modelVersion: null,
-        mode,
-        error: e?.message || e,
+    res.json(
+      addPredictionsAlias({
+        meta: {
+          league: "ncaam",
+          date,
+          windowDays,
+          model: "NCAAM premium-v3",
+          mode,
+          error: String(e?.message || e),
+          warnings: [],
+        },
+        games: [],
       })
     );
   }
@@ -1517,25 +1409,28 @@ router.get("/predictions", async (req, res) => {
       const windowDays = readWindowFromReq(req, 14, 3, 30);
       const modelVersion = readModelFromReq(req, "v2");
       const out = await buildNbaPredictions(date, windowDays, { modelVersion });
-      return res.json(okWrap("nba", date, out));
+      return res.json({ league, date, count: out.games.length, ...addPredictionsAlias(out) });
     }
     if (league === "nhl") {
       const windowDays = readWindowFromReq(req, 60, 3, 120);
       const out = await buildNhlPredictions(date, windowDays);
-      return res.json(okWrap("nhl", date, out));
+      return res.json({ league, date, count: out.games.length, ...addPredictionsAlias(out) });
     }
     if (league === "ncaam") {
       const windowDays = readWindowFromReq(req, 45, 14, 90);
-      const out = await buildNcaamPredictions(date, windowDays, { tournamentMode: tournament, modeLabel: mode });
-      return res.json(okWrap("ncaam", date, out));
+      const out = await buildNcaamPredictions(date, windowDays, {
+        tournamentMode: tournament,
+        modeLabel: mode,
+      });
+      return res.json({ league, date, count: out.games.length, ...addPredictionsAlias(out) });
     }
-    return res.status(400).json({ ok: false, error: "Unsupported league. Use league=nba|nhl|ncaam", got: league });
+    return res.status(400).json({ error: "Unsupported league. Use league=nba|nhl|ncaam", got: league });
   } catch (e) {
-    return res.json({ ok: false, league, date, mode, error: String(e?.message || e), games: [], predictions: [] });
+    return res.json({ league, date, mode, error: String(e?.message || e), games: [], predictions: [] });
   }
 });
 
-// ✅ Export builders so /api/performance + cron can call them directly (no internal HTTP)
+// ✅ Export builders so /api/performance can call them directly (no internal HTTP)
 export { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions };
 
 export default router;
