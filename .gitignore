@@ -23,3 +23,6 @@ apps/api/src/engines/
 # local backups
 *.bak.*
 *.broken
+
+# local backups
+*.bak_*

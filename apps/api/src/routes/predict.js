@@ -13,14 +13,24 @@ const NBA_API_KEY = process.env.NBA_API_KEY || "";
 // ✅ ESPN
 const ESPN_SITE_V2 = "https://site.api.espn.com/apis/site/v2/sports";
 const ESPN_NCAAM_PATH = "basketball/mens-college-basketball";
+const ESPN_NHL_PATH = "hockey/nhl";
 
 // ✅ The Odds API (Vegas market lines) — optional but enables market anchoring for NBA
 const ODDS_API_BASE = process.env.ODDS_API_BASE || "https://api.the-odds-api.com/v4";
 const ODDS_API_KEY = process.env.ODDS_API_KEY || "";
-const ODDS_BOOKMAKER = (process.env.ODDS_BOOKMAKER || "draftkings").toLowerCase();
+const ODDS_BOOKMAKER = String(process.env.ODDS_BOOKMAKER || process.env.ODDS_BOOK || "draftkings").toLowerCase();
+
+// ✅ Premium guard: historical odds are paid-only on many Odds API plans.
+// Default false (recommended). Enable only if you're on a paid plan.
+const ODDS_ALLOW_HISTORICAL =
+  String(process.env.ODDS_ALLOW_HISTORICAL || "false").toLowerCase() === "true";
 
 /**
  * Cache (TTL + in-flight de-dupe + simple pruning)
+ *
+ * Premium upgrades:
+ * - Periodic expired-key cleanup (prevents memory creep on long-lived server)
+ * - Defensive queue cap on host gate (avoids unbounded memory if upstream stalls)
  */
 const CACHE_TTL_MS = 60_000;
 const HEAVY_CACHE_TTL_MS = 20 * 60_000;
@@ -30,6 +40,20 @@ const cache = new Map(); // key -> { time, ttl, value }
 const inFlight = new Map(); // key -> Promise (upstream fetches)
 const predInFlight = new Map(); // key -> Promise (computed predictions)
 
+let _lastCacheSweep = 0;
+function sweepExpiredCache(maxToCheck = 500) {
+  const now = Date.now();
+  if (now - _lastCacheSweep < 30_000) return; // at most every 30s
+  _lastCacheSweep = now;
+
+  let checked = 0;
+  for (const [k, v] of cache.entries()) {
+    checked++;
+    if (now - v.time > v.ttl) cache.delete(k);
+    if (checked >= maxToCheck) break;
+  }
+}
+
 function pruneCacheIfNeeded() {
   if (cache.size <= MAX_CACHE_KEYS) return;
   const entries = [...cache.entries()].sort((a, b) => a[1].time - b[1].time);
@@ -38,6 +62,7 @@ function pruneCacheIfNeeded() {
 }
 
 function getCache(key) {
+  sweepExpiredCache();
   const hit = cache.get(key);
   if (!hit) return null;
   if (Date.now() - hit.time > hit.ttl) {
@@ -68,16 +93,29 @@ function parseRetryAfterSeconds(res) {
   return Number.isFinite(n) ? n : null;
 }
 
+function clampNum(x, a, b) {
+  return Math.max(a, Math.min(b, x));
+}
+
 // Small per-host concurrency gate (prevents “imploding”)
 const hostGates = new Map(); // host -> { active, queue: [] }
 
-async function withHostGate(url, limit, fn) {
+// Defensive: avoid unbounded queue growth if upstream becomes unusable.
+// If queue exceeds cap, new callers wait for a short time and then proceed (best-effort).
+const DEFAULT_HOST_QUEUE_CAP = 200;
+
+async function withHostGate(url, limit, fn, { queueCap = DEFAULT_HOST_QUEUE_CAP } = {}) {
   const host = new URL(url).host;
   if (!hostGates.has(host)) hostGates.set(host, { active: 0, queue: [] });
   const gate = hostGates.get(host);
 
   if (gate.active >= limit) {
-    await new Promise((resolve) => gate.queue.push(resolve));
+    // If queue is huge, degrade gracefully rather than OOM the process.
+    if (gate.queue.length >= queueCap) {
+      await sleep(35);
+    } else {
+      await new Promise((resolve) => gate.queue.push(resolve));
+    }
   }
 
   gate.active++;
@@ -90,6 +128,12 @@ async function withHostGate(url, limit, fn) {
   }
 }
 
+function isAbortLike(e) {
+  const name = String(e?.name || "");
+  const msg = String(e?.message || e || "");
+  return name === "AbortError" || msg.toLowerCase().includes("aborted");
+}
+
 /**
  * fetchJson with:
  * - cache
@@ -97,6 +141,10 @@ async function withHostGate(url, limit, fn) {
  * - retry/backoff on 429 / 5xx / transient network errors
  * - per-host concurrency caps
  * - HARD request timeout via AbortController (prevents “forever hangs”)
+ *
+ * Premium upgrades:
+ * - Robust JSON parsing with content-type fallback (upstreams occasionally return HTML on errors)
+ * - Better transient detection (AbortError + common Node fetch failures)
  */
 async function fetchJson(
   url,
@@ -121,19 +169,39 @@ async function fetchJson(
   const p = (async () => {
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const res = await withHostGate(url, hostConcurrency, async () => {
-          const controller = new AbortController();
-          const t = setTimeout(() => controller.abort(), timeoutMs);
-          try {
-            return await fetch(url, { headers, signal: controller.signal });
-          } finally {
-            clearTimeout(t);
-          }
-        });
+        const res = await withHostGate(
+          url,
+          hostConcurrency,
+          async () => {
+            const controller = new AbortController();
+            const t = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+              return await fetch(url, {
+                headers: {
+                  // ESPN is usually fine without UA, but some CDNs behave better with it.
+                  // Keep minimal and stable.
+                  "User-Agent": "sports-mvp-api/1.0",
+                  ...(headers || {}),
+                },
+                signal: controller.signal,
+              });
+            } finally {
+              clearTimeout(t);
+            }
+          },
+          { queueCap: DEFAULT_HOST_QUEUE_CAP }
+        );
+
+        const contentType = String(res.headers?.get?.("content-type") || "").toLowerCase();
+
+        // Helper: safe read text once
+        async function readTextSafe() {
+          return await res.text().catch(() => "");
+        }
 
         if (res.status === 429) {
           const retryAfter = parseRetryAfterSeconds(res);
-          const text = await res.text().catch(() => "");
+          const text = await readTextSafe();
           const waitMs =
             retryAfter != null
               ? retryAfter * 1000
@@ -149,7 +217,7 @@ async function fetchJson(
         }
 
         if (res.status >= 500 && res.status <= 599) {
-          const text = await res.text().catch(() => "");
+          const text = await readTextSafe();
           const waitMs = jitter(baseBackoffMs * Math.pow(2, attempt), 0.25);
           if (attempt >= retries) {
             throw new Error(`Upstream ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
@@ -159,22 +227,45 @@ async function fetchJson(
         }
 
         if (!res.ok) {
-          const text = await res.text().catch(() => "");
+          const text = await readTextSafe();
           throw new Error(`Upstream ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
         }
 
-        const data = await res.json();
+        // Prefer res.json() when content-type looks right; otherwise attempt json parse from text.
+        let data;
+        if (contentType.includes("application/json") || contentType.includes("+json")) {
+          try {
+            data = await res.json();
+          } catch {
+            const text = await readTextSafe();
+            try {
+              data = JSON.parse(text);
+            } catch {
+              throw new Error(`Upstream returned non-JSON for ${url}`);
+            }
+          }
+        } else {
+          const text = await readTextSafe();
+          try {
+            data = JSON.parse(text);
+          } catch {
+            // If upstream returned HTML or text, fail loudly but safely.
+            throw new Error(`Upstream returned non-JSON for ${url}`);
+          }
+        }
+
         setCache(cacheKey, data, cacheTtlMs);
         return data;
       } catch (e) {
         const msg = String(e?.message || e);
-        const isAbort = msg.toLowerCase().includes("aborted");
         const isTransient =
-          isAbort ||
+          isAbortLike(e) ||
           msg.includes("fetch failed") ||
           msg.includes("ECONNRESET") ||
           msg.includes("ETIMEDOUT") ||
-          msg.includes("EAI_AGAIN");
+          msg.includes("EAI_AGAIN") ||
+          msg.includes("ENOTFOUND") ||
+          msg.includes("network timeout");
 
         if (!isTransient || attempt >= retries) throw e;
         await sleep(jitter(baseBackoffMs * Math.pow(2, attempt), 0.25));
@@ -216,7 +307,50 @@ async function computeCached(key, ttlMs, fn) {
 }
 
 /**
+ * Logo helpers
+ */
+function nbaLogoFromAbbr(abbr) {
+  const a = String(abbr || "").trim().toLowerCase();
+  if (!a) return null;
+  return `https://a.espncdn.com/i/teamlogos/nba/500/${a}.png`;
+}
+function espnNhlLogoFromTeamId(teamId) {
+  const id = String(teamId || "").trim();
+  if (!id) return null;
+  return `https://a.espncdn.com/i/teamlogos/nhl/500/${id}.png`;
+}
+
+
+function sanitizeLogoUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  // ESPN provides https; keep only http/https to avoid broken images.
+  if (!/^https?:\/\//i.test(u)) return null;
+  return u;
+}
+
+function countMissingLogos(games = []) {
+  let totalTeams = 0;
+  let missing = 0;
+  for (const g of games) {
+    for (const side of ["home", "away"]) {
+      const t = g?.[side];
+      if (!t) continue;
+      totalTeams++;
+      const logo = sanitizeLogoUrl(t.logo);
+      if (!logo) missing++;
+    }
+  }
+  return { totalTeams, missing, ok: missing === 0 };
+}
+
+/**
  * Vegas helpers (The Odds API) — NBA anchoring only (safe no-op if no key)
+ *
+ * Premium fixes:
+ * - Avoid paid-only historical endpoint for past dates unless ODDS_ALLOW_HISTORICAL=true
+ * - Redact apiKey from meta URLs (avoid leaking secrets)
+ * - Normalize common paid-plan error into a stable reason
  */
 function normTeamName(s) {
   return String(s || "")
@@ -232,7 +366,7 @@ function americanToImpliedProb(american) {
   const a = Number(american);
   if (!Number.isFinite(a) || a === 0) return null;
   if (a > 0) return 100 / (a + 100);
-  return (-a) / ((-a) + 100);
+  return -a / (-a + 100);
 }
 
 function normalizeNoVig(pA, pB) {
@@ -245,30 +379,91 @@ function normalizeNoVig(pA, pB) {
 // ✅ Odds API is picky sometimes; use no-milliseconds ISO to avoid INVALID_COMMENCE_TIME_FROM
 function ymdToOddsIsoRange(ymd) {
   const startIso = `${ymd}T00:00:00Z`;
-  const endIso = `${ymd}T23:59:59Z`;
+
+  // NBA games often start after midnight UTC for the same "calendar day" in the US.
+  // Include a buffer into the next UTC day to capture late tips.
+  const startMs = Date.parse(`${ymd}T00:00:00Z`);
+  const endMs = startMs + 30 * 60 * 60 * 1000; // +30 hours
+  const endIso = new Date(endMs).toISOString().replace(/\.\d{3}Z$/, "Z"); // no millis
+
   return { startIso, endIso };
 }
 
-function buildOddsUrlForDate(ymd) {
+function todayUTCYMD() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isPastDateUTC(dateYYYYMMDD) {
+  const today = todayUTCYMD();
+  return String(dateYYYYMMDD) < today;
+}
+
+function redactOddsUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.searchParams.has("apiKey")) u.searchParams.set("apiKey", "REDACTED");
+    return u.toString();
+  } catch {
+    return String(url || "").replace(/apiKey=([^&]+)/gi, "apiKey=REDACTED");
+  }
+}
+
+function buildOddsUrlForDate(ymd, { historical = false } = {}) {
+  const base = ODDS_API_BASE.replace(/\/$/, "");
+  const sport = "basketball_nba";
+
+  const common =
+    `apiKey=${encodeURIComponent(ODDS_API_KEY)}` +
+    `&regions=${encodeURIComponent(String(process.env.ODDS_REGIONS || "us"))}` +
+    `&markets=${encodeURIComponent(String(process.env.ODDS_MARKETS || "h2h,spreads,totals"))}` +
+    `&oddsFormat=${encodeURIComponent(String(process.env.ODDS_ODDS_FORMAT || "american"))}` +
+    `&dateFormat=iso` +
+    `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`;
+
+  if (historical) {
+    const snap = `${ymd}T12:00:00Z`;
+    return `${base}/historical/sports/${sport}/odds?date=${encodeURIComponent(snap)}&${common}`;
+  }
+
   const { startIso, endIso } = ymdToOddsIsoRange(ymd);
   return (
-    `${ODDS_API_BASE.replace(/\/$/, "")}` +
-    `/sports/basketball_nba/odds` +
-    `?apiKey=${encodeURIComponent(ODDS_API_KEY)}` +
-    `&regions=us` +
-    `&markets=h2h,spreads,totals` +
-    `&oddsFormat=american` +
-    `&dateFormat=iso` +
-    `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}` +
+    `${base}/sports/${sport}/odds` +
+    `?${common}` +
     `&commenceTimeFrom=${encodeURIComponent(startIso)}` +
     `&commenceTimeTo=${encodeURIComponent(endIso)}`
   );
 }
 
 async function fetchNbaVegasForDate(ymd) {
-  if (!ODDS_API_KEY) return { ok: false, reason: "missing_odds_key", map: new Map(), meta: {} };
+  if (!ODDS_API_KEY) {
+    return {
+      ok: false,
+      reason: "missing_odds_key",
+      map: new Map(),
+      meta: { url: null, events: null, bookmaker: ODDS_BOOKMAKER, sampleKeys: null },
+    };
+  }
 
-  const url = buildOddsUrlForDate(ymd);
+  const isPast = isPastDateUTC(ymd);
+
+  // ✅ Premium guard: avoid paid-only historical call unless explicitly enabled
+  if (isPast && !ODDS_ALLOW_HISTORICAL) {
+    const urlWouldBe = buildOddsUrlForDate(ymd, { historical: true });
+    return {
+      ok: false,
+      reason: "historical_disabled_for_past_dates",
+      map: new Map(),
+      meta: {
+        url: redactOddsUrl(urlWouldBe),
+        events: null,
+        bookmaker: ODDS_BOOKMAKER,
+        sampleKeys: null,
+        shape: "historical",
+      },
+    };
+  }
+
+  const url = buildOddsUrlForDate(ymd, { historical: isPast });
 
   // keep this snappy: 1 retry, hard 7s timeout
   const data = await fetchJson(
@@ -277,22 +472,59 @@ async function fetchNbaVegasForDate(ymd) {
     { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 1, timeoutMs: 7_000, hostConcurrency: 1 }
   ).catch((e) => ({ __error: String(e?.message || e) }));
 
+  // ✅ normalize common paid-plan error
+  if (
+    data?.__error &&
+    String(data.__error).includes("HISTORICAL_UNAVAILABLE_ON_FREE_USAGE_PLAN")
+  ) {
+    return {
+      ok: false,
+      reason: "historical_unavailable_on_free_plan",
+      map: new Map(),
+      meta: {
+        url: redactOddsUrl(url),
+        events: null,
+        bookmaker: ODDS_BOOKMAKER,
+        sampleKeys: null,
+        shape: "historical",
+      },
+    };
+  }
+
   if (data?.__error && String(data.__error).includes("INVALID_COMMENCE_TIME_FROM")) {
-    return { ok: false, reason: data.__error, map: new Map(), meta: {} };
+    return {
+      ok: false,
+      reason: "invalid_commence_time_from",
+      map: new Map(),
+      meta: { url: redactOddsUrl(url), events: null, bookmaker: ODDS_BOOKMAKER, sampleKeys: null },
+    };
   }
+
   if (!data || data.__error) {
-    return { ok: false, reason: data?.__error || "odds_fetch_failed", map: new Map(), meta: {} };
+    return {
+      ok: false,
+      reason: data?.__error || "odds_fetch_failed",
+      map: new Map(),
+      meta: { url: redactOddsUrl(url), events: null, bookmaker: ODDS_BOOKMAKER, sampleKeys: null },
+    };
   }
+
+  // ✅ Live endpoint returns array; historical endpoint returns { data: [...] }
+  const eventsArray = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
 
   const map = new Map();
   let matched = 0;
+  const sampleKeys = [];
 
-  for (const ev of Array.isArray(data) ? data : []) {
+  for (const ev of eventsArray) {
     const home = normTeamName(ev?.home_team);
     const away = normTeamName(ev?.away_team);
     if (!home || !away) continue;
 
-    const bk = Array.isArray(ev?.bookmakers) ? ev.bookmakers[0] : null;
+    const bks = Array.isArray(ev?.bookmakers) ? ev.bookmakers : [];
+    const bk =
+      bks.find((b) => String(b?.key || "").toLowerCase() === ODDS_BOOKMAKER) || bks[0] || null;
+
     const markets = Array.isArray(bk?.markets) ? bk.markets : [];
 
     const out = {
@@ -346,11 +578,23 @@ async function fetchNbaVegasForDate(ymd) {
       };
     }
 
-    map.set(`${home}|${away}`, out);
+    const k = `${home}|${away}`;
+    map.set(k, out);
     matched++;
+    if (sampleKeys.length < 6) sampleKeys.push(k);
   }
 
-  return { ok: true, map, meta: { events: matched, bookmaker: ODDS_BOOKMAKER } };
+  return {
+    ok: true,
+    map,
+    meta: {
+      url: redactOddsUrl(url),
+      events: matched,
+      bookmaker: ODDS_BOOKMAKER,
+      sampleKeys,
+      shape: Array.isArray(data) ? "live" : Array.isArray(data?.data) ? "historical" : "unknown",
+    },
+  };
 }
 
 function lookupVegasNba(vegasMap, homeName, awayName) {
@@ -380,10 +624,6 @@ function readDateFromReq(req) {
   const d1 = normalizeDateParam(req.query.date);
   const d2 = normalizeDateParam(req.query["dates[]"]);
   return d1 || d2 || new Date().toISOString().slice(0, 10);
-}
-
-function clampNum(x, a, b) {
-  return Math.max(a, Math.min(b, x));
 }
 
 function readWindowFromReq(req, def, min, max) {
@@ -426,6 +666,28 @@ function safeNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
+/**
+ * ESPN status normalization
+ * IMPORTANT: our scorer treats only "Final" as completed.
+ * ESPN scoreboard commonly uses state values: pre | in | post.
+ */
+function normalizeStatusForScoring(rawState) {
+  const s = String(rawState || "").toLowerCase().trim();
+
+  if (!s) return "Scheduled";
+
+  // ESPN "post" = game ended (final)
+  if (s === "post" || s === "final" || s.includes("final") || s.includes("post")) return "Final";
+
+  if (s === "in" || s.includes("in progress") || s.includes("live")) return "In Progress";
+
+  if (s === "pre" || s.includes("scheduled") || s.includes("preview")) return "Scheduled";
+
+  // Fallback: preserve raw but never return empty
+  return String(rawState) || "Scheduled";
+}
+
 
 /**
  * Premium decision helpers
@@ -505,6 +767,7 @@ function buildWhyPanel({ pickSide, pickNote, edgeForPick, conf, deltas = [] }) {
 /**
  * Unified game response builder
  * ✅ edgeForPick: always positive when pick exists, null for PASS
+ * ✅ marketType/marketSide/marketLine/marketOdds added for frontend stability
  */
 function toUnifiedGame({
   league,
@@ -520,6 +783,10 @@ function toUnifiedGame({
   tier,
   whyPanel,
   factors,
+  marketType = null,
+  marketSide = null,
+  marketLine = null,
+  marketOdds = null,
 }) {
   const recommended = pickSide === "home" ? home : pickSide === "away" ? away : null;
 
@@ -538,6 +805,10 @@ function toUnifiedGame({
     away,
     market: {
       pick: pickSide,
+      marketType,
+      marketSide,
+      marketLine,
+      marketOdds,
       recommendedTeamId: recommended ? recommended.id : null,
       recommendedTeamName: recommended ? (recommended.abbr || recommended.name || "") : "",
       edge: recommended && Number.isFinite(edgeForPick) ? edgeForPick : null,
@@ -559,6 +830,9 @@ function toNbaTeamId(abbr) {
 function toNcaamTeamId(espnTeamId) {
   return `ncaam-${String(espnTeamId || "")}`;
 }
+function toNhlTeamId(espnTeamId) {
+  return `nhl-${String(espnTeamId || "")}`;
+}
 
 /**
  * Response helpers (premium contract stability)
@@ -567,7 +841,13 @@ function addPredictionsAlias(out) {
   return { ...out, predictions: out.games };
 }
 function okWrap(league, date, out) {
-  return { ok: true, league, date, count: Array.isArray(out?.games) ? out.games.length : 0, ...addPredictionsAlias(out) };
+  return {
+    ok: true,
+    league,
+    date,
+    count: Array.isArray(out?.games) ? out.games.length : 0,
+    ...addPredictionsAlias(out),
+  };
 }
 function errWrap({ league, date, windowDays, model, modelVersion, mode, error }) {
   return okWrap(league, date, {
@@ -590,6 +870,19 @@ function errWrap({ league, date, windowDays, model, modelVersion, mode, error })
    NBA — premium blended model
    ========================================================= */
 
+function buildNbaDisplayName(teamObj, abbrFallback) {
+  // Prefer full_name when present (best for Odds API matching),
+  // else compose "City Name", else fallback to abbr.
+  const full = String(teamObj?.full_name || "").trim();
+  if (full) return full;
+
+  const city = String(teamObj?.city || "").trim();
+  const name = String(teamObj?.name || "").trim();
+  const composed = `${city} ${name}`.trim();
+
+  return composed || String(abbrFallback || "").trim() || "";
+}
+
 async function getNbaGamesByDate(dateYYYYMMDD) {
   if (!NBA_API_KEY) throw new Error("Missing NBA_API_KEY (set in apps/api/.env)");
 
@@ -606,10 +899,13 @@ async function getNbaGamesByDate(dateYYYYMMDD) {
     const homeAbbr = g?.home_team?.abbreviation || null;
     const awayAbbr = g?.visitor_team?.abbreviation || null;
 
+    // ✅ IMPORTANT: use full names so Odds API matching works
+    const homeName = buildNbaDisplayName(g?.home_team, homeAbbr);
+    const awayName = buildNbaDisplayName(g?.visitor_team, awayAbbr);
+
     const homeScore = typeof g?.home_team_score === "number" ? g.home_team_score : null;
     const awayScore = typeof g?.visitor_team_score === "number" ? g.visitor_team_score : null;
 
-    // balldontlie: status can be "Final" or other strings
     const rawStatus = String(g?.status || "");
     const status = rawStatus.toLowerCase().includes("final") ? "Final" : rawStatus;
 
@@ -619,14 +915,16 @@ async function getNbaGamesByDate(dateYYYYMMDD) {
       status,
       home: {
         id: toNbaTeamId(homeAbbr),
-        name: homeAbbr || "",
+        name: homeName || homeAbbr || "",
         abbr: homeAbbr,
+        logo: sanitizeLogoUrl(nbaLogoFromAbbr(homeAbbr)),
         score: homeScore,
       },
       away: {
         id: toNbaTeamId(awayAbbr),
-        name: awayAbbr || "",
+        name: awayName || awayAbbr || "",
         abbr: awayAbbr,
+        logo: sanitizeLogoUrl(nbaLogoFromAbbr(awayAbbr)),
         score: awayScore,
       },
       homeScore,
@@ -650,7 +948,6 @@ async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
   }
 
   const CHUNK = 7;
-  const PER_PAGE = 100;
   const MAX_PAGES_PER_CHUNK = 15;
 
   const all = [];
@@ -661,7 +958,7 @@ async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
 
     let page = 1;
     while (page <= MAX_PAGES_PER_CHUNK) {
-      const url = `${NBA_API_BASE}/games?per_page=${PER_PAGE}&page=${page}&${qs}`;
+      const url = `${NBA_API_BASE}/games?per_page=100&page=${page}&${qs}`;
       const json = await fetchJson(
         url,
         { headers: { Authorization: NBA_API_KEY } },
@@ -676,8 +973,7 @@ async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
 
       const pageRows = json?.data || [];
       if (pageRows.length) all.push(...pageRows);
-
-      if (pageRows.length < PER_PAGE) break;
+      if (pageRows.length < 100) break;
 
       page++;
       await sleep(250);
@@ -758,23 +1054,17 @@ function buildTeamStatsFromHistory_Generic(histRows, { recent5 = 5, recent10 = 1
 function sigmoid(x) {
   return 1 / (1 + Math.exp(-x));
 }
-
-// shrink a stat toward a prior with pseudo-count k
 function shrink(x, prior, n, k) {
   const xx = Number.isFinite(x) ? x : prior;
   const nn = Number.isFinite(n) ? n : 0;
   return (nn * xx + k * prior) / (nn + k);
 }
-
 function pickThresholdFromUncertainty(homePlayed, awayPlayed, base = 0.07) {
   const n = Math.min(Number(homePlayed) || 0, Number(awayPlayed) || 0);
   const unc = n > 0 ? 1 / Math.sqrt(n) : 1;
   return clampNum(base + 0.06 * unc, 0.07, 0.13);
 }
 
-/**
- * NBA v1 edge
- */
 function nbaEdge_v1(home, away) {
   if (!home?.ok || !away?.ok) return NaN;
 
@@ -796,9 +1086,6 @@ function nbaEdge_v1(home, away) {
   return wWin * winDiff + wMargin * marginScaled + wR10 * r10Diff + wR5 * r5MarginScaled + homeAdv;
 }
 
-/**
- * NBA v2 edge (premium hybrid)
- */
 function nbaEdge_v2(home, away) {
   if (!home?.ok || !away?.ok) return NaN;
 
@@ -835,17 +1122,46 @@ function nbaEdge_v2(home, away) {
   return wWin * winDiff + wMargin * marginDiff + wR10 * r10Diff + wR5m * r5MarginDiff + homeAdv;
 }
 
-/**
- * Map edge -> probability (v2) — clamped to a believable NBA band
- */
 function nbaProbFromEdge_v2(edge, edgeScale = 0.11) {
   if (!Number.isFinite(edge)) return 0.5;
   return clampNum(sigmoid(edge / edgeScale), 0.33, 0.77);
 }
 
 /**
- * ✅ Wrapped with compute cache + in-flight de-dupe
+ * Pull a single “display market” for the recommended side (moneyline preferred).
+ * Returns { marketType, marketSide, marketLine, marketOdds }
  */
+function pickDisplayMarketFromVegas(vegasRow, pickSide) {
+  if (!vegasRow || !pickSide) {
+    return { marketType: "moneyline", marketSide: pickSide || null, marketLine: null, marketOdds: null };
+  }
+
+  // Prefer moneyline if present
+  if (vegasRow?.h2h) {
+    const odds = pickSide === "home" ? vegasRow.h2h.home : pickSide === "away" ? vegasRow.h2h.away : null;
+    return { marketType: "moneyline", marketSide: pickSide, marketLine: null, marketOdds: odds ?? null };
+  }
+
+  // Spreads fallback
+  if (vegasRow?.spreads) {
+    const line = pickSide === "home" ? vegasRow.spreads.homeSpread : vegasRow.spreads.awaySpread;
+    const odds = pickSide === "home" ? vegasRow.spreads.homePrice : vegasRow.spreads.awayPrice;
+    return {
+      marketType: "spread",
+      marketSide: pickSide,
+      marketLine: Number.isFinite(line) ? line : null,
+      marketOdds: odds ?? null,
+    };
+  }
+
+  // Totals fallback (we don’t pick totals, but keep contract stable)
+  if (vegasRow?.totals) {
+    return { marketType: "total", marketSide: null, marketLine: vegasRow.totals.total ?? null, marketOdds: null };
+  }
+
+  return { marketType: "moneyline", marketSide: pickSide, marketLine: null, marketOdds: null };
+}
+
 async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
   const mv = String(modelVersion || "v2").toLowerCase() === "v1" ? "v1" : "v2";
   const key = `PRED:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
@@ -866,6 +1182,11 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
           note: "No NBA games scheduled.",
           vegasAnchoring: false,
           vegasBookmaker: mv === "v2" ? ODDS_BOOKMAKER : null,
+          vegasOk: mv === "v2" ? false : null,
+          vegasReason: mv === "v2" ? "no_games" : null,
+          vegasEvents: null,
+          vegasUrl: null,
+          vegasSampleKeys: null,
           warnings: [],
           elapsedMs: Date.now() - t0,
         },
@@ -874,10 +1195,14 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
     }
 
     const vegas =
-      mv === "v2" ? await fetchNbaVegasForDate(dateYYYYMMDD) : { ok: false, map: new Map(), reason: "disabled" };
+      mv === "v2"
+        ? await fetchNbaVegasForDate(dateYYYYMMDD)
+        : { ok: false, map: new Map(), reason: "disabled", meta: {} };
+
     const vegasMap = vegas?.ok ? vegas.map : new Map();
     const warnings = [];
-    if (mv === "v2" && !vegas?.ok) warnings.push(`Vegas anchoring disabled: ${vegas?.reason || "unknown"}`);
+
+    if (mv === "v2" && !vegas?.ok) warnings.push(`Vegas anchoring disabled: ${String(vegas?.reason || "unknown")}`);
 
     const end = addDaysUTC(dateYYYYMMDD, -1);
     const start = addDaysUTC(end, -(windowDays - 1));
@@ -906,7 +1231,7 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
     const games = [];
     let noPickCount = 0;
 
-    const BASE_PICK_EDGE = 0.03; // 3% value edge baseline (then adjusted by uncertainty)
+    const BASE_PICK_EDGE = 0.03;
 
     for (const g of schedule) {
       const homeS = teamStats.get(g.home.id) || { ok: false };
@@ -915,6 +1240,7 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
       const statEdge = mv === "v2" ? nbaEdge_v2(homeS, awayS) : nbaEdge_v1(homeS, awayS);
       const pHomeModel = mv === "v2" ? nbaProbFromEdge_v2(statEdge, 0.11) : null;
 
+      // ✅ Matches Odds API because g.home.name/g.away.name are full names
       const vegasRow = mv === "v2" ? lookupVegasNba(vegasMap, g.home.name, g.away.name) : null;
       const pHomeMkt = Number.isFinite(vegasRow?.h2h?.pHome) ? vegasRow.h2h.pHome : null;
 
@@ -944,9 +1270,13 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
 
       const edgeForPick =
         pick.side === "home"
-          ? Number.isFinite(homeValueEdgeSigned) ? homeValueEdgeSigned : null
+          ? Number.isFinite(homeValueEdgeSigned)
+            ? homeValueEdgeSigned
+            : null
           : pick.side === "away"
-            ? Number.isFinite(homeValueEdgeSigned) ? -homeValueEdgeSigned : null
+            ? Number.isFinite(homeValueEdgeSigned)
+              ? -homeValueEdgeSigned
+              : null
             : null;
 
       if (!pick.side) noPickCount++;
@@ -992,6 +1322,8 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
         else tier = "LEAN";
       }
 
+      const displayMarket = pickDisplayMarketFromVegas(vegasRow, pick.side);
+
       games.push(
         toUnifiedGame({
           league: "nba",
@@ -1006,6 +1338,10 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
           conf,
           tier,
           whyPanel,
+          marketType: displayMarket.marketType,
+          marketSide: displayMarket.marketSide,
+          marketLine: displayMarket.marketLine,
+          marketOdds: displayMarket.marketOdds,
           factors: {
             windowDays,
             modelVersion: mv,
@@ -1013,7 +1349,8 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
             homeValueEdgeSigned,
             winProb: mv === "v2" ? winProb : null,
             vegas: mv === "v2" ? (vegasRow || null) : null,
-            vegasAnchoring: mv === "v2" ? Boolean(vegasRow?.h2h && Number.isFinite(pHomeMkt) && anchorAlpha > 0) : false,
+            vegasAnchoring:
+              mv === "v2" ? Boolean(vegasRow?.h2h && Number.isFinite(pHomeMkt) && anchorAlpha > 0) : false,
             vegasAlpha: mv === "v2" ? (anchorAlpha || 0) : 0,
             statEdge: mv === "v2" ? statEdge : null,
             homePlayed: homeS.played ?? null,
@@ -1031,13 +1368,14 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
             pHomeAnchored: mv === "v2" ? pHomeAdj : null,
             note:
               mv === "v2"
-                ? "NBA v2+: stat hybrid → probability + market (moneyline) anchoring + shrunk/clamped value edge + uncertainty-aware thresholds + winProb-gated tiers. Edge shown is value for the recommended side."
+                ? "NBA v2+: stat hybrid → probability + market (moneyline) anchoring + shrunk/clamped value edge + uncertainty-aware thresholds + winProb-gated tiers."
                 : "NBA v1: win% + margin + recent 10 + recent 5 margin + small home adv. PASS discipline enabled.",
           },
         })
       );
     }
 
+    // ✅ Promoted meta debugging fields so /api/predictions meta shows Vegas status
     return {
       meta: {
         league: "nba",
@@ -1047,9 +1385,20 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
         modelVersion: mv,
         mode: "regular",
         noPickCount,
-        vegasAnchoring: mv === "v2" ? Boolean(vegas?.ok) : false,
+
+        // ✅ stable debug contract
+        vegasOk: mv === "v2" ? Boolean(vegas?.ok) : null,
+        vegasReason: mv === "v2" ? (vegas?.ok ? null : String(vegas?.reason || "unknown")) : null,
+        vegasEvents: mv === "v2" ? (Number.isFinite(vegas?.meta?.events) ? vegas.meta.events : null) : null,
         vegasBookmaker: mv === "v2" ? (vegas?.meta?.bookmaker || ODDS_BOOKMAKER || null) : null,
+        vegasUrl: mv === "v2" ? (vegas?.meta?.url || null) : null,
+        vegasSampleKeys: mv === "v2" ? (Array.isArray(vegas?.meta?.sampleKeys) ? vegas.meta.sampleKeys : null) : null,
+
+        // keep existing semantic field
+        vegasAnchoring: mv === "v2" ? Boolean(vegas?.ok) : false,
+
         warnings,
+        logo: countMissingLogos(games),
         elapsedMs: Date.now() - t0,
       },
       games,
@@ -1057,35 +1406,10 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
   });
 }
 
-// NHL remains paused here intentionally (your API meta tells the UI it’s paused)
-async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
-  return {
-    meta: {
-      league: "nhl",
-      date: dateYYYYMMDD,
-      windowDays,
-      model: "NHL paused-v1",
-      mode: "regular",
-      note: "NHL paused (Olympics) — no games scheduled.",
-      warnings: [],
-      elapsedMs: 0,
-    },
-    games: [],
-  };
-}
-
 /* =========================================================
-   NCAAM — ESPN (premium)
+   NHL — UNPAUSED (ESPN-based premium-conservative)
    ========================================================= */
 
-// ESPN logo CDN fallback for NCAAM
-function espnNcaamLogoFromTeamId(teamId) {
-  const id = String(teamId || "").trim();
-  if (!id) return null;
-  return `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png`;
-}
-
-// ✅ Robust score extraction for ESPN competitors
 function espnCompetitorScore(competitor) {
   const direct = safeNum(competitor?.score);
   if (Number.isFinite(direct)) return direct;
@@ -1103,8 +1427,331 @@ function espnCompetitorScore(competitor) {
     }
     if (any) return sum;
   }
-
   return null;
+}
+
+function normalizeEspnNhlEventToGame(event) {
+  const comp = event?.competitions?.[0];
+  const competitors = comp?.competitors;
+  if (!Array.isArray(competitors)) return null;
+
+  const home = competitors.find((c) => c?.homeAway === "home") ?? null;
+  const away = competitors.find((c) => c?.homeAway === "away") ?? null;
+
+  const homeTeam = home?.team || null;
+  const awayTeam = away?.team || null;
+
+  const homeId = homeTeam?.id ? String(homeTeam.id) : null;
+  const awayId = awayTeam?.id ? String(awayTeam.id) : null;
+  if (!homeId || !awayId) return null;
+
+  const pickLogo = (team) => {
+    if (!team) return null;
+    const fromArr = Array.isArray(team.logos) ? team.logos[0]?.href : null;
+    const fromSingle = team.logo || null;
+    return sanitizeLogoUrl(fromArr || fromSingle || espnNhlLogoFromTeamId(team.id));
+  };
+
+  const rawState = event?.status?.type?.state || event?.status?.type?.name || "scheduled";
+  const normStatus = normalizeStatusForScoring(rawState);
+
+  const homeScore = espnCompetitorScore(home);
+  const awayScore = espnCompetitorScore(away);
+
+  return {
+    id: String(event?.id ?? `${homeId}-${awayId}-${event?.date ?? ""}`),
+    date: event?.date ?? null,
+    homeTeamId: homeId,
+    awayTeamId: awayId,
+    homeScore,
+    awayScore,
+    homeName: homeTeam?.displayName || homeTeam?.shortDisplayName || "",
+    awayName: awayTeam?.displayName || awayTeam?.shortDisplayName || "",
+    homeAbbr: homeTeam?.abbreviation || "",
+    awayAbbr: awayTeam?.abbreviation || "",
+    homeLogo: pickLogo(homeTeam),
+    awayLogo: pickLogo(awayTeam),
+    status: normStatus,
+  };
+}
+
+async function getNhlScoreboardByDate(dateYYYYMMDD) {
+  const ymd = toEspnYYYYMMDD(dateYYYYMMDD);
+  const url = `${ESPN_SITE_V2}/${ESPN_NHL_PATH}/scoreboard?dates=${encodeURIComponent(ymd)}`;
+  const json = await fetchJson(
+    url,
+    {},
+    {
+      cacheTtlMs: HEAVY_CACHE_TTL_MS,
+      retries: 5,
+      baseBackoffMs: 650,
+      hostConcurrency: 3,
+      timeoutMs: 25_000,
+    }
+  );
+
+  const events = Array.isArray(json?.events) ? json.events : [];
+  return events.map(normalizeEspnNhlEventToGame).filter(Boolean);
+}
+
+async function getNhlSlate(dateYYYYMMDD) {
+  return getNhlScoreboardByDate(dateYYYYMMDD);
+}
+
+async function getNhlHistory(endDateYYYYMMDD, historyDays) {
+  const days = [];
+  for (let i = historyDays; i >= 1; i--) days.push(addDaysUTC(endDateYYYYMMDD, -i));
+
+  const POOL = 3;
+  const out = [];
+  let idx = 0;
+
+  async function worker() {
+    while (idx < days.length) {
+      const myIdx = idx++;
+      const d = days[myIdx];
+      const dayRows = await getNhlScoreboardByDate(d);
+      out.push(...dayRows);
+      await sleep(35);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(POOL, days.length) }, () => worker()));
+  return out;
+}
+
+function buildNhlTeamStatsFromHistory(history, endDateYYYYMMDD, recentN = 10) {
+  const cutoff = Date.parse(`${endDateYYYYMMDD}T00:00:00Z`);
+  const byTeamGames = new Map();
+
+  function add(teamId, game) {
+    if (!byTeamGames.has(teamId)) byTeamGames.set(teamId, []);
+    byTeamGames.get(teamId).push(game);
+  }
+
+  for (const g of history) {
+    if (g.homeScore == null || g.awayScore == null) continue;
+    const t = g.date ? Date.parse(g.date) : null;
+    if (!t || t >= cutoff) continue;
+
+    add(g.homeTeamId, { date: g.date?.slice(0, 10) || "", my: g.homeScore, opp: g.awayScore });
+    add(g.awayTeamId, { date: g.date?.slice(0, 10) || "", my: g.awayScore, opp: g.homeScore });
+  }
+
+  const out = new Map();
+  for (const [id, games] of byTeamGames.entries()) {
+    games.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const played = games.length;
+    if (!played) {
+      out.set(id, { ok: false });
+      continue;
+    }
+
+    let wins = 0,
+      pf = 0,
+      pa = 0;
+    for (const gg of games) {
+      pf += gg.my;
+      pa += gg.opp;
+      if (gg.my > gg.opp) wins++;
+    }
+
+    const recent = games.slice(0, recentN);
+    let rWins = 0,
+      rMargin = 0;
+    for (const gg of recent) {
+      if (gg.my > gg.opp) rWins++;
+      rMargin += gg.my - gg.opp;
+    }
+
+    out.set(id, {
+      ok: true,
+      played,
+      winPct: wins / played,
+      marginPerGame: (pf - pa) / played,
+      recentWinPct: recent.length ? rWins / recent.length : null,
+      recentMargin: recent.length ? rMargin / recent.length : null,
+    });
+  }
+
+  return out;
+}
+
+function nhlEdge(home, away) {
+  if (!home?.ok || !away?.ok) return NaN;
+
+  const wWin = 0.48;
+  const wMargin = 0.32;
+  const wRecent = 0.20;
+
+  const winDiff = home.winPct - away.winPct;
+  const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 3.2, -1, 1);
+  const recentDiff =
+    (Number.isFinite(home.recentWinPct) ? home.recentWinPct : 0.5) -
+    (Number.isFinite(away.recentWinPct) ? away.recentWinPct : 0.5);
+
+  const homeAdv = 0.012;
+  return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
+}
+
+function nhlProbFromEdge(edge, edgeScale = 0.17) {
+  if (!Number.isFinite(edge)) return 0.5;
+  return clampNum(sigmoid(edge / edgeScale), 0.36, 0.74);
+}
+
+async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
+  const historyDays = clampNum(Number(windowDays) || 40, 14, 120);
+  const key = `PRED:nhl:${dateYYYYMMDD}:w${historyDays}`;
+
+  return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
+    const t0 = Date.now();
+
+    const slate = await getNhlSlate(dateYYYYMMDD);
+    if (!slate.length) {
+      return {
+        meta: {
+          league: "nhl",
+          date: dateYYYYMMDD,
+          windowDays: historyDays,
+          model: "NHL premium-v2",
+          mode: "regular",
+          note: "No NHL games scheduled.",
+          warnings: [],
+          elapsedMs: Date.now() - t0,
+        },
+        games: [],
+      };
+    }
+
+    const history = await getNhlHistory(dateYYYYMMDD, historyDays);
+    const teamStats = buildNhlTeamStatsFromHistory(history, dateYYYYMMDD, 10);
+
+    const games = [];
+    let noPickCount = 0;
+
+    const MIN_EDGE_FOR_PICK = 0.065;
+
+    for (const g of slate) {
+      const homeS = teamStats.get(g.homeTeamId) || { ok: false };
+      const awayS = teamStats.get(g.awayTeamId) || { ok: false };
+
+      const edgeSigned = nhlEdge(homeS, awayS);
+      const pick = pickFromEdge(edgeSigned, MIN_EDGE_FOR_PICK);
+
+
+      if (!pick.side) noPickCount++;
+
+      const edgeForPick =
+        pick.side === "home" ? Math.abs(edgeSigned) : pick.side === "away" ? Math.abs(edgeSigned) : null;
+
+      const pHome = nhlProbFromEdge(edgeSigned, 0.17);
+      const winProb = pick.side === "home" ? pHome : pick.side === "away" ? 1 - pHome : null;
+
+      const conf = confidenceFromEdge(Math.abs(edgeSigned), 0.22, 0.52, 0.86);
+
+      const homeObj = {
+        id: toNhlTeamId(g.homeTeamId),
+        name: g.homeName || "",
+        abbr: g.homeAbbr || "",
+        logo: sanitizeLogoUrl(g.homeLogo || espnNhlLogoFromTeamId(g.homeTeamId)),
+        score: Number.isFinite(g.homeScore) ? g.homeScore : null,
+      };
+
+      const awayObj = {
+        id: toNhlTeamId(g.awayTeamId),
+        name: g.awayName || "",
+        abbr: g.awayAbbr || "",
+        logo: sanitizeLogoUrl(g.awayLogo || espnNhlLogoFromTeamId(g.awayTeamId)),
+        score: Number.isFinite(g.awayScore) ? g.awayScore : null,
+      };
+
+      const deltas = [
+        { label: "Win% diff (home-away)", delta: (homeS.winPct ?? 0.5) - (awayS.winPct ?? 0.5), dp: 3 },
+        { label: "Goal margin diff", delta: (homeS.marginPerGame ?? 0) - (awayS.marginPerGame ?? 0), dp: 2, suffix: " g/g" },
+        { label: "Recent win% diff", delta: (homeS.recentWinPct ?? 0.5) - (awayS.recentWinPct ?? 0.5), dp: 3 },
+        { label: "Pick threshold", delta: MIN_EDGE_FOR_PICK, dp: 3 },
+      ];
+
+      const whyPanel = buildWhyPanel({
+        pickSide: pick.side,
+        pickNote: pick.note,
+        edgeForPick: Number.isFinite(edgeForPick) ? edgeForPick : null,
+        conf,
+        deltas,
+      });
+
+      let tier = "PASS";
+      if (pick.side) {
+        const e = Number.isFinite(edgeForPick) ? edgeForPick : 0;
+        const wp = Number.isFinite(winProb) ? winProb : 0.5;
+        if (e >= 0.10 && wp >= 0.62) tier = "ELITE";
+        else if (e >= 0.08 && wp >= 0.58) tier = "STRONG";
+        else tier = "LEAN";
+      }
+
+      games.push(
+        toUnifiedGame({
+          league: "nhl",
+          gameId: `nhl-${g.id}`,
+          date: dateYYYYMMDD,
+          status: g.status || "scheduled",
+          home: homeObj,
+          away: awayObj,
+          pickSide: pick.side,
+          pickNote: pick.note,
+          edgeForPick,
+          conf,
+          tier,
+          whyPanel,
+          marketType: "moneyline",
+          marketSide: pick.side,
+          marketLine: null,
+          marketOdds: null,
+          factors: {
+            windowDays: historyDays,
+            edgeForPick,
+            homeEdgeSigned: edgeSigned,
+            winProb: Number.isFinite(winProb) ? winProb : null,
+            homeWinPct: homeS.winPct ?? null,
+            awayWinPct: awayS.winPct ?? null,
+            homeMarginPerGame: homeS.marginPerGame ?? null,
+            awayMarginPerGame: awayS.marginPerGame ?? null,
+            homeRecentWinPct: homeS.recentWinPct ?? null,
+            awayRecentWinPct: awayS.recentWinPct ?? null,
+            note:
+              "NHL premium-v2: ESPN history → win% + goal margin + recent form + home advantage, with conservative pick threshold for variance control.",
+          },
+        })
+      );
+    }
+
+    return {
+      meta: {
+        league: "nhl",
+        date: dateYYYYMMDD,
+        windowDays: historyDays,
+        historyGamesFetched: history.length,
+        noPickCount,
+        model: "NHL premium-v2",
+        mode: "regular",
+        warnings: [],
+        logo: countMissingLogos(games),
+        elapsedMs: Date.now() - t0,
+      },
+      games,
+    };
+  });
+}
+
+/* =========================================================
+   NCAAM — ESPN (premium)
+   ========================================================= */
+
+// ESPN logo CDN fallback for NCAAM
+function espnNcaamLogoFromTeamId(teamId) {
+  const id = String(teamId || "").trim();
+  if (!id) return null;
+  return `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png`;
 }
 
 function normalizeEspnEventToGame(event) {
@@ -1125,7 +1772,7 @@ function normalizeEspnEventToGame(event) {
     if (!team) return null;
     const fromArr = Array.isArray(team.logos) ? team.logos[0]?.href : null;
     const fromSingle = team.logo || null;
-    return fromArr || fromSingle || espnNcaamLogoFromTeamId(team.id);
+    return sanitizeLogoUrl(fromArr || fromSingle || espnNcaamLogoFromTeamId(team.id));
   };
 
   const homeName = homeTeam?.displayName || homeTeam?.shortDisplayName || "";
@@ -1135,12 +1782,7 @@ function normalizeEspnEventToGame(event) {
   const awayAbbr = awayTeam?.abbreviation || "";
 
   const rawState = event?.status?.type?.state || event?.status?.type?.name || "scheduled";
-  const state = String(rawState || "").toLowerCase();
-  const normStatus =
-    state === "post" || state === "final" ? "post" :
-    state === "in" ? "in" :
-    state === "pre" ? "scheduled" :
-    state || "scheduled";
+  const normStatus = normalizeStatusForScoring(rawState);
 
   const homeScore = espnCompetitorScore(home);
   const awayScore = espnCompetitorScore(away);
@@ -1186,11 +1828,6 @@ async function getNcaamSlate(dateYYYYMMDD) {
   return rows.filter((g) => g.homeTeamId && g.awayTeamId);
 }
 
-/**
- * Premium upgrade: parallel history fetch with a small pool
- * - much faster for cron backfills
- * - still protected by fetchJson hostConcurrency + cache
- */
 async function getNcaamHistory(endDateYYYYMMDD, historyDays) {
   const days = [];
   for (let i = historyDays; i >= 1; i--) days.push(addDaysUTC(endDateYYYYMMDD, -i));
@@ -1240,18 +1877,21 @@ function buildNcaamTeamStatsFromHistory(history, endDateYYYYMMDD, recentN = 10) 
       continue;
     }
 
-    let wins = 0, pf = 0, pa = 0;
-    for (const g of games) {
-      pf += g.my;
-      pa += g.opp;
-      if (g.my > g.opp) wins++;
+    let wins = 0,
+      pf = 0,
+      pa = 0;
+    for (const gg of games) {
+      pf += gg.my;
+      pa += gg.opp;
+      if (gg.my > gg.opp) wins++;
     }
 
     const recent = games.slice(0, recentN);
-    let rWins = 0, rMargin = 0;
-    for (const g of recent) {
-      if (g.my > g.opp) rWins++;
-      rMargin += g.my - g.opp;
+    let rWins = 0,
+      rMargin = 0;
+    for (const gg of recent) {
+      if (gg.my > gg.opp) rWins++;
+      rMargin += gg.my - gg.opp;
     }
 
     out.set(id, {
@@ -1281,8 +1921,15 @@ function ncaamEdge(home, away, neutralSite, tournamentMode) {
     (Number.isFinite(home.recentWinPct) ? home.recentWinPct : 0.5) -
     (Number.isFinite(away.recentWinPct) ? away.recentWinPct : 0.5);
 
-  const homeAdv = (neutralSite || tournamentMode) ? 0 : 0.018;
+  const homeAdv = neutralSite || tournamentMode ? 0 : 0.018;
   return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
+}
+
+
+function ncaamProbFromEdge(edge, edgeScale = 0.23) {
+  if (!Number.isFinite(edge)) return 0.5;
+  // College variance is higher than NBA; keep bounds wider but sane.
+  return clampNum(sigmoid(edge / edgeScale), 0.34, 0.78);
 }
 
 async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode, modeLabel }) {
@@ -1336,14 +1983,13 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
       }
 
       const pick = pickFromEdge(edgeSigned, MIN_EDGE_FOR_PICK);
-      const conf = confidenceFromEdge(edgeSigned, tournamentMode ? 0.24 : 0.22, 0.53, 0.92);
+      const conf = confidenceFromEdge(Math.abs(edgeSigned), tournamentMode ? 0.24 : 0.22, 0.53, 0.92);
 
-      // ✅ carry scores into home/away objects so UI + scoreCompletedGames can grade
       const homeObj = {
         id: toNcaamTeamId(g.homeTeamId),
         name: g.homeName || "",
         abbr: g.homeAbbr || "",
-        logo: g.homeLogo || espnNcaamLogoFromTeamId(g.homeTeamId),
+        logo: sanitizeLogoUrl(g.homeLogo || espnNcaamLogoFromTeamId(g.homeTeamId)),
         score: Number.isFinite(g.homeScore) ? g.homeScore : null,
       };
 
@@ -1351,7 +1997,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
         id: toNcaamTeamId(g.awayTeamId),
         name: g.awayName || "",
         abbr: g.awayAbbr || "",
-        logo: g.awayLogo || espnNcaamLogoFromTeamId(g.awayTeamId),
+        logo: sanitizeLogoUrl(g.awayLogo || espnNcaamLogoFromTeamId(g.awayTeamId)),
         score: Number.isFinite(g.awayScore) ? g.awayScore : null,
       };
 
@@ -1393,6 +2039,10 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
           conf,
           tier,
           whyPanel,
+          marketType: "moneyline",
+          marketSide: pick.side,
+          marketLine: null,
+          marketOdds: null,
           factors: {
             windowDays: historyDays,
             edgeForPick,
@@ -1424,6 +2074,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
         model: "NCAAM premium-v3",
         mode: modeLabel,
         warnings: [],
+        logo: countMissingLogos(games),
         elapsedMs: Date.now() - t0,
       },
       games,
@@ -1435,7 +2086,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
  * Routes
  */
 router.get("/ping", (_req, res) => {
-  res.json({ ok: true, route: "predict", version: "predict-premium-v6" });
+  res.json({ ok: true, route: "predict", version: "predict-premium-v12-status-final" });
 });
 
 router.get("/nba/predict", async (req, res) => {
@@ -1463,7 +2114,7 @@ router.get("/nba/predict", async (req, res) => {
 
 router.get("/nhl/predict", async (req, res) => {
   const date = readDateFromReq(req);
-  const windowDays = readWindowFromReq(req, 60, 3, 120);
+  const windowDays = readWindowFromReq(req, 40, 14, 120);
 
   try {
     const out = await buildNhlPredictions(date, windowDays);
@@ -1474,7 +2125,7 @@ router.get("/nhl/predict", async (req, res) => {
         league: "nhl",
         date,
         windowDays,
-        model: "NHL paused-v1",
+        model: "NHL premium-v2",
         modelVersion: null,
         mode: "regular",
         error: e?.message || e,
@@ -1512,24 +2163,87 @@ router.get("/predictions", async (req, res) => {
   const date = readDateFromReq(req);
   const { tournament, mode } = readModeFromReq(req);
 
+  function findPickDeep(obj) {
+    const seen = new Set();
+    const stack = [obj];
+    while (stack.length) {
+      const cur = stack.pop();
+      if (!cur || typeof cur !== "object") continue;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+
+      if (
+        Object.prototype.hasOwnProperty.call(cur, "tier") &&
+        Object.prototype.hasOwnProperty.call(cur, "confidence") &&
+        Object.prototype.hasOwnProperty.call(cur, "edge")
+      ) {
+        return cur;
+      }
+
+      if (Array.isArray(cur)) {
+        for (const v of cur) stack.push(v);
+      } else {
+        for (const v of Object.values(cur)) stack.push(v);
+      }
+    }
+    return null;
+  }
+
+  function normalizePick(p) {
+    if (!p || typeof p !== "object") {
+      return {
+        pick: null,
+        recommendedTeamId: null,
+        recommendedTeamName: "",
+        edge: null,
+        tier: "PASS",
+        confidence: null,
+        winProb: null,
+      };
+    }
+    return {
+      pick: p.pick ?? null,
+      recommendedTeamId: p.recommendedTeamId ?? null,
+      recommendedTeamName: p.recommendedTeamName ?? "",
+      edge: p.edge ?? null,
+      tier: p.tier ?? "PASS",
+      confidence: p.confidence ?? null,
+      winProb: p.winProb ?? null,
+    };
+  }
+
+  function promoteOut(out) {
+    const games = Array.isArray(out?.games) ? out.games : [];
+    const promoted = games.map((g) => {
+      const found = normalizePick(findPickDeep(g));
+      return { ...g, pick: found };
+    });
+    return { ...(out || {}), games: promoted, predictions: promoted };
+  }
+
   try {
     if (league === "nba") {
       const windowDays = readWindowFromReq(req, 14, 3, 30);
       const modelVersion = readModelFromReq(req, "v2");
       const out = await buildNbaPredictions(date, windowDays, { modelVersion });
-      return res.json(okWrap("nba", date, out));
+      return res.json(okWrap("nba", date, promoteOut(out)));
     }
     if (league === "nhl") {
-      const windowDays = readWindowFromReq(req, 60, 3, 120);
+      const windowDays = readWindowFromReq(req, 40, 14, 120);
       const out = await buildNhlPredictions(date, windowDays);
-      return res.json(okWrap("nhl", date, out));
+      return res.json(okWrap("nhl", date, promoteOut(out)));
     }
     if (league === "ncaam") {
       const windowDays = readWindowFromReq(req, 45, 14, 90);
-      const out = await buildNcaamPredictions(date, windowDays, { tournamentMode: tournament, modeLabel: mode });
-      return res.json(okWrap("ncaam", date, out));
+      const out = await buildNcaamPredictions(date, windowDays, {
+        tournamentMode: tournament,
+        modeLabel: mode,
+      });
+      return res.json(okWrap("ncaam", date, promoteOut(out)));
     }
-    return res.status(400).json({ ok: false, error: "Unsupported league. Use league=nba|nhl|ncaam", got: league });
+    return res
+      .status(400)
+      .json({ ok: false, error: "Unsupported league. Use league=nba|nhl|ncaam", got: league });
   } catch (e) {
     return res.json({ ok: false, league, date, mode, error: String(e?.message || e), games: [], predictions: [] });
   }

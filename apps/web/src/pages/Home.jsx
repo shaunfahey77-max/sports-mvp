@@ -164,7 +164,7 @@ function SnapshotCard({ title, subtitle, loading, error, meta, counts, href }) {
   );
 }
 
-function PerformancePanel({ days, setDays, perf, onRefresh }) {
+function PerformancePanel({ today, days, setDays, perf, onRefresh }) {
   const nba = perf?.rows?.nba || [];
   const ncaam = perf?.rows?.ncaam || [];
   const nhl = perf?.rows?.nhl || [];
@@ -177,10 +177,10 @@ function PerformancePanel({ days, setDays, perf, onRefresh }) {
   const ncaamMissing = missingDates(ncaam);
   const nhlMissing = missingDates(nhl);
 
-  const NHL_BREAK_FROM = "2026-02-05";
-  const NHL_BREAK_TO = "2026-02-24";
-
   const anyMissing = (perf?.meta?.missingCount || 0) > 0;
+
+  const nhlTodayMissing = nhlMissing.includes(today);
+  const nhlHasRowToday = nhl.some((r) => r?.date === today && String(r?.error || "") !== "missing_db_row");
 
   return (
     <div className="card">
@@ -215,15 +215,18 @@ function PerformancePanel({ days, setDays, perf, onRefresh }) {
 
       <div className="divider" />
 
-      <Banner tone="info" title="NHL Olympic break">
-        NHL is paused from <span className="mono">{NHL_BREAK_FROM}</span> → <span className="mono">{NHL_BREAK_TO}</span>.
-        We still show last {days} days of performance rows (scored picks + record).
-      </Banner>
+      {/* NHL is NOT paused anymore; show a pragmatic “pending” banner if today's row is missing. */}
+      {nhlTodayMissing && !nhlHasRowToday ? (
+        <Banner tone="info" title="NHL scoring pending">
+          Today’s NHL row is missing in <span className="mono">performance_daily</span>. This usually means you haven’t run scoring
+          for <span className="mono">{today}</span> yet (or Supabase write latency). Run scoring, then refresh after ~2–5 seconds.
+        </Banner>
+      ) : null}
 
       {anyMissing ? (
         <Banner tone="warn" title="Missing performance rows in range">
-          Missing rows usually means scoring wasn’t run for those dates yet. Use <b>Run Scoring</b> (or Backfill 30d) below,
-          then refresh after ~2–5 seconds (Supabase write latency).
+          Missing rows usually means scoring wasn’t run for those dates yet. Use <b>Run Scoring</b> (or Backfill 30d) below, then
+          refresh after ~2–5 seconds (Supabase write latency).
         </Banner>
       ) : null}
 
@@ -305,9 +308,7 @@ function ScoreConsole({
       <div className="panelHead">
         <div>
           <div style={{ fontSize: 16, fontWeight: 900 }}>Run Scoring</div>
-          <div className="subtle">
-            Forces scoring + grading writes for NBA / NCAAM / NHL for a specific date (NHL will be 0 games during break).
-          </div>
+          <div className="subtle">Forces scoring + grading writes for NBA / NCAAM / NHL for a specific date.</div>
         </div>
 
         <div className="actions" style={{ flexWrap: "wrap" }}>
@@ -348,6 +349,8 @@ function ScoreConsole({
           <select className="input" value={leagues} onChange={(e) => setLeagues(e.target.value)} style={{ width: "100%" }}>
             <option value="nba,ncaam,nhl">nba,ncaam,nhl</option>
             <option value="nba,ncaam">nba,ncaam</option>
+            <option value="nba,nhl">nba,nhl</option>
+            <option value="ncaam,nhl">ncaam,nhl</option>
             <option value="nba">nba</option>
             <option value="ncaam">ncaam</option>
             <option value="nhl">nhl</option>
@@ -462,6 +465,7 @@ export default function Home() {
 
   const [nba, setNba] = useState({ loading: true, error: "", meta: null, counts: null });
   const [ncaam, setNcaam] = useState({ loading: true, error: "", meta: null, counts: null });
+  const [nhl, setNhl] = useState({ loading: true, error: "", meta: null, counts: null });
 
   const [days, setDays] = useState(30);
   const [perf, setPerf] = useState({ loading: true, error: "", data: null });
@@ -495,19 +499,23 @@ export default function Home() {
 
     setNba({ loading: true, error: "", meta: null, counts: null });
     setNcaam({ loading: true, error: "", meta: null, counts: null });
+    setNhl({ loading: true, error: "", meta: null, counts: null });
 
     (async () => {
       try {
         const nbaUrl = `/api/predictions?league=nba&date=${date}&windowDays=14&model=v2`;
         const ncaamUrl = `/api/predictions?league=ncaam&date=${date}&windowDays=45`;
+        const nhlUrl = `/api/predictions?league=nhl&date=${date}&windowDays=40`;
 
-        const [nbaData, ncaamData] = await Promise.all([
+        const [nbaData, ncaamData, nhlData] = await Promise.all([
           fetchJson(nbaUrl, { signal: controller.signal, timeoutMs: 30000 }),
           fetchJson(ncaamUrl, { signal: controller.signal, timeoutMs: 30000 }),
+          fetchJson(nhlUrl, { signal: controller.signal, timeoutMs: 30000 }),
         ]);
 
         const nbaGames = Array.isArray(nbaData?.games) ? nbaData.games : [];
         const ncaamGames = Array.isArray(ncaamData?.games) ? ncaamData.games : [];
+        const nhlGames = Array.isArray(nhlData?.games) ? nhlData.games : [];
 
         setNba({
           loading: false,
@@ -522,10 +530,18 @@ export default function Home() {
           meta: { ...(ncaamData?.meta || {}), count: ncaamData?.count ?? ncaamGames.length },
           counts: tierCounts(ncaamGames),
         });
+
+        setNhl({
+          loading: false,
+          error: "",
+          meta: { ...(nhlData?.meta || {}), count: nhlData?.count ?? nhlGames.length },
+          counts: tierCounts(nhlGames),
+        });
       } catch (e) {
         const msg = String(e?.message || e);
         setNba((s) => ({ ...s, loading: false, error: s.error || msg }));
         setNcaam((s) => ({ ...s, loading: false, error: s.error || msg }));
+        setNhl((s) => ({ ...s, loading: false, error: s.error || msg }));
       }
     })();
 
@@ -687,7 +703,7 @@ export default function Home() {
             </span>
           ) : null}
           {" · "}Date <span className="mono">{date}</span> · NBA model <span className="mono">v2</span> (14d) · NCAAM window{" "}
-          <span className="mono">45d</span>
+          <span className="mono">45d</span> · NHL window <span className="mono">40d</span>
           {perfUpdatedAt ? (
             <span>
               {" "}
@@ -703,7 +719,7 @@ export default function Home() {
         ) : null}
       </div>
 
-      <DailyPicks date={date} nbaModel="v2" windowNba={14} windowNcaam={45} maxPicksPerLeague={8} />
+      <DailyPicks date={date} nbaModel="v2" windowNba={14} windowNcaam={45} windowNhl={40} maxPicksPerLeague={8} />
 
       <div style={{ height: 12 }} />
 
@@ -735,7 +751,7 @@ export default function Home() {
           <div className="subtle pre">{perf.error}</div>
         </div>
       ) : (
-        <PerformancePanel days={days} setDays={setDays} perf={perf.data} onRefresh={loadPerformance} />
+        <PerformancePanel today={date} days={days} setDays={setDays} perf={perf.data} onRefresh={loadPerformance} />
       )}
 
       <div style={{ height: 12 }} />
@@ -768,11 +784,20 @@ export default function Home() {
             counts={ncaam.counts}
             href={`/predict/ncaam?date=${date}&windowDays=45`}
           />
+
+          <SnapshotCard
+            title="NHL — Premium"
+            subtitle="ESPN slate + conservative picks"
+            loading={nhl.loading}
+            error={nhl.error}
+            meta={nhl.meta}
+            counts={nhl.counts}
+            href={`/predict/nhl?date=${date}&windowDays=40`}
+          />
         </div>
 
         <div className="subtle" style={{ marginTop: 10 }}>
-          NHL resumes <span className="mono">02-24-2026</span> — performance still displays scored picks for the last 30 days during
-          the break.
+          NHL is active — if you see missing rows, run scoring for those dates and refresh after ~2–5s.
         </div>
       </div>
     </div>
