@@ -134,12 +134,6 @@ function isAbortLike(e) {
   return name === "AbortError" || msg.toLowerCase().includes("aborted");
 }
 
-function trimUpstreamText(s, max = 500) {
-  const t = String(s || "");
-  if (t.length <= max) return t;
-  return t.slice(0, max) + "…";
-}
-
 /**
  * fetchJson with:
  * - cache
@@ -149,7 +143,6 @@ function trimUpstreamText(s, max = 500) {
  * - HARD request timeout via AbortController (prevents “forever hangs”)
  *
  * Premium upgrades:
- * - Read response body ONCE (avoids double-consume bugs)
  * - Robust JSON parsing with content-type fallback (upstreams occasionally return HTML on errors)
  * - Better transient detection (AbortError + common Node fetch failures)
  */
@@ -201,12 +194,14 @@ async function fetchJson(
 
         const contentType = String(res.headers?.get?.("content-type") || "").toLowerCase();
 
-        // ✅ Read body exactly once (fixes double-consume + empty body issues)
-        const bodyText = await res.text().catch(() => "");
+        // Helper: safe read text once
+        async function readTextSafe() {
+          return await res.text().catch(() => "");
+        }
 
-        // Retry class: rate limit
         if (res.status === 429) {
           const retryAfter = parseRetryAfterSeconds(res);
+          const text = await readTextSafe();
           const waitMs =
             retryAfter != null
               ? retryAfter * 1000
@@ -214,45 +209,47 @@ async function fetchJson(
 
           if (attempt >= retries) {
             throw new Error(
-              `Upstream 429 for ${url}${bodyText ? ` — ${trimUpstreamText(bodyText)}` : ""} — exceeded retry limit`
+              `Upstream 429 for ${url}${text ? ` — ${text}` : ""} — exceeded retry limit`
             );
           }
           await sleep(waitMs);
           continue;
         }
 
-        // Retry class: 5xx
         if (res.status >= 500 && res.status <= 599) {
+          const text = await readTextSafe();
           const waitMs = jitter(baseBackoffMs * Math.pow(2, attempt), 0.25);
           if (attempt >= retries) {
-            throw new Error(
-              `Upstream ${res.status} for ${url}${bodyText ? ` — ${trimUpstreamText(bodyText)}` : ""}`
-            );
+            throw new Error(`Upstream ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
           }
           await sleep(waitMs);
           continue;
         }
 
-        // Hard fail for other non-OK
         if (!res.ok) {
-          throw new Error(
-            `Upstream ${res.status} for ${url}${bodyText ? ` — ${trimUpstreamText(bodyText)}` : ""}`
-          );
+          const text = await readTextSafe();
+          throw new Error(`Upstream ${res.status} for ${url}${text ? ` — ${text}` : ""}`);
         }
 
-        // Parse JSON (prefer content-type, but handle weird cases)
+        // Prefer res.json() when content-type looks right; otherwise attempt json parse from text.
         let data;
         if (contentType.includes("application/json") || contentType.includes("+json")) {
           try {
-            data = bodyText ? JSON.parse(bodyText) : null;
+            data = await res.json();
           } catch {
-            throw new Error(`Upstream returned invalid JSON for ${url}`);
+            const text = await readTextSafe();
+            try {
+              data = JSON.parse(text);
+            } catch {
+              throw new Error(`Upstream returned non-JSON for ${url}`);
+            }
           }
         } else {
-          // If upstream returned HTML/text, attempt JSON parse anyway (some APIs omit content-type)
+          const text = await readTextSafe();
           try {
-            data = bodyText ? JSON.parse(bodyText) : null;
+            data = JSON.parse(text);
           } catch {
+            // If upstream returned HTML or text, fail loudly but safely.
             throw new Error(`Upstream returned non-JSON for ${url}`);
           }
         }
@@ -322,6 +319,7 @@ function espnNhlLogoFromTeamId(teamId) {
   if (!id) return null;
   return `https://a.espncdn.com/i/teamlogos/nhl/500/${id}.png`;
 }
+
 
 function sanitizeLogoUrl(url) {
   const u = String(url || "").trim();
@@ -766,6 +764,7 @@ function normalizeStatusForScoring(rawState) {
   return String(rawState) || "Scheduled";
 }
 
+
 /**
  * Premium decision helpers
  */
@@ -809,16 +808,14 @@ function buildWhyPanel({ pickSide, pickNote, edgeForPick, conf, deltas = [] }) {
         ? "Pass: edge not strong enough (toss-up)."
         : "Pass: insufficient signal."
     );
-    if (Number.isFinite(edgeForPick))
-      bullets.push(`Edge: ${edgeForPick.toFixed(3)} (below threshold).`);
+    if (Number.isFinite(edgeForPick)) bullets.push(`Edge: ${edgeForPick.toFixed(3)} (below threshold).`);
     return { headline: "PASS (no bet)", bullets: bullets.slice(0, 5), deltas: [] };
   }
 
   bullets.push(
     `Pick: ${pickSide.toUpperCase()} (edge ${Number.isFinite(edgeForPick) ? edgeForPick.toFixed(3) : "—"})`
   );
-  if (Number.isFinite(conf))
-    bullets.push(`Confidence proxy: ${Math.round(conf * 100)}% (not a bar metric)`);
+  if (Number.isFinite(conf)) bullets.push(`Confidence proxy: ${Math.round(conf * 100)}% (not a bar metric)`);
 
   const outDeltas = [];
   for (const d of deltas) {
@@ -848,12 +845,6 @@ function buildWhyPanel({ pickSide, pickNote, edgeForPick, conf, deltas = [] }) {
  * ✅ edgeForPick: always positive when pick exists, null for PASS
  * ✅ marketType/marketSide/marketLine/marketOdds added for frontend stability
  */
-/**
- * Unified game response builder
- * ✅ edgeForPick: always positive when pick exists, null for PASS
- * ✅ Adds a stable top-level `pick` summary (legacy compatibility)
- * ✅ Adds `market` block with EV/Kelly fields when market odds + winProb exist
- */
 function toUnifiedGame({
   league,
   gameId,
@@ -880,27 +871,40 @@ function toUnifiedGame({
   const awayScore =
     Number.isFinite(away?.score) ? away.score : Number.isFinite(away?.awayScore) ? away.awayScore : null;
 
-  const f = factors && typeof factors === "object" ? factors : {};
+function toUnifiedGame({
+  league,
+  gameId,
+  date,
+  status,
+  home,
+  away,
+  pickSide,
+  pickNote,
+  edgeForPick,
+  conf,
+  tier,
+  whyPanel,
+  factors,
+  marketType = null,
+  marketSide = null,
+  marketLine = null,
+  marketOdds = null,
+}) {
+  const recommended = pickSide === "home" ? home : pickSide === "away" ? away : null;
 
-  // winProb is expected to be placed in factors.winProb by the league builder
-  const winProb = recommended && Number.isFinite(f?.winProb) ? f.winProb : null;
+  const homeScore =
+    Number.isFinite(home?.score) ? home.score : Number.isFinite(home?.homeScore) ? home.homeScore : null;
+  const awayScore =
+    Number.isFinite(away?.score) ? away.score : Number.isFinite(away?.awayScore) ? away.awayScore : null;
 
-  // Only compute EV/Kelly when we have both market odds + winProb
+  // ✅ winProb is already computed per league and passed in factors.winProb
+  const winProb = recommended && Number.isFinite(factors?.winProb) ? factors.winProb : null;
+
+  // ✅ Only compute EV when we have both market odds + winProb
   const evPack =
     recommended && marketOdds != null && Number.isFinite(winProb)
       ? computeMarketEV({ oddsAmerican: marketOdds, winProb, stake: 100 })
       : null;
-
-  const pickSummary = {
-    pick: pickSide,
-    recommendedTeamId: recommended ? recommended.id : null,
-    recommendedTeamName: recommended ? (recommended.abbr || recommended.name || "") : "",
-    edge: recommended && Number.isFinite(edgeForPick) ? edgeForPick : null,
-    tier: pickSide ? (tier || "LEAN") : "PASS",
-    confidence: pickSide ? (Number.isFinite(conf) ? conf : null) : null,
-    winProb: Number.isFinite(winProb) ? winProb : null,
-    note: pickNote || null,
-  };
 
   return {
     gameId,
@@ -910,16 +914,6 @@ function toUnifiedGame({
     awayScore,
     home,
     away,
-
-    // ✅ legacy compatibility
-    pick: pickSummary,
-
-    // ✅ convenience mirrors (older scripts)
-    winProb: pickSummary.winProb,
-    marketOdds: marketOdds ?? null,
-    ev: evPack?.ev?.forStake ?? null,
-    kelly: evPack?.kelly?.half ?? null,
-
     market: {
       pick: pickSide,
       marketType,
@@ -927,6 +921,7 @@ function toUnifiedGame({
       marketLine,
       marketOdds,
 
+      // NEW (safe-null fields)
       impliedProb: evPack?.derived?.impliedProb ?? null,
       breakEvenProb: evPack?.derived?.breakEvenProb ?? null,
       modelProb: evPack?.inputs?.modelProb ?? null,
@@ -936,18 +931,16 @@ function toUnifiedGame({
       kellyFull: evPack?.kelly?.full ?? null,
       kellyHalf: evPack?.kelly?.half ?? null,
 
-      recommendedTeamId: pickSummary.recommendedTeamId,
-      recommendedTeamName: pickSummary.recommendedTeamName,
-      edge: pickSummary.edge,
-      tier: pickSummary.tier,
-      confidence: pickSummary.confidence,
-      winProb: pickSummary.winProb,
+      recommendedTeamId: recommended ? recommended.id : null,
+      recommendedTeamName: recommended ? (recommended.abbr || recommended.name || "") : "",
+      edge: recommended && Number.isFinite(edgeForPick) ? edgeForPick : null,
+      tier,
+      confidence: recommended ? conf : null,
+      winProb,
     },
-
     why: whyPanel,
-    factors: { league, ...f },
+    factors: { league, ...factors },
   };
-}
 
 /**
  * Team IDs
@@ -1034,15 +1027,8 @@ async function getNbaGamesByDate(dateYYYYMMDD) {
     const homeScore = typeof g?.home_team_score === "number" ? g.home_team_score : null;
     const awayScore = typeof g?.visitor_team_score === "number" ? g.visitor_team_score : null;
 
-const rawStatus = String(g?.status || "");
-const s = rawStatus.toLowerCase();
-
-// balldontlie status can be "Final" or sometimes weird/empty-ish.
-// Force a stable contract for the frontend.
-const status =
-  s.includes("final") ? "Final" :
-  s.includes("in progress") || s === "in" ? "In Progress" :
-  "Scheduled";
+    const rawStatus = String(g?.status || "");
+    const status = rawStatus.toLowerCase().includes("final") ? "Final" : rawStatus;
 
     return {
       gameId: `nba-${g.id}`,
@@ -1773,6 +1759,7 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
       const edgeSigned = nhlEdge(homeS, awayS);
       const pick = pickFromEdge(edgeSigned, MIN_EDGE_FOR_PICK);
 
+
       if (!pick.side) noPickCount++;
 
       const edgeForPick =
@@ -1846,8 +1833,6 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
             edgeForPick,
             homeEdgeSigned: edgeSigned,
             winProb: Number.isFinite(winProb) ? winProb : null,
-            homePlayed: homeS.played ?? null,
-            awayPlayed: awayS.played ?? null,
             homeWinPct: homeS.winPct ?? null,
             awayWinPct: awayS.winPct ?? null,
             homeMarginPerGame: homeS.marginPerGame ?? null,
@@ -2061,6 +2046,7 @@ function ncaamEdge(home, away, neutralSite, tournamentMode) {
   return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
 }
 
+
 function ncaamProbFromEdge(edge, edgeScale = 0.23) {
   if (!Number.isFinite(edge)) return 0.5;
   // College variance is higher than NBA; keep bounds wider but sane.
@@ -2183,8 +2169,6 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
             edgeForPick,
             homeEdgeSigned: edgeSigned,
             pickNote: pick.note,
-            homePlayed: homeS.played ?? null,
-            awayPlayed: awayS.played ?? null,
             neutralSite: neutral,
             tournamentMode: Boolean(tournamentMode),
             homeWinPct: homeS.winPct ?? null,
@@ -2223,7 +2207,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
  * Routes
  */
 router.get("/ping", (_req, res) => {
-  res.json({ ok: true, route: "predict", version: "predict-premium-v13-single-file" });
+  res.json({ ok: true, route: "predict", version: "predict-premium-v12-status-final" });
 });
 
 router.get("/nba/predict", async (req, res) => {
@@ -2392,6 +2376,3 @@ router.buildNhlPredictions = buildNhlPredictions;
 router.buildNcaamPredictions = buildNcaamPredictions;
 
 export default router;
-
-// ✅ Named exports for modules that import builders directly
-export { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions };

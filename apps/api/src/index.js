@@ -9,6 +9,7 @@ import performanceRoutes from "./routes/performance.js";
 import upsetsRouter from "./routes/upsets.js";
 import scoreRouter from "./routes/score.js";
 import { startDailyScoreJob } from "./cron/dailyScore.js";
+import evRouter from "./routes/ev.js";
 
 /**
  * Optional: Premium NBA router (safe import)
@@ -62,6 +63,9 @@ app.use("/api", performanceRoutes);
 // League utilities
 app.use("/api/upsets", upsetsRouter);
 app.use("/api/score", scoreRouter);
+
+// EV calculator
+app.use("/api/ev", evRouter);
 
 // Optional NBA premium router
 if (nbaPremiumRouter) {
