@@ -48,7 +48,7 @@ app.get("/api/health", (_req, res) =>
     ok: true,
     service: "sports-mvp-api",
     time: new Date().toISOString(),
-    version: "api-index-v11-stable-routing",
+    version: "api-index-v21-universal-fallback",
   })
 );
 
