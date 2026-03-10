@@ -1,0 +1,389 @@
+// apps/web/src/pages/Parlays.jsx
+import { useEffect, useMemo, useState } from "react";
+
+function todayYMD() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function num(n, d = 2) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  const m = Math.pow(10, d);
+  return String(Math.round(x * m) / m);
+}
+
+function pct(n, d = 1) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  return `${(x * 100).toFixed(d)}%`;
+}
+
+function americanOdds(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  return x > 0 ? `+${x}` : String(x);
+}
+
+function tierTone(t) {
+  const x = String(t || "").toUpperCase();
+  if (x === "ELITE") return {
+    bg: "rgba(122, 242, 200, .12)",
+    bd: "1px solid rgba(122, 242, 200, .18)",
+    fg: "rgba(210,255,240,.92)",
+  };
+  if (x === "STRONG") return {
+    bg: "rgba(110, 180, 255, .12)",
+    bd: "1px solid rgba(110, 180, 255, .18)",
+    fg: "rgba(220,235,255,.92)",
+  };
+  if (x === "EDGE") return {
+    bg: "rgba(255, 210, 120, .12)",
+    bd: "1px solid rgba(255, 210, 120, .18)",
+    fg: "rgba(255,240,210,.92)",
+  };
+  return {
+    bg: "rgba(255,255,255,.04)",
+    bd: "1px solid rgba(255,255,255,.08)",
+    fg: "rgba(255,255,255,.82)",
+  };
+}
+
+function legLabel(l) {
+  const mt = String(l?.marketType || "").toLowerCase();
+  const pick = String(l?.pick || "").toUpperCase();
+  const line = l?.line;
+
+  if (mt === "moneyline") return `${pick} ML`;
+  if (mt === "spread") return `${pick}${line != null ? ` ${line > 0 ? "+" : ""}${line}` : ""}`;
+  if (mt === "total") return `${pick}${line != null ? ` ${line}` : ""}`;
+  return `${pick}${line != null ? ` ${line}` : ""}`.trim();
+}
+
+export default function Parlays() {
+  const [league, setLeague] = useState("nba");
+  const [date, setDate] = useState(todayYMD());
+  const [legs, setLegs] = useState(2);
+  const [limit, setLimit] = useState(5);
+  const [evOnly, setEvOnly] = useState(true);
+
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+
+  const url = useMemo(() => {
+    const p = new URLSearchParams();
+    p.set("league", league);
+    p.set("date", date);
+    p.set("legs", String(legs));
+    p.set("limit", String(limit));
+    p.set("evOnly", evOnly ? "1" : "0");
+    p.set("mode", "predictions");
+    return `/api/parlaysOdds?${p.toString()}`;
+  }, [league, date, legs, limit, evOnly]);
+
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(url);
+      const j = await r.json();
+      setData(j);
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  const parlays = Array.isArray(data?.parlays) ? data.parlays : [];
+  const topParlay = parlays.length ? parlays[0] : null;
+  const safestParlay = parlays.length
+    ? [...parlays].sort((a, b) => Number(b?.modelProb || 0) - Number(a?.modelProb || 0))[0]
+    : null;
+  const highestEvParlay = parlays.length
+    ? [...parlays].sort((a, b) => Number(b?.evForStake100 || -999) - Number(a?.evForStake100 || -999))[0]
+    : null;
+
+  return (
+    <div className="page">
+      <h1>Parlays</h1>
+      <div className="muted2" style={{ marginBottom: 12 }}>
+        Premium parlays generated from your <b>/api/predictions</b> pool. Use this to surface the strongest combinations for the current slate.
+      </div>
+
+      <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+        <div className="grid2" style={{ gap: 12, alignItems: "end" }}>
+          <div>
+            <div className="muted2">League</div>
+            <select value={league} onChange={(e) => setLeague(e.target.value)}>
+              <option value="nba">NBA</option>
+              <option value="nhl">NHL</option>
+              <option value="ncaam">NCAAM</option>
+            </select>
+          </div>
+
+          <div>
+            <div className="muted2">Date</div>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+
+          <div>
+            <div className="muted2">Legs</div>
+            <input
+              type="number"
+              min={2}
+              max={8}
+              value={legs}
+              onChange={(e) => setLegs(Number(e.target.value || 2))}
+            />
+          </div>
+
+          <div>
+            <div className="muted2">Results</div>
+            <input
+              type="number"
+              min={1}
+              max={25}
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value || 5))}
+            />
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" checked={evOnly} onChange={(e) => setEvOnly(e.target.checked)} />
+            <span>+EV only</span>
+          </label>
+
+          <button onClick={load} disabled={loading}>
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
+
+        <div className="muted2" style={{ marginTop: 10 }}>
+          Endpoint: <code>{url}</code>
+        </div>
+
+        {!loading && data?.ok === false && (
+          <div style={{ marginTop: 10 }} className="warn">
+            {String(data?.error || "Unknown error")}
+          </div>
+        )}
+        {err && (
+          <div style={{ marginTop: 10 }} className="warn">
+            {err}
+          </div>
+        )}
+      </div>
+
+      {!loading && !err && topParlay ? (
+        <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>Best Available Parlay</div>
+              <div className="muted2">
+                Strongest currently qualified parlay from the premium prediction pool.
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: "rgba(122, 242, 200, .12)",
+                border: "1px solid rgba(122, 242, 200, .18)",
+                color: "rgba(210,255,240,.92)",
+                fontWeight: 800,
+              }}
+            >
+              {topParlay?.legs?.length ?? 0}-LEG
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10, marginBottom: 12 }}>
+            <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.06)" }}>
+              <div className="muted2" style={{ fontSize: 12 }}>Combined Odds</div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>{americanOdds(topParlay?.combinedAmericanOdds)}</div>
+            </div>
+            <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.06)" }}>
+              <div className="muted2" style={{ fontSize: 12 }}>Hit Probability</div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>{pct(topParlay?.modelProb, 1)}</div>
+            </div>
+            <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.06)" }}>
+              <div className="muted2" style={{ fontSize: 12 }}>EV / $100</div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>{num(topParlay?.evForStake100, 2)}</div>
+            </div>
+            <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.06)" }}>
+              <div className="muted2" style={{ fontSize: 12 }}>Kelly½</div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>{num(topParlay?.kellyHalf, 3)}</div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            {Array.isArray(topParlay?.legs) &&
+              topParlay.legs.map((l, idx) => {
+                const tone = tierTone(l?.tier);
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      border: "1px solid rgba(255,255,255,.08)",
+                      borderRadius: 14,
+                      padding: 12,
+                      background: "rgba(255,255,255,.03)",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                      <div>
+                        <div style={{ fontWeight: 800 }}>{l?.matchup || "Matchup"}</div>
+                        <div className="muted2">
+                          {String(l?.marketType || "").toUpperCase()} • <b>{legLabel(l)}</b>
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          background: tone.bg,
+                          border: tone.bd,
+                          color: tone.fg,
+                          fontSize: 12,
+                          fontWeight: 800,
+                        }}
+                      >
+                        {String(l?.tier || "PASS").toUpperCase()}
+                      </div>
+                    </div>
+
+                    <div className="muted2">
+                      Odds <b>{americanOdds(l?.odds)}</b> • Win Prob <b>{pct(l?.winProb, 1)}</b> • EV / $100{" "}
+                      <b>{num(l?.evForStake100, 2)}</b>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+        <div className="muted2" style={{ marginBottom: 10 }}>
+          poolSize: <b>{data?.poolSize ?? "—"}</b> • candidates: <b>{data?.candidates ?? "—"}</b> • parlays:{" "}
+          <b>{data?.count ?? "—"}</b>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10 }}>
+          <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)" }}>
+            <div className="muted2" style={{ fontSize: 12 }}>Best Available</div>
+            <div style={{ fontWeight: 800 }}>
+              {topParlay ? `${topParlay?.legs?.length ?? 0}-leg ${americanOdds(topParlay?.combinedAmericanOdds)}` : "—"}
+            </div>
+            <div className="muted2">EV {topParlay ? num(topParlay?.evForStake100, 2) : "—"}</div>
+          </div>
+
+          <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)" }}>
+            <div className="muted2" style={{ fontSize: 12 }}>Safest</div>
+            <div style={{ fontWeight: 800 }}>
+              {safestParlay ? `${safestParlay?.legs?.length ?? 0}-leg ${americanOdds(safestParlay?.combinedAmericanOdds)}` : "—"}
+            </div>
+            <div className="muted2">Prob {safestParlay ? pct(safestParlay?.modelProb, 1) : "—"}</div>
+          </div>
+
+          <div style={{ padding: 12, borderRadius: 14, background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.06)" }}>
+            <div className="muted2" style={{ fontSize: 12 }}>Highest EV</div>
+            <div style={{ fontWeight: 800 }}>
+              {highestEvParlay ? `${highestEvParlay?.legs?.length ?? 0}-leg ${americanOdds(highestEvParlay?.combinedAmericanOdds)}` : "—"}
+            </div>
+            <div className="muted2">EV {highestEvParlay ? num(highestEvParlay?.evForStake100, 2) : "—"}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        {Array.isArray(parlays) && parlays.length === 0 ? (
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 6 }}>No qualified parlays on this slate</div>
+            <div className="muted2">
+              Try reducing the number of legs, increasing the results count, or turning <b>+EV only</b> off for thin slates.
+            </div>
+          </div>
+        ) : null}
+
+        {Array.isArray(parlays) &&
+          parlays.map((p, idx) => (
+            <div
+              key={idx}
+              className="card"
+              style={{
+                padding: 14,
+                marginBottom: 12,
+                background: idx === 0 ? "rgba(255,255,255,.04)" : undefined,
+                border: idx === 0 ? "1px solid rgba(122, 242, 200, .12)" : undefined,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                <div>
+                  <b>Parlay #{idx + 1}</b> • {p?.legs?.length ?? 0} legs
+                </div>
+                <div className="muted2">
+                  Odds: <b>{americanOdds(p?.combinedAmericanOdds)}</b> • Prob: <b>{pct(p?.modelProb, 1)}</b> • EV / $100:{" "}
+                  <b>{num(p?.evForStake100, 2)}</b> • Kelly½: <b>{num(p?.kellyHalf, 3)}</b>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                {Array.isArray(p?.legs) &&
+                  p.legs.map((l, j) => {
+                    const tone = tierTone(l?.tier);
+                    return (
+                      <div
+                        key={j}
+                        style={{
+                          border: "1px solid rgba(255,255,255,.08)",
+                          borderRadius: 14,
+                          padding: 12,
+                          background: "rgba(255,255,255,.03)",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                          <div>
+                            <div style={{ fontWeight: 800 }}>{l?.matchup || "Matchup"}</div>
+                            <div className="muted2">
+                              {String(l?.marketType || "").toUpperCase()} • <b>{legLabel(l)}</b>
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: 999,
+                              background: tone.bg,
+                              border: tone.bd,
+                              color: tone.fg,
+                              fontSize: 12,
+                              fontWeight: 800,
+                            }}
+                          >
+                            {String(l?.tier || "PASS").toUpperCase()}
+                          </div>
+                        </div>
+
+                        <div className="muted2">
+                          Odds <b>{americanOdds(l?.odds)}</b> • Win Prob <b>{pct(l?.winProb, 1)}</b> • EV / $100{" "}
+                          <b>{num(l?.evForStake100, 2)}</b>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}

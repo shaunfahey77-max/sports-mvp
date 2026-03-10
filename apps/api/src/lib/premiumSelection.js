@@ -1,0 +1,88 @@
+import {
+  MARKET_GATING,
+  THRESHOLDS,
+  HISTORICAL_MARKET_ROI,
+  RANKING_WEIGHTS,
+  TIER_RANK,
+} from "../config/premiumStrategy.js";
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeProb(p) {
+  const n = num(p);
+  if (n == null) return 0;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+function marketAllowed(league, marketType) {
+  return !!MARKET_GATING?.[league]?.[marketType];
+}
+
+function tierAllowed(tier) {
+  return THRESHOLDS.allowedTiers.includes(String(tier || "PASS").toUpperCase());
+}
+
+function passesThresholds(candidate) {
+  const ev = num(candidate?.evForStake100);
+  const kelly = num(candidate?.kellyHalf);
+  const edge = num(candidate?.edge);
+  const modelProb = normalizeProb(candidate?.modelProb);
+  const odds = num(candidate?.odds);
+  const tier = String(candidate?.tier || "PASS").toUpperCase();
+
+  if (!tierAllowed(tier)) return false;
+  if (odds == null || odds === 0) return false;
+  if (ev == null || ev < THRESHOLDS.minEvForStake100) return false;
+  if (kelly == null || kelly < THRESHOLDS.minKellyHalf) return false;
+  if (edge == null || edge < THRESHOLDS.minEdge) return false;
+  if (modelProb <= 0 || modelProb >= 1) return false;
+
+  return true;
+}
+
+function marketRoiScore(league, marketType) {
+  return num(HISTORICAL_MARKET_ROI?.[league]?.[marketType]) ?? -1;
+}
+
+function weightedScore(league, candidate) {
+  const ev = num(candidate?.evForStake100) ?? -9999;
+  const kelly = num(candidate?.kellyHalf) ?? 0;
+  const modelProb = normalizeProb(candidate?.modelProb);
+  const marketRoi = marketRoiScore(league, candidate?.marketType);
+
+  return (
+    ev * RANKING_WEIGHTS.ev +
+    kelly * 100 * RANKING_WEIGHTS.kelly +
+    modelProb * 100 * RANKING_WEIGHTS.modelProb +
+    marketRoi * 100 * RANKING_WEIGHTS.marketRoi
+  );
+}
+
+export function applyPremiumSelection(league, candidates = []) {
+  const gated = candidates.filter((c) => marketAllowed(league, c?.marketType));
+  const filtered = gated.filter((c) => passesThresholds(c));
+
+  const ranked = filtered
+    .map((c) => ({
+      ...c,
+      premiumScore: weightedScore(league, c),
+      marketHistoricalRoi: marketRoiScore(league, c?.marketType),
+      tierRank: TIER_RANK[String(c?.tier || "PASS").toUpperCase()] ?? 0,
+    }))
+    .sort((a, b) => {
+      if ((b.tierRank ?? 0) !== (a.tierRank ?? 0)) {
+        return (b.tierRank ?? 0) - (a.tierRank ?? 0);
+      }
+      return (b.premiumScore ?? -1e9) - (a.premiumScore ?? -1e9);
+    });
+
+  return {
+    candidates: ranked,
+    recommended: ranked[0] || null,
+  };
+}

@@ -1,374 +1,493 @@
-// apps/web/src/pages/Upsets.jsx
-import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 
 function todayYMD() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function pct(n) {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
-  return `${Math.round(n * 1000) / 10}%`;
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-function num(n, digits = 0) {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
-  const m = Math.pow(10, digits);
-  return String(Math.round(n * m) / m);
+function pct(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${n.toFixed(digits)}%`;
 }
 
-function sideLabel(side) {
-  const s = String(side || "").toLowerCase();
-  if (s === "home") return "HOME";
-  if (s === "away") return "AWAY";
-  return "—";
+function pctFromUnit(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+function oddsText(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
+function impliedFromAmerican(odds) {
+  const o = num(odds);
+  if (o == null || o === 0) return null;
+  if (o > 0) return 100 / (o + 100);
+  return Math.abs(o) / (Math.abs(o) + 100);
+}
+
+function normalizeUpsetRows(data) {
+  const rootArray =
+    (Array.isArray(data?.rows) && data.rows) ||
+    (Array.isArray(data?.items) && data.items) ||
+    (Array.isArray(data?.candidates) && data.candidates) ||
+    (Array.isArray(data?.upsets) && data.upsets) ||
+    (Array.isArray(data?.games) && data.games) ||
+    [];
+
+  return rootArray.map((row, idx) => {
+    const books = Array.isArray(row?.books)
+      ? row.books
+      : Array.isArray(row?.sportsbooks)
+      ? row.sportsbooks
+      : Array.isArray(row?.bookmakers)
+      ? row.bookmakers
+      : [];
+
+    const normalizedBooks = books
+      .map((b) => ({
+        name: b?.name || b?.book || b?.bookmaker || b?.key || "Book",
+        odds: b?.odds ?? b?.price ?? b?.dogOdds ?? null,
+      }))
+      .filter((b) => b.odds != null);
+
+    const underdog =
+      row?.underdog ||
+      row?.dog ||
+      row?.away ||
+      row?.awayTeam ||
+      row?.away_abbr ||
+      "Underdog";
+
+    const favorite =
+      row?.fav ||
+      row?.favorite ||
+      row?.home ||
+      row?.homeTeam ||
+      row?.home_abbr ||
+      "Favorite";
+
+    const dogOdds = row?.dogOdds ?? row?.odds ?? normalizedBooks[0]?.odds ?? null;
+    const dogWinProb = num(row?.dogWinProb ?? row?.modelDogProb ?? row?.underdogWinProb ?? row?.dog_prob);
+    const impliedDogProb = num(row?.impliedDogProb ?? row?.dogImpliedProb ?? impliedFromAmerican(dogOdds));
+    const conf = num(row?.conf ?? row?.confidence ?? row?.modelConf ?? dogWinProb);
+    const rawScore = num(row?.score ?? row?.watchScore ?? row?.dogEdgeScore);
+    const edge = dogWinProb != null && impliedDogProb != null ? (dogWinProb - impliedDogProb) * 100 : null;
+
+    return {
+      id: row?.id || row?.gameId || `${idx}`,
+      matchup: row?.matchup || `${underdog} @ ${favorite}`,
+      underdog,
+      favorite,
+      dogOdds,
+      dogWinProb,
+      impliedDogProb,
+      conf,
+      edge,
+      score: rawScore != null ? rawScore : dogWinProb != null && impliedDogProb != null ? Math.max(0, Math.min(100, 50 + (dogWinProb - impliedDogProb) * 200)) : null,
+      why: row?.why || row?.reason || row?.notes || "",
+      books: normalizedBooks,
+    };
+  });
+}
+
+function cardStyle() {
+  return {
+    background: "rgba(9,15,28,0.82)",
+    border: "1px solid rgba(148,163,184,0.14)",
+    borderRadius: 22,
+    boxShadow: "0 18px 46px rgba(0,0,0,0.22)",
+  };
+}
+
+function tileStyle() {
+  return {
+    background: "rgba(15,23,42,0.9)",
+    border: "1px solid rgba(148,163,184,0.12)",
+    borderRadius: 16,
+    padding: 14,
+  };
 }
 
 export default function Upsets() {
-  const [league, setLeague] = useState("nba"); // nba | nhl | ncaam
+  const [league, setLeague] = useState("nba");
   const [date, setDate] = useState(todayYMD());
-
-  // API: window, minWin, limit (+ aliases supported by backend)
-  const [windowDays, setWindowDays] = useState(14);
-  const [minWin, setMinWin] = useState(0.3);
+  const [windowDays, setWindowDays] = useState(21);
+  const [minDogWin, setMinDogWin] = useState(0.3);
   const [limit, setLimit] = useState(20);
-
-  // mode=watch|strict
   const [mode, setMode] = useState("watch");
+  const [sort, setSort] = useState("score");
 
-  // score | winProb | baseGap
-  const [sortKey, setSortKey] = useState("score");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [data, setData] = useState(null);
 
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [payload, setPayload] = useState(null);
-
-  // Sensible defaults when you switch leagues
   useEffect(() => {
-    if (league === "ncaam") {
-      // NCAA: tighter distribution → 0.20 is more useful
-      setMinWin((v) => (Number.isFinite(v) ? Math.min(v, 0.3) : 0.2));
-      if (minWin > 0.3) setMinWin(0.2);
-      if (windowDays < 14) setWindowDays(45);
-    } else {
-      if (windowDays > 60) setWindowDays(14);
-      if (minWin < 0.25) setMinWin(0.3);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [league]);
+    let cancelled = false;
 
-  async function load() {
-    setLoading(true);
-    setErr("");
+    async function load() {
+      setLoading(true);
+      setError("");
 
-    try {
-      const qs = new URLSearchParams({
-        league,
-        date,
-        window: String(windowDays),
-        minWin: String(minWin),
-        limit: String(limit),
-        mode,
-      });
-
-      const res = await fetch(`/api/upsets?${qs.toString()}`);
-      const json = await res.json();
-
-      if (!res.ok || json?.ok === false) {
-        throw new Error(json?.error || `Request failed (${res.status})`);
+      try {
+        const url =
+          `/api/upsetsOdds?league=${league}&date=${date}&window=${windowDays}&minDogWin=${minDogWin}&limit=${limit}&mode=${mode}&sort=${sort}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (!cancelled) setData(json);
+      } catch {
+        if (!cancelled) setError("Failed to load upset opportunities.");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-
-      setPayload(json);
-    } catch (e) {
-      setPayload(null);
-      setErr(String(e?.message || e));
-    } finally {
-      setLoading(false);
     }
-  }
 
-  useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [league, date, windowDays, minWin, limit, mode]);
+    return () => { cancelled = true; };
+  }, [league, date, windowDays, minDogWin, limit, mode, sort]);
 
-  const meta = payload?.meta || {};
+  const rows = useMemo(() => normalizeUpsetRows(data), [data]);
+  const featured = rows[0] || null;
 
-  // backend returns BOTH `rows` and `candidates`
-  const rows = useMemo(() => {
-    if (Array.isArray(payload?.rows)) return payload.rows;
-    if (Array.isArray(payload?.candidates)) return payload.candidates;
-    return [];
-  }, [payload]);
-
-  const sorted = useMemo(() => {
-    const r = [...rows];
-
-    const baseGapAbs = (x) => {
-      const g = x?.signals?.baseGap;
-      return Number.isFinite(g) ? Math.abs(g) : 0;
-    };
-
-    const score = (x) => {
-      const s = x?.signals?.score;
-      return Number.isFinite(s) ? s : 0;
-    };
-
-    const winProb = (x) => {
-      const w = x?.winProb;
-      return Number.isFinite(w) ? w : 0;
-    };
-
-    r.sort((a, b) => {
-      if (sortKey === "baseGap") return baseGapAbs(a) - baseGapAbs(b); // closer game first
-      if (sortKey === "winProb") return winProb(b) - winProb(a);
-      return score(b) - score(a);
-    });
-
-    return r.slice(0, Math.max(1, Math.min(50, Number(limit) || 20)));
-  }, [rows, sortKey, limit]);
-
-  const emptyReason = useMemo(() => {
-    if (loading) return "";
-    if (err) return "";
-    if (!payload) return "";
-
-    const slate = typeof meta?.slateGames === "number" ? meta.slateGames : null;
-
-    if (slate === 0) return "No games on this slate (try another date/league).";
-    if ((payload?.count ?? 0) === 0) return "No upset candidates matched your filters for this slate.";
-    return "No results.";
-  }, [loading, err, payload, meta]);
+  const styles = {
+    page: {
+      minHeight: "100vh",
+      background:
+        "radial-gradient(circle at top left, rgba(30,111,219,0.20), transparent 26%), radial-gradient(circle at top right, rgba(139,92,246,0.16), transparent 24%), linear-gradient(180deg, #071224 0%, #040b18 100%)",
+      color: "#e5e7eb",
+      padding: "28px 20px 40px",
+    },
+    shell: { maxWidth: 1180, margin: "0 auto" },
+    hero: {
+      ...cardStyle(),
+      padding: 24,
+      marginBottom: 20,
+      background:
+        "linear-gradient(180deg, rgba(9,15,28,0.92) 0%, rgba(7,12,24,0.96) 100%)",
+    },
+    topGrid: {
+      display: "grid",
+      gridTemplateColumns: "320px 1fr",
+      gap: 18,
+      alignItems: "start",
+    },
+    formCard: { ...tileStyle(), padding: 16 },
+    label: {
+      display: "block",
+      fontSize: 12,
+      color: "#94a3b8",
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+      marginBottom: 6,
+      fontWeight: 700,
+    },
+    input: {
+      width: "100%",
+      background: "rgba(30,41,59,0.82)",
+      border: "1px solid rgba(148,163,184,0.18)",
+      color: "#f8fafc",
+      borderRadius: 12,
+      padding: "10px 12px",
+      outline: "none",
+    },
+    overline: {
+      fontSize: 12,
+      color: "#93c5fd",
+      textTransform: "uppercase",
+      letterSpacing: "0.14em",
+      fontWeight: 800,
+      marginBottom: 10,
+    },
+    h2: {
+      margin: 0,
+      fontSize: 28,
+      fontWeight: 800,
+      color: "#f8fafc",
+    },
+    panelGrid: {
+      display: "grid",
+      gridTemplateColumns: "1.35fr 0.95fr",
+      gap: 20,
+    },
+    sectionPanel: { ...cardStyle(), padding: 22 },
+    gaugeTrack: {
+      width: "100%",
+      height: 12,
+      background: "rgba(30,41,59,0.95)",
+      borderRadius: 999,
+      overflow: "hidden",
+      border: "1px solid rgba(148,163,184,0.12)",
+    },
+    statGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: 12,
+      marginTop: 14,
+    },
+    statTile: { ...tileStyle(), padding: 12 },
+    metricLabel: {
+      fontSize: 11,
+      color: "#94a3b8",
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+      fontWeight: 700,
+      marginBottom: 6,
+    },
+    metricValue: {
+      fontSize: 24,
+      lineHeight: 1.05,
+      fontWeight: 800,
+      color: "#f8fafc",
+    },
+    cardList: {
+      display: "grid",
+      gap: 14,
+      marginTop: 14,
+    },
+    upsetCard: {
+      ...tileStyle(),
+      padding: 16,
+    },
+  };
 
   return (
-    <div className="homeFull">
-      <div className="container">
-        <div className="panel" style={{ marginTop: 10 }}>
-          <div className="panelHead">
-            <div>
-              <div style={{ fontWeight: 900 }}>Upset Watch</div>
-              <div className="muted" style={{ marginTop: 6 }}>
-                Underdog win equity + model context (pick/edge/conf). Use <b>Watch</b> to scan equity; use{" "}
-                <b>Strict</b> for “model actually picked the dog.”
-              </div>
+    <div style={styles.page}>
+      <div style={styles.shell}>
+        <section style={styles.hero}>
+          <div style={styles.overline}>Premium Upset Watch</div>
+          <h1 style={styles.h2}>Upsets</h1>
+          <p style={{ color: "#94a3b8", marginTop: 8, marginBottom: 0 }}>
+            Premium underdog scanner with upset probability gauges, sportsbook comparison, and dog edge scoring.
+          </p>
 
-              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                <span className="pill">Source: {meta?.source || "—"}</span>
-                <span className="pill">League: {league.toUpperCase()}</span>
-                <span className="pill">Mode: {mode}</span>
-                <span className="pill">Window: {windowDays}d</span>
-                <span className="pill">Min underdog win%: {pct(minWin)}</span>
-
-                {typeof meta?.slateGames === "number" ? <span className="pill">Slate: {meta.slateGames}</span> : null}
-                {typeof meta?.strictUnderdogPicks === "number" ? (
-                  <span className="pill">Model underdog picks: {meta.strictUnderdogPicks}</span>
-                ) : null}
-                {typeof meta?.elapsedMs === "number" ? <span className="pill">API: {meta.elapsedMs}ms</span> : null}
-              </div>
-            </div>
-
-            <div className="controls">
-              <Link className="btnGhost" to="/">
-                Home
-              </Link>
-
-              <button className={league === "nba" ? "btnPrimary" : "btnGhost"} onClick={() => setLeague("nba")}>
-                NBA
-              </button>
-              <button className={league === "nhl" ? "btnPrimary" : "btnGhost"} onClick={() => setLeague("nhl")}>
-                NHL
-              </button>
-              <button className={league === "ncaam" ? "btnPrimary" : "btnGhost"} onClick={() => setLeague("ncaam")}>
-                NCAAM
-              </button>
-            </div>
-          </div>
-
-          {/* Controls */}
-          <div className="card" style={{ marginTop: 14 }}>
-            <div className="row" style={{ alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div className="muted">Date</div>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="input" />
-              </div>
-
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div className="muted">Window</div>
-                <input
-                  type="number"
-                  min={3}
-                  max={90}
-                  value={windowDays}
-                  onChange={(e) => setWindowDays(Number(e.target.value || 14))}
-                  className="input"
-                  style={{ width: 90 }}
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div className="muted">Min underdog win%</div>
-                <input
-                  type="number"
-                  min={0.05}
-                  max={0.95}
-                  step={0.05}
-                  value={minWin}
-                  onChange={(e) => setMinWin(Number(e.target.value || 0.3))}
-                  className="input"
-                  style={{ width: 150 }}
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div className="muted">Limit</div>
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value || 20))}
-                  className="input"
-                  style={{ width: 90 }}
-                />
-              </div>
-
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div className="muted">Mode</div>
-                <select value={mode} onChange={(e) => setMode(e.target.value)} className="input">
-                  <option value="watch">Watch (equity filter)</option>
-                  <option value="strict">Strict (model picked underdog)</option>
+          <div style={styles.topGrid}>
+            <div style={styles.formCard}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={styles.label}>League</label>
+                <select value={league} onChange={(e) => setLeague(e.target.value)} style={styles.input}>
+                  <option value="nba">NBA</option>
+                  <option value="nhl">NHL</option>
+                  <option value="ncaam">NCAAM</option>
                 </select>
               </div>
 
-              <div style={{ flex: 1 }} />
-
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div className="muted">Sort</div>
-                <select value={sortKey} onChange={(e) => setSortKey(e.target.value)} className="input">
-                  <option value="score">Score</option>
-                  <option value="winProb">Underdog win%</option>
-                  <option value="baseGap">Gap (closest first)</option>
-                </select>
+              <div style={{ marginBottom: 12 }}>
+                <label style={styles.label}>Date</label>
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={styles.input} />
               </div>
 
-              <button className="btnGhost" onClick={load} disabled={loading}>
-                {loading ? "Loading…" : "Refresh"}
-              </button>
-            </div>
-          </div>
-
-          {/* Content */}
-          <div className="list" style={{ marginTop: 14 }}>
-            <div className="card">
-              <div style={{ fontWeight: 900, marginBottom: 6 }}>Upset Candidates</div>
-
-              {err ? (
-                <div className="kicker">
-                  <span style={{ fontWeight: 800 }}>Error:</span> {err}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={styles.label}>Window</label>
+                  <input type="number" min="7" max="60" value={windowDays} onChange={(e) => setWindowDays(Number(e.target.value) || 21)} style={styles.input} />
                 </div>
-              ) : loading ? (
-                <div className="kicker">Loading upsets…</div>
-              ) : sorted.length === 0 ? (
-                <div className="kicker">{emptyReason}</div>
+                <div>
+                  <label style={styles.label}>Limit</label>
+                  <input type="number" min="5" max="50" value={limit} onChange={(e) => setLimit(Number(e.target.value) || 20)} style={styles.input} />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={styles.label}>Min Dog Win %</label>
+                <input type="number" min="0.1" max="0.9" step="0.05" value={minDogWin} onChange={(e) => setMinDogWin(Number(e.target.value) || 0.3)} style={styles.input} />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={styles.label}>Mode</label>
+                  <select value={mode} onChange={(e) => setMode(e.target.value)} style={styles.input}>
+                    <option value="watch">Watch</option>
+                    <option value="strict">Strict</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={styles.label}>Sort</label>
+                  <select value={sort} onChange={(e) => setSort(e.target.value)} style={styles.input}>
+                    <option value="score">Score</option>
+                    <option value="dogWinProb">Dog Win %</option>
+                    <option value="dogEdge">Dog Edge</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div style={tileStyle()}>
+              <div style={styles.metricLabel}>Top Dog Opportunity</div>
+
+              {!featured ? (
+                <div style={{ color: "#94a3b8" }}>{loading ? "Loading..." : error || "No upset candidates."}</div>
               ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table className="table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr className="muted" style={{ textAlign: "left" }}>
-                        <th style={{ padding: "10px 8px" }}>Matchup</th>
-                        <th style={{ padding: "10px 8px" }}>Underdog</th>
-                        <th style={{ padding: "10px 8px" }}>Fav</th>
-                        <th style={{ padding: "10px 8px" }}>Dog win%</th>
-                        <th style={{ padding: "10px 8px" }}>Fav side + gap</th>
-                        <th style={{ padding: "10px 8px" }}>Score</th>
-                        <th style={{ padding: "10px 8px" }}>Model pick</th>
-                        <th style={{ padding: "10px 8px" }}>Dog edge</th>
-                        <th style={{ padding: "10px 8px" }}>Conf</th>
-                        <th style={{ padding: "10px 8px" }}>Why</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sorted.map((r) => {
-                        const u = r?.underdog || {};
-                        const f = r?.favorite || {};
-                        const why = Array.isArray(r?.why) ? r.why.join(" • ") : "—";
-
-                        const gap = r?.signals?.baseGap;
-                        const favSide = r?.signals?.favoriteSide; // "home" | "away"
-                        const score = r?.signals?.score;
-
-                        const pickSide = r?.pick?.pickSide; // "home" | "away"
-                        const pickName = r?.pick?.recommendedTeamName;
-
-                        const edge = r?.pick?.edge; // this is UNDERDOG edge in your current API contract
-                        const conf = r?.pick?.confidence;
-
-                        const matchup = r?.matchup || "—";
-
-                        return (
-                          <tr
-                            key={r?.id || r?.gameId || `${r?.league}-${r?.date}-${matchup}`}
-                            style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}
-                          >
-                            <td style={{ padding: "10px 8px", fontWeight: 800 }}>{matchup}</td>
-
-                            <td style={{ padding: "10px 8px" }}>
-                              <span className="pill">
-                                {u?.abbr || u?.name || "Underdog"}
-                                {u?.isHome ? " (H)" : " (A)"}
-                              </span>
-                            </td>
-
-                            <td style={{ padding: "10px 8px" }}>
-                              {f?.abbr || f?.name || "Favorite"}
-                              {f?.isHome ? " (H)" : " (A)"}
-                            </td>
-
-                            <td style={{ padding: "10px 8px" }}>{pct(r?.winProb)}</td>
-
-                            <td style={{ padding: "10px 8px" }}>
-                              {favSide ? `${sideLabel(favSide)} fav` : "—"}
-                              {Number.isFinite(gap) ? ` • ${Math.round(Math.abs(gap))}` : ""}
-                            </td>
-
-                            <td style={{ padding: "10px 8px" }}>{Number.isFinite(score) ? num(score, 1) : "—"}</td>
-
-                            <td style={{ padding: "10px 8px" }}>
-                              <span className="pill">
-                                {pickName ? pickName : "—"} {pickSide ? `(${sideLabel(pickSide)})` : ""}
-                              </span>
-                            </td>
-
-                            <td style={{ padding: "10px 8px" }}>
-                              {Number.isFinite(edge) ? num(edge, 3) : "—"}
-                            </td>
-
-                            <td style={{ padding: "10px 8px" }}>{Number.isFinite(conf) ? pct(conf) : "—"}</td>
-
-                            <td style={{ padding: "10px 8px" }} className="muted">
-                              {why}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-
-                  <div className="muted" style={{ marginTop: 10, fontSize: 12 }}>
-                    Notes: “Dog win%” is the underdog’s win equity. “Dog edge” is expressed from the underdog POV
-                    (so negatives are common). “Fav side + gap” is an Elo-like pseudo-gap (not official Elo).
+                <>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#f8fafc" }}>{featured.matchup}</div>
+                  <div style={{ marginTop: 8, color: "#cbd5e1", fontSize: 16 }}>
+                    Dog {featured.underdog} • Best price {oddsText(featured.dogOdds)}
                   </div>
-                </div>
+
+                  <div style={styles.statGrid}>
+                    <div style={styles.statTile}>
+                      <div style={styles.metricLabel}>Upset Prob</div>
+                      <div style={{ ...styles.metricValue, color: "#93c5fd" }}>{pctFromUnit(featured.dogWinProb, 1)}</div>
+                    </div>
+                    <div style={styles.statTile}>
+                      <div style={styles.metricLabel}>Dog Edge</div>
+                      <div style={{ ...styles.metricValue, color: "#86efac" }}>{featured.edge == null ? "—" : pct(featured.edge, 1)}</div>
+                    </div>
+                    <div style={styles.statTile}>
+                      <div style={styles.metricLabel}>Dog Score</div>
+                      <div style={{ ...styles.metricValue, color: "#fcd34d" }}>{featured.score == null ? "—" : `${Math.round(featured.score)}`}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                      <span>Upset Probability Gauge</span>
+                      <span>{pctFromUnit(featured.dogWinProb, 1)}</span>
+                    </div>
+                    <div style={styles.gaugeTrack}>
+                      <div
+                        style={{
+                          width: `${Math.max(0, Math.min(100, (Number(featured.dogWinProb) || 0) * 100))}%`,
+                          height: "100%",
+                          background: "linear-gradient(90deg, #2563eb 0%, #22c55e 100%)",
+                          borderRadius: 999,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
-        </div>
+        </section>
 
-        <div className="footer">
-          <div className="footerInner">
-            <div className="muted">Sports MVP</div>
-            <div className="muted">Upset Watch</div>
-          </div>
+        <div style={styles.panelGrid}>
+          <section style={styles.sectionPanel}>
+            <div style={styles.overline}>Premium Dog Scanner</div>
+            <h2 style={styles.h2}>Upset Candidates</h2>
+
+            {loading ? (
+              <div style={{ ...tileStyle(), marginTop: 14 }}>Loading upset candidates...</div>
+            ) : error ? (
+              <div style={{ ...tileStyle(), marginTop: 14, color: "#fda4af" }}>{error}</div>
+            ) : rows.length === 0 ? (
+              <div style={{ ...tileStyle(), marginTop: 14 }}>No upset candidates on this slate.</div>
+            ) : (
+              <div style={styles.cardList}>
+                {rows.map((row) => (
+                  <article key={row.id} style={styles.upsetCard}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "start" }}>
+                      <div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: "#f8fafc" }}>{row.matchup}</div>
+                        <div style={{ marginTop: 6, color: "#cbd5e1", fontSize: 15 }}>
+                          Dog: {row.underdog} • Favorite: {row.favorite}
+                        </div>
+                      </div>
+                      <div style={{ ...tileStyle(), padding: "8px 12px", minWidth: 78, textAlign: "center" }}>
+                        <div style={styles.metricLabel}>Score</div>
+                        <div style={{ ...styles.metricValue, color: "#fcd34d", fontSize: 22 }}>
+                          {row.score == null ? "—" : Math.round(row.score)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={styles.statGrid}>
+                      <div style={styles.statTile}>
+                        <div style={styles.metricLabel}>Model Dog %</div>
+                        <div style={{ ...styles.metricValue, color: "#93c5fd" }}>{pctFromUnit(row.dogWinProb, 1)}</div>
+                      </div>
+                      <div style={styles.statTile}>
+                        <div style={styles.metricLabel}>Implied Dog %</div>
+                        <div style={{ ...styles.metricValue, color: "#f8fafc" }}>{pctFromUnit(row.impliedDogProb, 1)}</div>
+                      </div>
+                      <div style={styles.statTile}>
+                        <div style={styles.metricLabel}>Dog Edge</div>
+                        <div style={{ ...styles.metricValue, color: "#86efac" }}>{row.edge == null ? "—" : pct(row.edge, 1)}</div>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 12, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>
+                        <span>Confidence Gauge</span>
+                        <span>{pctFromUnit(row.conf, 1)}</span>
+                      </div>
+                      <div style={styles.gaugeTrack}>
+                        <div
+                          style={{
+                            width: `${Math.max(0, Math.min(100, (Number(row.conf) || 0) * 100))}%`,
+                            height: "100%",
+                            background: "linear-gradient(90deg, #2563eb 0%, #22c55e 100%)",
+                            borderRadius: 999,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <div style={styles.metricLabel}>Sportsbook Odds Comparison</div>
+                      {(row.books || []).length === 0 ? (
+                        <div style={tileStyle()}>
+                          <div style={{ color: "#94a3b8", fontSize: 14 }}>
+                            Best available dog price: {oddsText(row.dogOdds)}
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+                          {row.books.slice(0, 4).map((book) => (
+                            <div key={`${row.id}-${book.name}`} style={tileStyle()}>
+                              <div style={styles.metricLabel}>{book.name}</div>
+                              <div style={{ ...styles.metricValue, fontSize: 22 }}>{oddsText(book.odds)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {row.why ? (
+                      <div style={{ marginTop: 14, color: "#94a3b8", fontSize: 13, lineHeight: 1.6 }}>{row.why}</div>
+                    ) : null}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <aside style={{ display: "grid", gap: 20 }}>
+            <section style={styles.sectionPanel}>
+              <div style={styles.overline}>Slate Snapshot</div>
+              <h2 style={styles.h2}>Summary</h2>
+              <div style={{ display: "grid", gap: 12, marginTop: 14 }}>
+                <div style={tileStyle()}>
+                  <div style={styles.metricLabel}>League</div>
+                  <div style={styles.metricValue}>{league.toUpperCase()}</div>
+                </div>
+                <div style={tileStyle()}>
+                  <div style={styles.metricLabel}>Candidates</div>
+                  <div style={styles.metricValue}>{rows.length}</div>
+                </div>
+                <div style={tileStyle()}>
+                  <div style={styles.metricLabel}>Mode</div>
+                  <div style={styles.metricValue}>{mode}</div>
+                </div>
+              </div>
+            </section>
+
+            <section style={styles.sectionPanel}>
+              <div style={styles.overline}>How to Use</div>
+              <h2 style={styles.h2}>Why This Page Matters</h2>
+              <div style={{ ...tileStyle(), marginTop: 14, color: "#94a3b8", lineHeight: 1.7 }}>
+                The best upset opportunities happen when the model gives the underdog a materially better chance
+                than the sportsbook implies. This page ranks those dogs by probability, edge, score, and available prices.
+              </div>
+            </section>
+          </aside>
         </div>
       </div>
     </div>

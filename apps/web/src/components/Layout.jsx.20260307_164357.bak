@@ -1,0 +1,43 @@
+import { NavLink } from "react-router-dom";
+import logo from "../assets/sports-mvp-logo.png";
+
+function NavItem({ to, children }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) => `navLink ${isActive ? "navLinkActive" : ""}`}
+      end={to === "/"}
+    >
+      {children}
+    </NavLink>
+  );
+}
+
+export default function Layout({ children }) {
+  return (
+    <>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <NavLink to="/" className="brandWrap" aria-label="Sports MVP home">
+            <img src={logo} alt="Sports MVP" className="brandLogo" />
+            <div className="brandText">
+              <span className="brandTitle">Sports MVP</span>
+              <span className="brandSub">NBA • NHL • NCAAM</span>
+            </div>
+          </NavLink>
+
+          <nav className="nav" aria-label="Primary">
+            <NavItem to="/">Home</NavItem>
+            
+            
+            
+            <NavItem to="/upsets">Upset Watch</NavItem>
+            <NavItem to="/parlays">Parlays</NavItem>
+          </nav>
+        </div>
+      </header>
+
+      <main className="app-shell">{children}</main>
+    </>
+  );
+}

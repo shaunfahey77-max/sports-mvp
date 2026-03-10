@@ -106,17 +106,32 @@ export async function upsertPickDaily(row) {
   const payload = {
     date: row.date,
     league: normLeague(row.league),
+    mode: row.mode ?? "regular",
     game_key: gameKey,
     market: normMarket(row.market),
 
     pick: row.pick ?? null,
+    market_type: row.market_type ?? normMarket(row.market),
+    market_line: row.market_line ?? null,
+    market_side: row.market_side ?? null,
+    market_odds: row.market_odds ?? row.odds ?? null,
     odds: row.odds ?? null,
+
     win_prob: row.win_prob ?? null,
+    raw_win_prob: row.raw_win_prob ?? row.win_prob ?? null,
+    cal_win_prob: row.cal_win_prob ?? row.win_prob ?? null,
+    calibration_method: row.calibration_method ?? null,
+    calibration_version: row.calibration_version ?? null,
+
+    publish_book: row.publish_book ?? null,
+    publish_line: row.publish_line ?? row.market_line ?? null,
+    publish_odds: row.publish_odds ?? row.odds ?? null,
+
     edge: row.edge ?? null,
     ev: row.ev ?? null,
     kelly: row.kelly ?? null,
 
-    result: row.result ?? null,
+    ...(row.result !== undefined ? { result: row.result ?? null } : {}),
     meta: safeJson(row.meta ?? null),
 
     updated_at: nowIso(),
@@ -151,17 +166,32 @@ export async function upsertPicksDailyBatch(rows, { chunkSize = 200 } = {}) {
         return {
           date: r.date,
           league: normLeague(r.league),
+          mode: r.mode ?? "regular",
           game_key: gameKey,
           market: normMarket(r.market),
 
           pick: r.pick ?? null,
+          market_type: r.market_type ?? normMarket(r.market),
+          market_line: r.market_line ?? null,
+          market_side: r.market_side ?? null,
+          market_odds: r.market_odds ?? r.odds ?? null,
           odds: r.odds ?? null,
+
           win_prob: r.win_prob ?? null,
+          raw_win_prob: r.raw_win_prob ?? r.win_prob ?? null,
+          cal_win_prob: r.cal_win_prob ?? r.win_prob ?? null,
+          calibration_method: r.calibration_method ?? null,
+          calibration_version: r.calibration_version ?? null,
+
+          publish_book: r.publish_book ?? null,
+          publish_line: r.publish_line ?? r.market_line ?? null,
+          publish_odds: r.publish_odds ?? r.odds ?? null,
+
           edge: r.edge ?? null,
           ev: r.ev ?? null,
           kelly: r.kelly ?? null,
 
-          result: r.result ?? null,
+          ...(r.result !== undefined ? { result: r.result ?? null } : {}),
           meta: safeJson(r.meta ?? null),
 
           updated_at: nowIso(),
@@ -178,6 +208,54 @@ export async function upsertPicksDailyBatch(rows, { chunkSize = 200 } = {}) {
     if (error) throw new Error(`upsertPicksDailyBatch failed: ${error.message}`);
 
     written += payload.length;
+  }
+
+  return { ok: true, written };
+}
+
+/**
+ * Result-only batch updater (safe): updates only result + updated_at,
+ * preserving odds / pick / edge metadata already stored on the row.
+ */
+export async function updatePickResultsBatch(rows, { chunkSize = 200 } = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return { ok: true, written: 0 };
+
+  let written = 0;
+
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+
+    for (const r of chunk) {
+      const gameKey = ensureGameKey(r.game_key);
+      if (!gameKey) continue;
+
+      const payload = {
+        result: r.result ?? null,
+        score_margin: r.score_margin ?? null,
+        graded_at: r.graded_at ?? nowIso(),
+
+        close_line: r.close_line ?? null,
+        close_odds: r.close_odds ?? null,
+        clv_line_delta: r.clv_line_delta ?? null,
+        clv_odds_delta: r.clv_odds_delta ?? null,
+        clv_implied_delta: r.clv_implied_delta ?? null,
+        close_reason: r.close_reason ?? null,
+
+        updated_at: nowIso(),
+      };
+
+      const { error } = await supabase
+        .from("picks_daily")
+        .update(payload)
+        .eq("date", r.date)
+        .eq("league", normLeague(r.league))
+        .eq("game_key", gameKey)
+        .eq("market", normMarket(r.market));
+
+      if (error) throw new Error(`updatePickResultsBatch failed: ${error.message}`);
+
+      written += 1;
+    }
   }
 
   return { ok: true, written };
@@ -206,29 +284,128 @@ export async function writeSlatePicksToLedger({ date, league, games, modelVersio
       ensureGameKey(g?.eventId) ||
       fallbackKey;
 
-    const market = normMarket(m?.market ?? m?.type ?? g?.marketType ?? "moneyline");
-    const pick = m?.pick ?? g?.pick ?? "PASS";
+    const bet = g?.recommendedBet || null;
+    const compat = g?.market || {};
 
-    const odds = m?.marketOdds ?? m?.odds ?? g?.odds ?? null;
-    const win_prob = m?.winProb ?? m?.win_prob ?? g?.winProb ?? g?.win_prob ?? null;
-    const edge = m?.edge ?? g?.edge ?? null;
-    const ev = m?.evForStake100 ?? m?.ev ?? g?.ev ?? null;
-    const kelly = m?.kellyHalf ?? m?.kelly ?? g?.kelly ?? null;
+    const market = normMarket(
+      bet?.marketType ??
+      compat?.marketType ??
+      compat?.recommendedMarket ??
+      m?.marketType ??
+      m?.market ??
+      m?.type ??
+      g?.marketType ??
+      "moneyline"
+    );
+
+    const pick =
+      bet?.side ??
+      compat?.pick ??
+      m?.pick ??
+      g?.pick ??
+      "PASS";
+
+    const odds =
+      bet?.odds ??
+      compat?.marketOdds ??
+      m?.marketOdds ??
+      m?.odds ??
+      g?.odds ??
+      null;
+
+    const market_line =
+      bet?.line ??
+      compat?.marketLine ??
+      m?.marketLine ??
+      m?.line ??
+      g?.line ??
+      null;
+
+    const market_side =
+      bet?.side ??
+      compat?.marketSide ??
+      m?.marketSide ??
+      null;
+
+    const raw_win_prob =
+      bet?.modelProb ??
+      compat?.winProb ??
+      m?.winProb ??
+      m?.win_prob ??
+      g?.winProb ??
+      g?.win_prob ??
+      null;
+
+    const cal_win_prob = raw_win_prob;
+
+    const win_prob = cal_win_prob;
+
+    const edge =
+      bet?.edge ??
+      compat?.edgeVsMarket ??
+      m?.edgeVsMarket ??
+      m?.edge ??
+      g?.edge ??
+      null;
+
+    const ev =
+      bet?.evForStake100 ??
+      compat?.evForStake100 ??
+      m?.evForStake100 ??
+      m?.ev ??
+      g?.ev ??
+      null;
+
+    const kelly =
+      bet?.kellyHalf ??
+      compat?.kellyHalf ??
+      m?.kellyHalf ??
+      m?.kelly ??
+      g?.kelly ??
+      null;
+
+    const mode =
+      g?.mode ??
+      g?.modeLabel ??
+      "regular";
+
+    const publish_book =
+      bet?.book ??
+      compat?.book ??
+      m?.book ??
+      g?.book ??
+      null;
+
+    const publish_line = market_line;
+    const publish_odds = odds;
+    const market_type = market;
+    const market_odds = odds;
 
     rows.push({
       date,
       league,
+      mode,
       game_key,
       market,
+      market_type,
       pick,
+      market_line,
+      market_side,
+      market_odds,
       odds,
       win_prob,
+      raw_win_prob,
+      cal_win_prob,
+      calibration_method: "identity",
+      calibration_version: "v1",
+      publish_book,
+      publish_line,
+      publish_odds,
       edge,
       ev,
       kelly,
-      result: null,
       meta: {
-        model_version: modelVersion ?? null,
+        model_version: g?.model?.version ?? modelVersion ?? null,
         away: g?.away?.abbr ?? g?.away?.name ?? null,
         home: g?.home?.abbr ?? g?.home?.name ?? null,
       },

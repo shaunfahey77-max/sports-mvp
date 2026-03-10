@@ -1,6 +1,7 @@
 // apps/web/src/components/DailyPicks.jsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import BestBetsStrip from "./BestBetsStrip";
 
 /* =========================
    Date helpers (UTC-safe)
@@ -89,6 +90,9 @@ async function fetchJson(url, { signal, timeoutMs = 20000 } = {}) {
 function TeamLogo({ src, alt }) {
   const [ok, setOk] = useState(true);
   if (!src || !ok) return null;
+
+  
+
   return (
     <img
       src={src}
@@ -106,6 +110,14 @@ function TeamLogo({ src, alt }) {
 /* =========================
    Component
    ========================= */
+
+
+function americanOdds(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  return x > 0 ? `+${x}` : String(x);
+}
+
 export default function DailyPicks({
   date = todayUTCYYYYMMDD(),
   nbaModel = "v2",
@@ -117,6 +129,8 @@ export default function DailyPicks({
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [items, setItems] = useState([]);
+  const [topBets, setTopBets] = useState([]);
+  const [activeLeague, setActiveLeague] = useState("all"); // all | nba | ncaam | nhl
   const abortRef = useRef(null);
 
   useEffect(() => {
@@ -168,14 +182,24 @@ export default function DailyPicks({
 
             pick: String(g?.market?.pick || "").toUpperCase(),
             tier: String(g?.market?.tier || "PASS").toUpperCase(),
-            edge: Number(g?.market?.edge),
-            winProb: Number(g?.market?.winProb),
-            conf: Number(g?.market?.confidence),
+            edge: Number(g?.market?.edgeVsMarket ?? g?.recommendedBet?.edge ?? NaN),
+            winProb: Number(
+              g?.market?.cal_win_prob ??
+              g?.market?.winProb ??
+              g?.recommendedBet?.modelProb ??
+              g?.model?.pHomeAnchored ??
+              NaN
+            ),
+            conf: Number.isFinite(Number(g?.market?.edgeVsMarket)) ? Math.min(0.99, Math.max(0.01, 0.5 + Number(g?.market?.edgeVsMarket))) : NaN,
 
             headline: g?.why?.headline || "",
             bullets: Array.isArray(g?.why?.bullets) ? g.why.bullets.slice(0, 3) : [],
 
-            model: meta?.model || "",
+            
+            market: g?.market || null,
+            recommendedBet: g?.recommendedBet || null,
+            modelRaw: g?.model || null,
+model: meta?.model || "",
             elapsedMs: meta?.elapsedMs ?? null,
           };
         });
@@ -197,10 +221,11 @@ export default function DailyPicks({
 
     (async () => {
       try {
-        const [nba, ncaam, nhl] = await Promise.all([
+        const [nba, ncaam, nhl, topBetsRes] = await Promise.all([
           loadLeague("nba"),
           loadLeague("ncaam"),
           loadLeague("nhl"),
+          fetchJson(`/api/top-bets?league=nba&date=${date}`, { signal: controller.signal }).catch(() => ({ topBets: [] })),
         ]);
 
         const combined = [...nba, ...ncaam, ...nhl];
@@ -219,6 +244,7 @@ export default function DailyPicks({
 
         if (!alive) return;
         setItems(combined);
+        setTopBets(Array.isArray(topBetsRes?.topBets) ? topBetsRes.topBets.slice(0, 3) : []);
       } catch (e) {
         if (!alive) return;
         setErr(String(e?.message || e));
@@ -239,26 +265,198 @@ export default function DailyPicks({
   const ncaamTop = useMemo(() => items.filter((x) => x.league === "ncaam"), [items]);
   const nhlTop = useMemo(() => items.filter((x) => x.league === "nhl"), [items]);
 
+  const visible = useMemo(() => {
+    if (activeLeague === "nba") return nbaTop;
+    if (activeLeague === "ncaam") return ncaamTop;
+    if (activeLeague === "nhl") return nhlTop;
+    return items;
+  }, [activeLeague, items, nbaTop, ncaamTop, nhlTop]);
+
   return (
     <div className="card">
       <div className="page-title-row" style={{ marginBottom: 10 }}>
         <div>
+
+          {items.length > 0 ? (() => {
+  const x = items[0];
+  const matchup = x?.matchup || "Matchup";
+  const pick = String(x?.market?.pick || "").toUpperCase();
+  const line = x?.market?.marketLine;
+
+  const betText = `${pick} ${line ?? ""}`.trim();
+
+  const edge = Number(x?.market?.edgeVsMarket);
+  const prob = Number(x?.market?.cal_win_prob ?? x?.market?.winProb);
+  const ev = Number(x?.market?.evForStake100);
+  const odds = Number(x?.market?.marketOdds);
+  const tier = String(x?.market?.tier || "PASS").toUpperCase();
+
+  return (
+    <div
+      className="hero-grid"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1.2fr 1fr",
+        gap: 16,
+        marginBottom: 14
+      }}
+    >
+
+      <div className="card">
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+
+          <div>
+            <div style={{fontSize:18,fontWeight:800}}>🔥 Pick of the Day</div>
+            <div className="subtle">
+              Strongest overall model edge available on today's board.
+            </div>
+          </div>
+
+          <div className="badge badge-elite">
+            {tier}
+          </div>
+
+        </div>
+
+        <div
+          style={{
+            border:"1px solid rgba(255,255,255,.08)",
+            borderRadius:16,
+            padding:16,
+            background:"rgba(255,255,255,.03)"
+          }}
+        >
+
+          <div className="subtle mono">{matchup}</div>
+
+          <div
+            style={{
+              fontSize:20,
+              fontWeight:900,
+              marginTop:6,
+              color:"rgba(122,242,200,.95)"
+            }}
+          >
+            BET: {betText}
+          </div>
+
+          <div className="subtle" style={{marginTop:8}}>
+            Odds {americanOdds(odds)} · Win Prob {fmtPct(prob,1)} · Edge {fmtEdge(edge)} · EV $ {Number.isFinite(ev) ? ev.toFixed(2) : "—"}
+          </div>
+
+          <div style={{marginTop:12}}>
+            <Link className="btn btn-primary" to="/parlays">
+              Build Parlay From Top Picks →
+            </Link>
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <div
+        className="card"
+        style={{
+          display:"flex",
+          alignItems:"center",
+          justifyContent:"center"
+        }}
+      >
+
+        <img
+          src="/assets/sports-mvp-hero.png"
+          alt="Sports MVP"
+          style={{
+            width:"100%",
+            maxWidth:320,
+            height:"auto",
+            objectFit:"contain",
+            filter:"drop-shadow(0 10px 24px rgba(0,0,0,.45))"
+          }}
+        />
+
+      </div>
+
+    </div>
+  );
+})() : null}
+
+          <BestBetsStrip items={items} />
+
+          {topBets.length > 0 ? (
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 900 }}>⭐ Top 3 Bets Today</div>
+                  <div className="subtle">Model-ranked by EV, probability, and edge.</div>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                {topBets.map((b, i) => (
+                  <div
+                    key={`${b.matchup}:${i}`}
+                    style={{
+                      border: "1px solid rgba(255,255,255,.08)",
+                      borderRadius: 16,
+                      padding: 14,
+                      background: "rgba(255,255,255,.03)",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                      <div>
+                        <div className="subtle" style={{ fontSize: 12 }}>#{i + 1} Top Bet</div>
+                        <div style={{ fontSize: 18, fontWeight: 900 }}>{b.matchup}</div>
+                        <div style={{ marginTop: 4, fontWeight: 800, color: "rgba(122,242,200,.95)" }}>
+                          {String(b.market || "").toUpperCase()} · {String(b.pick || "").toUpperCase()}{b.line != null ? ` ${b.line}` : ""}
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <div className="metric">
+                          <div className="k">Odds</div>
+                          <div className="v">{americanOdds ? americanOdds(b.odds) : b.odds}</div>
+                        </div>
+                        <div className="metric">
+                          <div className="k">Prob</div>
+                          <div className="v">{fmtPct(b.prob, 1)}</div>
+                        </div>
+                        <div className="metric">
+                          <div className="k">Edge</div>
+                          <div className="v">{fmtEdge(b.edge)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div style={{ fontSize: 18, fontWeight: 800 }}>Recommended Daily Picks</div>
           <div className="subtle">
             Top value edges (NBA v2 + NCAAM + NHL) · <span className="mono">{date}</span>
           </div>
         </div>
 
-        <div className="page-actions">
-          <Link className="btn btn-ghost" to={`/predict/nba?date=${date}&model=v2&windowDays=${windowNba}`}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+          <button className="btn btn-ghost" onClick={() => setActiveLeague("all")}>
+            ALL
+          </button>
+          <button className="btn btn-ghost" onClick={() => setActiveLeague("nba")}>
             NBA
-          </Link>
-          <Link className="btn btn-ghost" to={`/predict/ncaam?date=${date}&windowDays=${windowNcaam}`}>
+          </button>
+          <button className="btn btn-ghost" onClick={() => setActiveLeague("ncaam")}>
             NCAAM
-          </Link>
-          <Link className="btn btn-ghost" to={`/predict/nhl?date=${date}&windowDays=${windowNhl}`}>
+          </button>
+          <button className="btn btn-ghost" onClick={() => setActiveLeague("nhl")}>
             NHL
-          </Link>
+          </button>
+        </div>
+
+        <div className="page-actions">
         </div>
       </div>
 
@@ -287,7 +485,7 @@ export default function DailyPicks({
           </div>
 
           <div className="grid">
-            {items.map((p) => (
+            {visible.map((p) => (
               <div className="card game" key={`${p.league}:${p.gameId}`}>
                 <div className="game-top">
                   <div className="game-main">
@@ -309,15 +507,15 @@ export default function DailyPicks({
                 <div className="game-metrics">
                   <div className="metric">
                     <div className="k">Edge</div>
-                    <div className="v">{fmtEdge(p.edge)}</div>
+                    <div className="v">{fmtEdge(p.market?.edgeVsMarket ?? p.recommendedBet?.edge)}</div>
                   </div>
                   <div className="metric">
                     <div className="k">WinProb</div>
-                    <div className="v">{fmtPct(p.winProb, 1)}</div>
+                    <div className="v">{fmtPct(p.recommendedBet?.modelProb ?? p.model?.pHomeAnchored, 1)}</div>
                   </div>
                   <div className="metric">
-                    <div className="k">Conf</div>
-                    <div className="v">{fmtPct(p.conf, 0)}</div>
+                    <div className="k">Tier</div>
+                    <div className="v">{p.market?.tier ?? p.recommendedBet?.tier ?? "—"}</div>
                   </div>
                 </div>
 
@@ -336,4 +534,5 @@ export default function DailyPicks({
       ) : null}
     </div>
   );
+
 }

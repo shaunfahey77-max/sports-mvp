@@ -550,3 +550,112 @@ input:focus{
     scroll-behavior: auto !important;
   }
 }
+/* ===== FINAL HEADER FORCE OVERRIDE ===== */
+.topbar,
+header.topbar{
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 1000 !important;
+  background: rgba(8,12,24,0.72) !important;
+  backdrop-filter: blur(14px) !important;
+  border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+}
+
+.topbar-inner{
+  max-width: 1280px !important;
+  margin: 0 auto !important;
+  padding: 10px 18px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 18px !important;
+}
+
+.brandWrap{
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  text-decoration: none !important;
+  flex: 0 0 auto !important;
+}
+
+.brandLogo,
+.topbar .brandLogo,
+.topbar img.brandLogo{
+  height: 42px !important;
+  max-height: 42px !important;
+  width: auto !important;
+  max-width: none !important;
+  object-fit: contain !important;
+  display: block !important;
+  flex: 0 0 auto !important;
+}
+
+.brandText{
+  display: flex !important;
+  flex-direction: column !important;
+  line-height: 1.05 !important;
+}
+
+.brandTitle{
+  color: #f4f7ff !important;
+  font-size: 15px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.02em !important;
+}
+
+.brandSub{
+  color: rgba(255,255,255,0.62) !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+}
+
+.nav{
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+  flex-wrap: wrap !important;
+  margin-left: auto !important;
+}
+
+.navLink,
+.nav a{
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  white-space: nowrap !important;
+  text-decoration: none !important;
+  color: rgba(255,255,255,0.86) !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  padding: 10px 14px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255,255,255,0.09) !important;
+  background: rgba(255,255,255,0.03) !important;
+}
+
+.navLinkActive{
+  color: #fff !important;
+  border-color: rgba(106,140,255,0.38) !important;
+  background: rgba(106,140,255,0.14) !important;
+}
+
+.app-shell{
+  max-width: 1280px !important;
+  margin: 0 auto !important;
+  padding: 20px 18px 40px !important;
+}
+
+@media (max-width: 900px){
+  .topbar-inner{
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+
+  .nav{
+    width: 100% !important;
+    justify-content: flex-start !important;
+  }
+}

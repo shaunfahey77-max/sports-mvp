@@ -1,6 +1,8 @@
 import express from "express";
 import { supabaseAdmin } from "../lib/supabaseAdmin.js";
 import { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions } from "./predict.js";
+import { updatePickResultsBatch } from "../db/dailyLedger.js";
+import { getLatestClosingSnapshotMap } from "../db/marketSnapshots.js";
 
 const router = express.Router();
 
@@ -70,6 +72,48 @@ function getWinnerSide(homeScore, awayScore) {
   return homeScore > awayScore ? "home" : "away";
 }
 
+function gradeSpread(pick, line, homeScore, awayScore) {
+  if (![homeScore, awayScore, line].every((x) => typeof x === "number" && Number.isFinite(x))) return null;
+  const margin = homeScore - awayScore;
+
+  if (pick === "home") {
+    const v = margin + line;
+    if (v > 0) return "WIN";
+    if (v < 0) return "LOSS";
+    return "PUSH";
+  }
+
+  if (pick === "away") {
+    const v = (-margin) - line;
+    if (v > 0) return "WIN";
+    if (v < 0) return "LOSS";
+    return "PUSH";
+  }
+
+  if (pick === "pass") return "PASS";
+  return null;
+}
+
+function gradeTotal(pick, line, homeScore, awayScore) {
+  if (![homeScore, awayScore, line].every((x) => typeof x === "number" && Number.isFinite(x))) return null;
+  const total = homeScore + awayScore;
+
+  if (pick === "over") {
+    if (total > line) return "WIN";
+    if (total < line) return "LOSS";
+    return "PUSH";
+  }
+
+  if (pick === "under") {
+    if (total < line) return "WIN";
+    if (total > line) return "LOSS";
+    return "PUSH";
+  }
+
+  if (pick === "pass") return "PASS";
+  return null;
+}
+
 function getScoresFromGame(g) {
   const hs =
     typeof g?.homeScore === "number"
@@ -93,6 +137,57 @@ function isFinalStatus(g) {
   return s === "final" || s === "post" || s === "completed";
 }
 
+function getGameKeyForLedger(g, date) {
+  return (
+    g?.gameKey ||
+    g?.game_key ||
+    g?.id ||
+    g?.gameId ||
+    g?.eventId ||
+    `${g?.away?.abbr || g?.away?.name || "AWAY"}@${g?.home?.abbr || g?.home?.name || "HOME"}:${date}`
+  );
+}
+
+function toFiniteNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function americanToImpliedProb(odds) {
+  const o = toFiniteNumber(odds);
+  if (o == null || o === 0) return null;
+  if (o > 0) return 100 / (o + 100);
+  return Math.abs(o) / (Math.abs(o) + 100);
+}
+
+function computeClvImpliedDelta(publishOdds, closeOdds) {
+  const pub = americanToImpliedProb(publishOdds);
+  const clo = americanToImpliedProb(closeOdds);
+  if (pub == null || clo == null) return null;
+  return clo - pub;
+}
+
+function computeClvLineDelta({ market, pick, publishLine, closeLine }) {
+  const pub = toFiniteNumber(publishLine);
+  const clo = toFiniteNumber(closeLine);
+  if (pub == null || clo == null) return null;
+
+  const m = String(market || "").toLowerCase();
+  const p = String(pick || "").toLowerCase();
+
+  if (m === "total") {
+    if (p === "over") return clo - pub;
+    if (p === "under") return pub - clo;
+    return null;
+  }
+
+  if (m === "spread") {
+    return clo - pub;
+  }
+
+  return null;
+}
+
 async function buildPredictionsInternal(league, date) {
   if (league === "nba") return await buildNbaPredictions(date, 14);
   if (league === "nhl") return await buildNhlPredictions(date, 60);
@@ -105,7 +200,7 @@ async function buildPredictionsInternal(league, date) {
   return { meta: { league, date, error: "unsupported league" }, games: [] };
 }
 
-function scoreFromGames(games) {
+function summarizeLedgerRows(games, rows) {
   let picks = 0;
   let pass = 0;
   let completed = 0;
@@ -114,21 +209,30 @@ function scoreFromGames(games) {
   let scored = 0;
 
   for (const g of games) {
-    const pick = g?.market?.pick ?? null;
-    if (!pick) pass++;
-    else picks++;
+    if (isFinalStatus(g)) completed++;
+  }
 
-    if (!isFinalStatus(g)) continue;
+  for (const r of rows || []) {
+    const pick = String(r?.pick || "").toUpperCase();
+    const result = String(r?.result || "").toUpperCase();
 
-    const { homeScore, awayScore } = getScoresFromGame(g);
-    const winner = getWinnerSide(homeScore, awayScore);
-    if (!winner || winner === "push") continue;
+    if (pick === "PASS" || result === "PASS") {
+      pass++;
+      continue;
+    }
 
-    completed++;
-    scored++;
-
-    if (pick === winner) wins++;
-    else if (pick === "home" || pick === "away") losses++;
+    if (result === "WIN") {
+      picks++;
+      wins++;
+      scored++;
+    } else if (result === "LOSS") {
+      picks++;
+      losses++;
+      scored++;
+    } else if (result === "PUSH") {
+      picks++;
+      scored++;
+    }
   }
 
   const acc = scored ? wins / scored : null;
@@ -155,7 +259,115 @@ router.post("/admin/performance/run", requireAdmin, async (req, res) => {
     for (const league of leagues) {
       const out = await buildPredictionsInternal(league, date);
       const games = Array.isArray(out?.games) ? out.games : [];
-      const scored = scoreFromGames(games);
+      let scored = null;
+
+      const gameIndex = new Map();
+      for (const g of games) {
+        gameIndex.set(getGameKeyForLedger(g, date), g);
+      }
+
+      const { data: existingPicks, error: existingPicksError } = await supabaseAdmin
+        .from("picks_daily")
+        .select("date,league,game_key,market,pick,market_line,market_side,publish_line,publish_odds,market_odds,odds")
+        .eq("date", date)
+        .eq("league", league);
+
+      if (existingPicksError) {
+        throw new Error(`${league} picks_daily fetch failed: ${existingPicksError.message}`);
+      }
+
+      const resultRows = [];
+      const closeSnapshotMap = await getLatestClosingSnapshotMap({ date, league });
+
+      for (const pickRow of existingPicks || []) {
+        const g = gameIndex.get(pickRow.game_key);
+        if (!g || !isFinalStatus(g)) continue;
+
+        const market = String(pickRow.market || "moneyline").toLowerCase();
+        const pick = String(pickRow.pick || "").toLowerCase();
+
+        let result = null;
+        const { homeScore, awayScore } = getScoresFromGame(g);
+
+        if (market === "moneyline") {
+          const winner = getWinnerSide(homeScore, awayScore);
+
+          if (winner === "push") result = "PUSH";
+          else if (pick === winner) result = "WIN";
+          else if (pick === "home" || pick === "away") result = "LOSS";
+          else if (pick === "pass") result = "PASS";
+        } else if (market === "spread") {
+          result = gradeSpread(pick, Number(pickRow.market_line), homeScore, awayScore);
+        } else if (market === "total") {
+          result = gradeTotal(pick, Number(pickRow.market_line), homeScore, awayScore);
+        } else {
+          continue;
+        }
+
+        if (!result) continue;
+
+        const margin = homeScore - awayScore;
+        const totalScore = homeScore + awayScore;
+
+        let score_margin = null;
+
+        if (market === "moneyline") {
+          score_margin = margin;
+        } else if (market === "spread") {
+          score_margin = margin;
+        } else if (market === "total") {
+          score_margin = totalScore - Number(pickRow.market_line);
+        }
+
+        const closeSnap = closeSnapshotMap.get(`${pickRow.game_key}__${market}`) || null;
+
+        const publishLine = toFiniteNumber(
+          pickRow.publish_line ?? pickRow.market_line
+        );
+        const publishOdds = toFiniteNumber(
+          pickRow.publish_odds ?? pickRow.market_odds ?? pickRow.odds
+        );
+        const closeLine = toFiniteNumber(closeSnap?.line);
+        const closeOdds = toFiniteNumber(closeSnap?.odds);
+
+        resultRows.push({
+          date,
+          league,
+          game_key: pickRow.game_key,
+          market,
+          result,
+          score_margin,
+          graded_at: nowIso,
+          close_line: closeLine,
+          close_odds: closeOdds,
+          clv_line_delta: computeClvLineDelta({
+            market,
+            pick,
+            publishLine,
+            closeLine,
+          }),
+          clv_odds_delta:
+            publishOdds != null && closeOdds != null ? closeOdds - publishOdds : null,
+          clv_implied_delta: computeClvImpliedDelta(publishOdds, closeOdds),
+          close_reason: closeSnap?.close_reason ?? null,
+        });
+      }
+
+      if (resultRows.length) {
+        await updatePickResultsBatch(resultRows, { chunkSize: 200 });
+      }
+
+      const { data: ledgerRows, error: ledgerRowsError } = await supabaseAdmin
+        .from("picks_daily")
+        .select("pick,result")
+        .eq("date", date)
+        .eq("league", league);
+
+      if (ledgerRowsError) {
+        throw new Error(`${league} picks_daily summary fetch failed: ${ledgerRowsError.message}`);
+      }
+
+      scored = summarizeLedgerRows(games, ledgerRows || []);
 
       const row = {
         league,
@@ -171,7 +383,12 @@ router.post("/admin/performance/run", requireAdmin, async (req, res) => {
 
       if (error) throw new Error(`${league} upsert failed: ${error.message}`);
 
-      results.push({ league, date, ...scored });
+      results.push({
+        league,
+        date,
+        ...scored,
+        ledgerResultsUpdated: resultRows.length,
+      });
     }
 
     return res.json({ ok: true, date, results });

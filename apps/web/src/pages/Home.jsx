@@ -1,803 +1,648 @@
-// apps/web/src/pages/Home.jsx
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import DailyPicks from "../components/DailyPicks.jsx";
+import sportsMvpLogo from "../assets/sports-mvp-logo.png";
 
-/* =========================
-   Date helpers (UTC-safe)
-   ========================= */
-function todayUTCYYYYMMDD() {
-  const now = new Date();
-  const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  return utc.toISOString().slice(0, 10);
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
-function addDaysUTC(ymd, deltaDays) {
-  const [y, m, d] = String(ymd).split("-").map((x) => Number(x));
-  const dt = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-  dt.setUTCDate(dt.getUTCDate() + Number(deltaDays || 0));
-  return dt.toISOString().slice(0, 10);
+function pct(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${n.toFixed(digits)}%`;
 }
 
-function daysRangeUTC(endYMD, days) {
-  const out = [];
-  const n = Math.max(1, Number(days || 1));
-  const start = addDaysUTC(endYMD, -(n - 1));
-  for (let i = 0; i < n; i++) out.push(addDaysUTC(start, i));
-  return out;
-}
-
-function pct(n, digits = 0) {
-  if (!Number.isFinite(n)) return "—";
+function pctFromUnit(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
   return `${(n * 100).toFixed(digits)}%`;
 }
 
-/* =========================
-   Fetch helper (timeout + JSON)
-   ========================= */
-async function fetchJson(url, { signal, timeoutMs = 20000 } = {}) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+function signedNum(v, digits = 2) {
+  const n = num(v);
+  if (n == null) return "—";
+  const abs = Math.abs(n).toFixed(digits);
+  return `${n > 0 ? "+" : n < 0 ? "-" : ""}${abs}`;
+}
 
-  const onAbort = () => ctrl.abort();
-  if (signal) signal.addEventListener("abort", onAbort, { once: true });
+function oddsText(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return n > 0 ? `+${n}` : `${n}`;
+}
 
-  try {
-    const res = await fetch(url, { signal: ctrl.signal });
-    const txt = await res.text().catch(() => "");
-    let json = null;
+function fmtEv(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${Math.round(n)}%`;
+}
 
-    try {
-      json = txt ? JSON.parse(txt) : null;
-    } catch {
-      const err = new Error(`Bad JSON from API (HTTP ${res.status})`);
-      err.status = res.status;
-      err._raw = txt?.slice?.(0, 250);
-      throw err;
-    }
+function marketText(bet) {
+  if (!bet) return "—";
+  const mt = String(bet.marketType || "").toLowerCase();
+  const side = String(bet.side || "").toLowerCase();
+  const line = num(bet.line);
 
-    if (!res.ok) {
-      const err = new Error(json?.error || `HTTP ${res.status}`);
-      err.status = res.status;
-      err.payload = json;
-      throw err;
-    }
-    return json;
-  } finally {
-    clearTimeout(t);
-    if (signal) signal.removeEventListener("abort", onAbort);
+  if (mt === "spread") {
+    const sideText = side === "away" ? "Away" : side === "home" ? "Home" : side;
+    return `${sideText} ${line == null ? "" : line > 0 ? `+${line}` : `${line}`}`.trim();
   }
-}
 
-/* =========================
-   Model utils
-   ========================= */
-function tierCounts(games = []) {
-  const out = { picks: 0, ELITE: 0, STRONG: 0, EDGE: 0, LEAN: 0, PASS: 0 };
-  for (const g of games) {
-    const pick = g?.market?.pick ? 1 : 0;
-    if (pick) out.picks++;
-    const t = String(g?.market?.tier || (pick ? "LEAN" : "PASS")).toUpperCase();
-    out[t] = (out[t] || 0) + 1;
+  if (mt === "total") {
+    const sideText = side === "under" ? "Under" : side === "over" ? "Over" : side;
+    return `${sideText} ${line == null ? "" : line}`.trim();
   }
-  return out;
+
+  if (mt === "moneyline") return side ? `${side.toUpperCase()} ML` : "Moneyline";
+
+  return "—";
 }
 
-function sumPerf(rows = []) {
-  const picks = rows.reduce((a, r) => a + (Number(r.picks) || 0), 0);
-  const wins = rows.reduce((a, r) => a + (Number(r.wins) || 0), 0);
-  const losses = rows.reduce((a, r) => a + (Number(r.losses) || 0), 0);
-  const pushes = rows.reduce((a, r) => a + (Number(r.pushes) || 0), 0);
-  const scored = rows.reduce((a, r) => a + (Number(r.scored) || 0), 0);
-  const denom = wins + losses;
-  return { picks, wins, losses, pushes, scored, winRate: denom ? wins / denom : null };
+function tierColors(tier) {
+  const t = String(tier || "").toUpperCase();
+  if (t === "ELITE") return { background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.28)", color: "#86efac" };
+  if (t === "STRONG") return { background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.28)", color: "#93c5fd" };
+  if (t === "EDGE") return { background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.28)", color: "#fcd34d" };
+  return { background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.22)", color: "#cbd5e1" };
 }
 
-function missingDates(rows = []) {
-  return rows
-    .filter((r) => String(r?.error || "") && String(r.error) !== "null" && String(r.error) !== "undefined")
-    .map((r) => r.date)
-    .filter(Boolean);
+function leagueColor(league) {
+  if (league === "NBA") return "#60a5fa";
+  if (league === "NCAAM") return "#f59e0b";
+  if (league === "NHL") return "#34d399";
+  return "#cbd5e1";
 }
 
-/* =========================
-   UI helpers
-   ========================= */
-function Banner({ tone = "info", title, children }) {
-  const cls = tone === "danger" ? "banner bannerDanger" : tone === "warn" ? "banner bannerWarn" : "banner";
-  return (
-    <div className={cls}>
-      <div className="bannerTitle">{title}</div>
-      <div className="bannerBody">{children}</div>
-    </div>
-  );
-}
-
-function SnapshotCard({ title, subtitle, loading, error, meta, counts, href }) {
-  return (
-    <Link className="card game" to={href} style={{ textDecoration: "none" }}>
-      <div className="game-top">
-        <div className="game-main">
-          <div className="game-matchup">{title}</div>
-          <div className="subtle">{subtitle}</div>
-        </div>
-        <div className="game-badges">
-          {loading ? <span className="badge">LOADING</span> : null}
-          {error ? <span className="badge badge-bad">ERROR</span> : <span className="badge badge-ok">OK</span>}
-        </div>
-      </div>
-
-      {error ? (
-        <div className="subtle pre" style={{ marginTop: 10 }}>
-          {error}
-        </div>
-      ) : null}
-
-      {!loading && !error ? (
-        <>
-          <div className="subtle" style={{ marginTop: 10 }}>
-            <span className="mono">{meta?.model || "—"}</span>
-            {meta?.elapsedMs != null ? <span> · {meta.elapsedMs}ms</span> : null}
-          </div>
-
-          <div className="game-metrics" style={{ marginTop: 10 }}>
-            <div className="metric">
-              <div className="k">Games</div>
-              <div className="v mono">{meta?.count ?? "—"}</div>
-            </div>
-            <div className="metric">
-              <div className="k">Picks</div>
-              <div className="v mono">{counts?.picks ?? "—"}</div>
-            </div>
-            <div className="metric">
-              <div className="k">ELITE</div>
-              <div className="v mono">{counts?.ELITE ?? 0}</div>
-            </div>
-            <div className="metric">
-              <div className="k">STRONG</div>
-              <div className="v mono">{counts?.STRONG ?? 0}</div>
-            </div>
-          </div>
-        </>
-      ) : null}
-    </Link>
-  );
-}
-
-function PerformancePanel({ today, days, setDays, perf, onRefresh }) {
-  const nba = perf?.rows?.nba || [];
-  const ncaam = perf?.rows?.ncaam || [];
-  const nhl = perf?.rows?.nhl || [];
-
-  const nbaS = sumPerf(nba);
-  const ncaamS = sumPerf(ncaam);
-  const nhlS = sumPerf(nhl);
-
-  const nbaMissing = missingDates(nba);
-  const ncaamMissing = missingDates(ncaam);
-  const nhlMissing = missingDates(nhl);
-
-  const anyMissing = (perf?.meta?.missingCount || 0) > 0;
-
-  const nhlTodayMissing = nhlMissing.includes(today);
-  const nhlHasRowToday = nhl.some((r) => r?.date === today && String(r?.error || "") !== "missing_db_row");
-
-  return (
-    <div className="card">
-      <div className="panelHead">
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 900 }}>Performance</div>
-          <div className="subtle">Supabase (performance_daily) — last {days} days</div>
-        </div>
-
-        <div className="actions">
-          <div className="seg segSmall">
-            {[7, 14, 30].map((d) => (
-              <button key={d} className={`segBtn ${days === d ? "isOn" : ""}`} onClick={() => setDays(d)}>
-                {d}d
-              </button>
-            ))}
-          </div>
-          <button className="btn btn-ghost" onClick={onRefresh}>
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {perf?.meta ? (
-        <div className="subtle">
-          source: <span className="mono">{perf.meta.source}</span>
-          {" · "}missing: <span className="mono">{perf.meta.missingCount}</span>
-          {perf.meta.partial ? " · partial=true" : ""}
-          {" · "}elapsed: <span className="mono">{perf.meta.elapsedMs}ms</span>
-        </div>
-      ) : null}
-
-      <div className="divider" />
-
-      {/* NHL is NOT paused anymore; show a pragmatic “pending” banner if today's row is missing. */}
-      {nhlTodayMissing && !nhlHasRowToday ? (
-        <Banner tone="info" title="NHL scoring pending">
-          Today’s NHL row is missing in <span className="mono">performance_daily</span>. This usually means you haven’t run scoring
-          for <span className="mono">{today}</span> yet (or Supabase write latency). Run scoring, then refresh after ~2–5 seconds.
-        </Banner>
-      ) : null}
-
-      {anyMissing ? (
-        <Banner tone="warn" title="Missing performance rows in range">
-          Missing rows usually means scoring wasn’t run for those dates yet. Use <b>Run Scoring</b> (or Backfill 30d) below, then
-          refresh after ~2–5 seconds (Supabase write latency).
-        </Banner>
-      ) : null}
-
-      <div className="kpiGrid">
-        <div className="kpi">
-          <div className="kpiLabel">NBA win rate</div>
-          <div className="kpiValue mono">{pct(nbaS.winRate)}</div>
-          <div className="kpiFoot mono">
-            {nbaS.wins}-{nbaS.losses}-{nbaS.pushes} · picks {nbaS.picks} · scored {nbaS.scored}
-          </div>
-          {nbaMissing.length ? (
-            <div className="kpiFoot">
-              Missing: <span className="mono">{nbaMissing.join(", ")}</span>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="kpi">
-          <div className="kpiLabel">NCAAM win rate</div>
-          <div className="kpiValue mono">{pct(ncaamS.winRate)}</div>
-          <div className="kpiFoot mono">
-            {ncaamS.wins}-{ncaamS.losses}-{ncaamS.pushes} · picks {ncaamS.picks} · scored {ncaamS.scored}
-          </div>
-          {ncaamMissing.length ? (
-            <div className="kpiFoot">
-              Missing: <span className="mono">{ncaamMissing.join(", ")}</span>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="kpi">
-          <div className="kpiLabel">NHL win rate</div>
-          <div className="kpiValue mono">{pct(nhlS.winRate)}</div>
-          <div className="kpiFoot mono">
-            {nhlS.wins}-{nhlS.losses}-{nhlS.pushes} · picks {nhlS.picks} · scored {nhlS.scored}
-          </div>
-          {nhlMissing.length ? (
-            <div className="kpiFoot">
-              Missing: <span className="mono">{nhlMissing.join(", ")}</span>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="kpi">
-          <div className="kpiLabel">Data health</div>
-          <div className="kpiValue mono">{perf?.meta?.missingCount ?? "—"}</div>
-          <div className="kpiFoot">Missing DB rows in range</div>
-          <div className="kpiFoot subtle">If you just ran scoring, refresh after ~2–5s.</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* =========================
-   Scoring Console (premium)
-   ========================= */
-function ScoreConsole({
-  today,
-  requestedDate,
-  setRequestedDate,
-  leagues,
-  setLeagues,
-  running,
-  onRun,
-  result,
-  error,
-  backfill,
-  onBackfill30,
-  onCancelBackfill,
-}) {
-  const resultsArr = Array.isArray(result?.results) ? result.results : [];
-  const ranLeagues = Array.isArray(result?.leagues) ? result.leagues : [];
-
-  const backfillPct = backfill?.total ? Math.round((backfill.done / backfill.total) * 100) : 0;
-
-  return (
-    <div className="card">
-      <div className="panelHead">
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 900 }}>Run Scoring</div>
-          <div className="subtle">Forces scoring + grading writes for NBA / NCAAM / NHL for a specific date.</div>
-        </div>
-
-        <div className="actions" style={{ flexWrap: "wrap" }}>
-          <button className="btn btnPrimary" onClick={onRun} disabled={running || backfill?.running}>
-            {running ? "Running…" : "Run Scoring for date"}
-          </button>
-
-          <button className="btn btn-ghost" onClick={onBackfill30} disabled={running || backfill?.running}>
-            {backfill?.running ? "Backfilling…" : "Backfill last 30 days"}
-          </button>
-
-          {backfill?.running ? (
-            <button className="btn btn-ghost" onClick={onCancelBackfill}>
-              Cancel
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="divider" />
-
-      <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
-        <div className="metric" style={{ gap: 6 }}>
-          <div className="k">Date</div>
-          <input
-            className="input"
-            type="date"
-            value={requestedDate}
-            onChange={(e) => setRequestedDate(e.target.value)}
-            max={today}
-            style={{ width: "100%" }}
-          />
-          <div className="subtle">Use this to backfill day-by-day.</div>
-        </div>
-
-        <div className="metric" style={{ gap: 6 }}>
-          <div className="k">Leagues</div>
-          <select className="input" value={leagues} onChange={(e) => setLeagues(e.target.value)} style={{ width: "100%" }}>
-            <option value="nba,ncaam,nhl">nba,ncaam,nhl</option>
-            <option value="nba,ncaam">nba,ncaam</option>
-            <option value="nba,nhl">nba,nhl</option>
-            <option value="ncaam,nhl">ncaam,nhl</option>
-            <option value="nba">nba</option>
-            <option value="ncaam">ncaam</option>
-            <option value="nhl">nhl</option>
-          </select>
-          <div className="subtle">What to attempt for scoring.</div>
-        </div>
-
-        <div className="metric" style={{ gap: 6 }}>
-          <div className="k">Note</div>
-          <div className="subtle">
-            If <span className="mono">completed=0</span>, the slate has no finals yet — grading stays 0.
-          </div>
-        </div>
-      </div>
-
-      {backfill?.running ? (
-        <div style={{ marginTop: 10 }}>
-          <Banner tone="info" title="Backfill running">
-            <div className="subtle" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-              <span>
-                Progress: <span className="mono">{backfill.done}</span>/<span className="mono">{backfill.total}</span> (
-                <span className="mono">{backfillPct}%</span>)
-              </span>
-              {backfill.currentDate ? (
-                <span>
-                  Current date: <span className="mono">{backfill.currentDate}</span>
-                </span>
-              ) : null}
-            </div>
-            {backfill.lastError ? (
-              <div className="subtle pre" style={{ marginTop: 8 }}>
-                Last error: {backfill.lastError}
-              </div>
-            ) : null}
-          </Banner>
-        </div>
-      ) : null}
-
-      {error ? (
-        <div style={{ marginTop: 10 }}>
-          <Banner tone="danger" title="Scoring failed">
-            <div className="pre subtle">{error}</div>
-          </Banner>
-        </div>
-      ) : null}
-
-      {result ? (
-        <div style={{ marginTop: 10 }}>
-          <Banner tone="info" title="Scoring complete">
-            <div className="subtle" style={{ marginBottom: 8 }}>
-              ranFor: <span className="mono">{result?.ranFor || requestedDate}</span>
-              {" · "}requested: <span className="mono">{leagues}</span>
-              {" · "}ran: <span className="mono">{ranLeagues.join(", ") || "—"}</span>
-              {" · "}scoredGames: <span className="mono">{result?.scoredGames ?? "—"}</span>
-            </div>
-
-            {resultsArr.length ? (
-              <>
-                <div className="divider" />
-                <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
-                  {resultsArr.map((r, idx) => {
-                    const counts = r?.report?.counts || {};
-                    const metrics = r?.report?.metrics || {};
-                    const isOk = !!r?.ok;
-                    return (
-                      <div key={`${r?.league || "league"}-${idx}`} className="card" style={{ padding: 12 }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                          <div style={{ fontWeight: 900 }}>{String(r?.league || "league").toUpperCase()}</div>
-                          <span className={`pill ${isOk ? "badge-ok" : "badge-bad"}`}>{isOk ? "OK" : "ERROR"}</span>
-                        </div>
-
-                        <div className="subtle" style={{ marginTop: 8 }}>
-                          input: <span className="mono">{counts.inputGames ?? 0}</span>
-                          {" · "}completed: <span className="mono">{counts.completed ?? 0}</span>
-                        </div>
-
-                        <div className="subtle" style={{ marginTop: 6 }}>
-                          picks: <span className="mono">{counts.picks ?? 0}</span>
-                          {" · "}graded: <span className="mono">{counts.graded ?? 0}</span>
-                        </div>
-
-                        <div className="subtle" style={{ marginTop: 6 }}>
-                          W-L-P:{" "}
-                          <span className="mono">
-                            {counts.wins ?? 0}-{counts.losses ?? 0}-{counts.pushes ?? 0}
-                          </span>
-                          {" · "}winRate: <span className="mono">{pct(metrics.winRate, 0)}</span>
-                        </div>
-
-                        {r?.report?.error ? (
-                          <div className="subtle pre" style={{ marginTop: 8 }}>
-                            {r.report.error}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            ) : null}
-          </Banner>
-        </div>
-      ) : null}
-    </div>
-  );
+function policyRows() {
+  return [
+    { league: "NBA", market: "Spreads only", note: "Premium validated market" },
+    { league: "NCAAM", market: "Totals only", note: "Premium validated market" },
+    { league: "NHL", market: "Spreads only", note: "Premium validated market" },
+  ];
 }
 
 export default function Home() {
-  const date = todayUTCYYYYMMDD();
+  const [loading, setLoading] = useState(true);
+  const [perfLoading, setPerfLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [perfError, setPerfError] = useState("");
+  const [picks, setPicks] = useState([]);
+  const [performance, setPerformance] = useState(null);
 
-  const [api, setApi] = useState({ ok: null, version: "", time: "" });
+  useEffect(() => {
+    let cancelled = false;
 
-  const [nba, setNba] = useState({ loading: true, error: "", meta: null, counts: null });
-  const [ncaam, setNcaam] = useState({ loading: true, error: "", meta: null, counts: null });
-  const [nhl, setNhl] = useState({ loading: true, error: "", meta: null, counts: null });
-
-  const [days, setDays] = useState(30);
-  const [perf, setPerf] = useState({ loading: true, error: "", data: null });
-
-  const [runDate, setRunDate] = useState(date);
-  const [runLeagues, setRunLeagues] = useState("nba,ncaam,nhl");
-  const [scoreRun, setScoreRun] = useState({ running: false, error: "", result: null });
-
-  const [backfill, setBackfill] = useState({
-    running: false,
-    done: 0,
-    total: 0,
-    currentDate: "",
-    lastError: "",
-  });
-  const backfillCancelRef = useRef(false);
-
-  const abortRef = useRef(null);
-  const refreshTimerRef = useRef(null);
-
-  const loadHealth = useCallback(() => {
-    fetchJson("/api/health", { timeoutMs: 8000 })
-      .then((j) => setApi({ ok: true, version: j?.version || "", time: j?.time || "" }))
-      .catch(() => setApi({ ok: false, version: "", time: "" }));
-  }, []);
-
-  const loadSnapshots = useCallback(() => {
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    setNba({ loading: true, error: "", meta: null, counts: null });
-    setNcaam({ loading: true, error: "", meta: null, counts: null });
-    setNhl({ loading: true, error: "", meta: null, counts: null });
-
-    (async () => {
+    async function loadPredictions() {
+      setLoading(true);
+      setError("");
       try {
-        const nbaUrl = `/api/predictions?league=nba&date=${date}&windowDays=14&model=v2`;
-        const ncaamUrl = `/api/predictions?league=ncaam&date=${date}&windowDays=45`;
-        const nhlUrl = `/api/predictions?league=nhl&date=${date}&windowDays=40`;
-
-        const [nbaData, ncaamData, nhlData] = await Promise.all([
-          fetchJson(nbaUrl, { signal: controller.signal, timeoutMs: 30000 }),
-          fetchJson(ncaamUrl, { signal: controller.signal, timeoutMs: 30000 }),
-          fetchJson(nhlUrl, { signal: controller.signal, timeoutMs: 30000 }),
+        const [nbaRes, ncaamRes, nhlRes] = await Promise.all([
+          fetch("http://127.0.0.1:3001/api/predictions?league=nba"),
+          fetch("http://127.0.0.1:3001/api/predictions?league=ncaam"),
+          fetch("http://127.0.0.1:3001/api/predictions?league=nhl"),
         ]);
 
-        const nbaGames = Array.isArray(nbaData?.games) ? nbaData.games : [];
-        const ncaamGames = Array.isArray(ncaamData?.games) ? ncaamData.games : [];
-        const nhlGames = Array.isArray(nhlData?.games) ? nhlData.games : [];
+        const [nbaJson, ncaamJson, nhlJson] = await Promise.all([
+          nbaRes.json(),
+          ncaamRes.json(),
+          nhlRes.json(),
+        ]);
 
-        setNba({
-          loading: false,
-          error: "",
-          meta: { ...(nbaData?.meta || {}), count: nbaData?.count ?? nbaGames.length },
-          counts: tierCounts(nbaGames),
-        });
+        const normalize = (league, games) =>
+          (games || [])
+            .filter((g) => g?.recommendedBet)
+            .map((g) => ({
+              league,
+              gameId: g.gameId,
+              matchup: `${g.away?.abbr || "AWAY"} @ ${g.home?.abbr || "HOME"}`,
+              awayAbbr: g.away?.abbr || "AWAY",
+              homeAbbr: g.home?.abbr || "HOME",
+              awayLogo: g.away?.logo || "",
+              homeLogo: g.home?.logo || "",
+              bet: g.recommendedBet,
+            }));
 
-        setNcaam({
-          loading: false,
-          error: "",
-          meta: { ...(ncaamData?.meta || {}), count: ncaamData?.count ?? ncaamGames.length },
-          counts: tierCounts(ncaamGames),
-        });
+        const all = [
+          ...normalize("NBA", nbaJson?.games),
+          ...normalize("NCAAM", ncaamJson?.games),
+          ...normalize("NHL", nhlJson?.games),
+        ].sort((a, b) => (num(b?.bet?.evForStake100) || -9999) - (num(a?.bet?.evForStake100) || -9999));
 
-        setNhl({
-          loading: false,
-          error: "",
-          meta: { ...(nhlData?.meta || {}), count: nhlData?.count ?? nhlGames.length },
-          counts: tierCounts(nhlGames),
-        });
-      } catch (e) {
-        const msg = String(e?.message || e);
-        setNba((s) => ({ ...s, loading: false, error: s.error || msg }));
-        setNcaam((s) => ({ ...s, loading: false, error: s.error || msg }));
-        setNhl((s) => ({ ...s, loading: false, error: s.error || msg }));
+        if (!cancelled) setPicks(all.slice(0, 8));
+      } catch {
+        if (!cancelled) setError("Failed to load premium picks.");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    })();
-
-    return () => controller.abort();
-  }, [date]);
-
-  const loadPerformance = useCallback(() => {
-    const controller = new AbortController();
-    setPerf({ loading: true, error: "", data: null });
-
-    fetchJson(`/api/performance?leagues=nba,ncaam,nhl&days=${days}`, { signal: controller.signal, timeoutMs: 35000 })
-      .then((data) => setPerf({ loading: false, error: "", data }))
-      .catch((e) => setPerf({ loading: false, error: String(e?.message || e), data: null }));
-
-    return () => controller.abort();
-  }, [days]);
-
-  const refreshAll = useCallback(() => {
-    if (refreshTimerRef.current) {
-      clearTimeout(refreshTimerRef.current);
-      refreshTimerRef.current = null;
     }
-    loadHealth();
-    loadSnapshots();
-    loadPerformance();
-  }, [loadHealth, loadSnapshots, loadPerformance]);
 
-  useEffect(() => {
-    loadHealth();
-    loadSnapshots();
+    async function loadPerformance() {
+      setPerfLoading(true);
+      setPerfError("");
+      try {
+        const res = await fetch("http://127.0.0.1:3001/api/performance/kpis");
+        const json = await res.json();
+        if (!cancelled) setPerformance(json);
+      } catch {
+        if (!cancelled) setPerfError("Failed to load recent performance.");
+      } finally {
+        if (!cancelled) setPerfLoading(false);
+      }
+    }
+
+    loadPredictions();
     loadPerformance();
 
-    return () => {
-      if (abortRef.current) abortRef.current.abort();
-      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    };
-  }, [loadHealth, loadSnapshots, loadPerformance]);
-
-  useEffect(() => {
-    setRunDate((d) => d || date);
-  }, [date]);
-
-  const runScoringForDate = useCallback(async () => {
-    if (!runDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(runDate))) {
-      setScoreRun({ running: false, error: "Missing or invalid date (YYYY-MM-DD).", result: null });
-      return;
-    }
-
-    setScoreRun({ running: true, error: "", result: null });
-    try {
-      const url = `/api/admin/run-cron?date=${encodeURIComponent(runDate)}&leagues=${encodeURIComponent(
-        runLeagues
-      )}&force=1&grade=all`;
-
-      const res = await fetchJson(url, { timeoutMs: 60000 });
-      setScoreRun({ running: false, error: "", result: res });
-
-      // immediate refresh + delayed refresh (Supabase write latency)
-      refreshAll();
-      refreshTimerRef.current = setTimeout(() => refreshAll(), 2500);
-    } catch (e) {
-      setScoreRun({ running: false, error: String(e?.message || e), result: null });
-    }
-  }, [runDate, runLeagues, refreshAll]);
-
-  const cancelBackfill = useCallback(() => {
-    backfillCancelRef.current = true;
-    setBackfill((s) => ({ ...s, running: false, lastError: s.lastError || "Canceled by user." }));
+    return () => { cancelled = true; };
   }, []);
 
-  const backfillLast30 = useCallback(async () => {
-    const ok = window.confirm(
-      "Backfill last 30 days?\n\nThis will run scoring sequentially for 30 dates and write to Supabase.\nOK to proceed?"
-    );
-    if (!ok) return;
+  const featured = picks[0] || null;
 
-    backfillCancelRef.current = false;
+  const perfSummary = useMemo(() => {
+    if (!performance?.data) return null;
 
-    const dates = daysRangeUTC(date, 30);
-    setBackfill({ running: true, done: 0, total: dates.length, currentDate: "", lastError: "" });
+    const p = performance.data;
 
-    let done = 0;
+    return {
+      picks: p.picks || 0,
+      wins: p.wins || 0,
+      losses: p.losses || 0,
+      scored: p.scored || 0,
+      winRate: p.acc || null,
+      avgClv: p.avg_clv_line ?? null,
+      avgImpliedClv: p.avg_clv_implied ?? null,
+    };
+  }, [performance]);
 
-    for (const d of dates) {
-      if (backfillCancelRef.current) break;
-
-      setBackfill((s) => ({ ...s, running: true, currentDate: d, done, lastError: s.lastError }));
-
-      try {
-        const url = `/api/admin/run-cron?date=${encodeURIComponent(d)}&leagues=${encodeURIComponent(
-          "nba,ncaam,nhl"
-        )}&force=1&grade=all`;
-
-        await fetchJson(url, { timeoutMs: 90000 });
-      } catch (e) {
-        setBackfill((s) => ({ ...s, lastError: String(e?.message || e) }));
-      }
-
-      done += 1;
-      setBackfill((s) => ({ ...s, done, running: !backfillCancelRef.current }));
-      await new Promise((r) => setTimeout(r, 350));
-    }
-
-    setBackfill((s) => ({ ...s, running: false }));
-    refreshAll();
-    refreshTimerRef.current = setTimeout(() => refreshAll(), 2500);
-  }, [date, refreshAll]);
-
-  const apiStatus = api.ok == null ? "Checking…" : api.ok ? "Online" : "Offline";
-
-  const perfUpdatedAt = useMemo(() => {
-    const rows = [
-      ...(perf?.data?.rows?.nba || []),
-      ...(perf?.data?.rows?.ncaam || []),
-      ...(perf?.data?.rows?.nhl || []),
-    ];
-    const ts = rows
-      .map((r) => r?.updated_at || r?.updatedAt || null)
-      .filter(Boolean)
-      .sort()
-      .slice(-1)[0];
-    return ts || "";
-  }, [perf?.data]);
+  const styles = {
+    page: {
+      minHeight: "100vh",
+      background:
+        "radial-gradient(circle at top left, rgba(30,111,219,0.20), transparent 26%), radial-gradient(circle at top right, rgba(139,92,246,0.16), transparent 24%), linear-gradient(180deg, #071224 0%, #040b18 100%)",
+      color: "#e5e7eb",
+      padding: "28px 20px 40px",
+    },
+    shell: { maxWidth: "1180px", margin: "0 auto" },
+    hero: {
+      display: "grid",
+      gridTemplateColumns: "1.35fr 0.95fr",
+      gap: "20px",
+      marginBottom: "22px",
+    },
+    panel: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "24px",
+      boxShadow: "0 24px 60px rgba(0,0,0,0.28)",
+      backdropFilter: "blur(10px)",
+    },
+    heroMain: { padding: "24px" },
+    heroMeta: {
+      padding: "20px",
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "14px",
+      alignContent: "start",
+    },
+    sectionTitle: {
+      fontSize: "13px",
+      letterSpacing: "0.14em",
+      textTransform: "uppercase",
+      color: "#93c5fd",
+      marginBottom: "10px",
+      fontWeight: 700,
+    },
+    headline: { display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" },
+    logo: {
+      width: "72px",
+      height: "72px",
+      objectFit: "contain",
+      filter: "drop-shadow(0 8px 18px rgba(0,0,0,0.35))",
+      flexShrink: 0,
+    },
+    h1: { fontSize: "42px", lineHeight: 1.02, margin: 0, fontWeight: 800, color: "#f8fafc" },
+    subtitle: {
+      margin: "8px 0 0",
+      color: "#cbd5e1",
+      fontSize: "16px",
+      lineHeight: 1.6,
+      maxWidth: "640px",
+    },
+    heroGrid: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "14px", marginTop: "20px" },
+    statCard: {
+      background: "rgba(15,23,42,0.92)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "18px",
+      padding: "16px",
+    },
+    statLabel: {
+      fontSize: "11px",
+      textTransform: "uppercase",
+      letterSpacing: "0.12em",
+      color: "#94a3b8",
+      marginBottom: "8px",
+      fontWeight: 700,
+    },
+    statValue: { fontSize: "30px", fontWeight: 800, color: "#f8fafc", lineHeight: 1 },
+    featuredTitle: { margin: "0 0 12px", fontSize: "22px", fontWeight: 800, color: "#f8fafc" },
+    featuredCard: {
+      background: "linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(7,12,24,0.95) 100%)",
+      border: "1px solid rgba(96,165,250,0.18)",
+      borderRadius: "20px",
+      padding: "18px",
+    },
+    matchup: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "14px",
+      marginBottom: "14px",
+    },
+    teamSide: { display: "flex", alignItems: "center", gap: "10px", minWidth: 0 },
+    teamLogo: {
+      width: "34px",
+      height: "34px",
+      objectFit: "contain",
+      borderRadius: "999px",
+      background: "rgba(15,23,42,0.65)",
+      padding: "3px",
+      border: "1px solid rgba(148,163,184,0.14)",
+      flexShrink: 0,
+    },
+    teamText: { fontSize: "15px", fontWeight: 700, color: "#f8fafc" },
+    featuredMetricGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: "10px",
+      marginTop: "14px",
+    },
+    miniStat: {
+      background: "rgba(15,23,42,0.8)",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: "14px",
+      padding: "12px",
+    },
+    miniLabel: {
+      fontSize: "11px",
+      color: "#94a3b8",
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+      marginBottom: "6px",
+      fontWeight: 700,
+    },
+    miniValue: { fontSize: "18px", fontWeight: 800, color: "#f8fafc" },
+    badge: {
+      display: "inline-flex",
+      alignItems: "center",
+      borderRadius: "999px",
+      padding: "6px 10px",
+      fontSize: "11px",
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+    },
+    bodyGrid: { display: "grid", gridTemplateColumns: "1.55fr 0.95fr", gap: "20px" },
+    sectionPanel: { padding: "22px" },
+    picksGrid: { display: "grid", gap: "14px" },
+    pickCard: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "20px",
+      padding: "18px",
+      boxShadow: "0 16px 34px rgba(0,0,0,0.18)",
+    },
+    pickTop: {
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: "12px",
+      marginBottom: "14px",
+    },
+    pickLeague: {
+      fontSize: "11px",
+      textTransform: "uppercase",
+      letterSpacing: "0.12em",
+      fontWeight: 800,
+    },
+    pickMatchup: { fontSize: "20px", fontWeight: 800, color: "#f8fafc", marginTop: "4px" },
+    pickLine: { color: "#cbd5e1", fontSize: "15px", marginTop: "6px", fontWeight: 600 },
+    metricsRow: { display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "10px", marginBottom: "12px" },
+    confidenceWrap: { marginTop: "6px" },
+    confidenceLabelRow: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: "8px",
+      fontSize: "12px",
+      color: "#94a3b8",
+      fontWeight: 700,
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+    },
+    barTrack: {
+      width: "100%",
+      height: "10px",
+      background: "rgba(30,41,59,0.95)",
+      borderRadius: "999px",
+      overflow: "hidden",
+      border: "1px solid rgba(148,163,184,0.12)",
+    },
+    rightColStack: { display: "grid", gap: "20px" },
+    policyCard: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "18px",
+      padding: "16px",
+    },
+    navGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" },
+    navBtn: {
+      display: "block",
+      textDecoration: "none",
+      borderRadius: "16px",
+      padding: "14px 16px",
+      fontWeight: 700,
+      color: "#f8fafc",
+      background: "rgba(15,23,42,0.9)",
+      border: "1px solid rgba(148,163,184,0.12)",
+    },
+    muted: { color: "#94a3b8", fontSize: "14px", lineHeight: 1.6 },
+    empty: {
+      background: "rgba(15,23,42,0.72)",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: "18px",
+      padding: "16px",
+      color: "#94a3b8",
+      fontSize: "14px",
+    },
+  };
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div className="page-title-row">
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <h1 style={{ margin: 0 }}>Dashboard</h1>
-            <span className="pill pillSoft">Premium: value edge + tiers + why panels</span>
+    <div style={styles.page}>
+      <div style={styles.shell}>
+        <section style={styles.hero}>
+          <div style={{ ...styles.panel, ...styles.heroMain }}>
+            <div style={styles.sectionTitle}>Premium Dashboard</div>
+
+            <div style={styles.headline}>
+              <img src={sportsMvpLogo} alt="Sports MVP alternate logo" style={styles.logo} />
+              <div>
+                <h1 style={styles.h1}>Sports MVP</h1>
+                <p style={styles.subtitle}>
+                  Premium betting intelligence powered by validated markets, live edge scoring,
+                  confidence-ranked picks, and disciplined no-bet protection.
+                </p>
+              </div>
+            </div>
+
+            <div style={styles.heroGrid}>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Today’s Picks</div>
+                <div style={styles.statValue}>{picks.length}</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>7-Day Wins</div>
+                <div style={styles.statValue}>{perfLoading ? "—" : perfSummary.wins}</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>7-Day Accuracy</div>
+                <div style={styles.statValue}>
+                  {perfLoading ? "—" : perfSummary.winRate == null ? "—" : `${Math.round(perfSummary.winRate * 100)}%`}
+                </div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Avg CLV</div>
+                <div style={styles.statValue}>
+                  {perfLoading ? "—" : signedNum(perfSummary?.avgClv, 2)}
+                </div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statLabel}>Imp CLV</div>
+                <div style={styles.statValue}>
+                  {perfLoading ? "—" : pctFromUnit(perfSummary?.avgImpliedClv, 2)}
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="page-actions">
-            <Link className="btn" to={`/predict/nba?date=${date}&model=v2&windowDays=14`}>
-              Predict
-            </Link>
-            <Link className="btn btn-ghost" to={`/upsets?date=${date}`}>
-              Upset Watch
-            </Link>
-            <button className="btn btn-ghost" onClick={refreshAll}>
-              Refresh
-            </button>
+          <div style={{ ...styles.panel, ...styles.heroMeta }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={styles.sectionTitle}>Pick of the Day</div>
+            </div>
+
+            {!featured ? (
+              <div style={{ ...styles.empty, gridColumn: "1 / -1" }}>
+                {loading ? "Loading featured pick..." : error || "No validated pick available."}
+              </div>
+            ) : (
+              <div style={{ ...styles.featuredCard, gridColumn: "1 / -1" }}>
+                <div style={styles.matchup}>
+                  <div style={styles.teamSide}>
+                    <img src={featured.awayLogo} alt={featured.awayAbbr} style={styles.teamLogo} />
+                    <div style={styles.teamText}>{featured.awayAbbr}</div>
+                  </div>
+                  <div style={{ color: "#94a3b8", fontWeight: 700, fontSize: "13px", letterSpacing: "0.08em" }}>AT</div>
+                  <div style={styles.teamSide}>
+                    <div style={styles.teamText}>{featured.homeAbbr}</div>
+                    <img src={featured.homeLogo} alt={featured.homeAbbr} style={styles.teamLogo} />
+                  </div>
+                </div>
+
+                <h3 style={styles.featuredTitle}>{marketText(featured.bet)}</h3>
+
+                <div style={{ ...styles.badge, ...tierColors(featured.bet?.tier) }}>
+                  {featured.bet?.tier || "—"}
+                </div>
+
+                <div style={styles.featuredMetricGrid}>
+                  <div style={styles.miniStat}>
+                    <div style={styles.miniLabel}>Edge</div>
+                    <div style={{ ...styles.miniValue, color: "#86efac" }}>
+                      {featured.bet?.edge == null ? "—" : pct((Number(featured.bet.edge) || 0) * 100, 1)}
+                    </div>
+                  </div>
+                  <div style={styles.miniStat}>
+                    <div style={styles.miniLabel}>EV</div>
+                    <div style={{ ...styles.miniValue, color: "#93c5fd" }}>{fmtEv(featured.bet?.evForStake100)}</div>
+                  </div>
+                  <div style={styles.miniStat}>
+                    <div style={styles.miniLabel}>Kelly</div>
+                    <div style={{ ...styles.miniValue, color: "#fcd34d" }}>
+                      {featured.bet?.kellyHalf == null ? "—" : pct((Number(featured.bet.kellyHalf) || 0) * 100, 1)}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={styles.confidenceWrap}>
+                  <div style={styles.confidenceLabelRow}>
+                    <span>Confidence</span>
+                    <span>{pctFromUnit(featured.bet?.modelProb, 1)}</span>
+                  </div>
+                  <div style={styles.barTrack}>
+                    <div
+                      style={{
+                        width: `${Math.max(0, Math.min(100, (Number(featured.bet?.modelProb) || 0) * 100))}%`,
+                        height: "100%",
+                        background: "linear-gradient(90deg, #2563eb 0%, #22c55e 100%)",
+                        borderRadius: "999px",
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
+        </section>
 
-        <div className="subtle">
-          API <span className="mono">{apiStatus}</span>
-          {api.version ? (
-            <span>
-              {" "}
-              · <span className="mono">{api.version}</span>
-            </span>
-          ) : null}
-          {api.time ? (
-            <span>
-              {" "}
-              · <span className="mono">{api.time}</span>
-            </span>
-          ) : null}
-          {" · "}Date <span className="mono">{date}</span> · NBA model <span className="mono">v2</span> (14d) · NCAAM window{" "}
-          <span className="mono">45d</span> · NHL window <span className="mono">40d</span>
-          {perfUpdatedAt ? (
-            <span>
-              {" "}
-              · perf updated <span className="mono">{String(perfUpdatedAt).slice(0, 19).replace("T", " ")}</span>
-            </span>
-          ) : null}
-        </div>
+        <div style={styles.bodyGrid}>
+          <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+            <div style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: "16px", marginBottom: "18px" }}>
+              <div>
+                <div style={styles.sectionTitle}>Validated Picks Board</div>
+                <h2 style={{ margin: 0, fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>Top Validated Picks</h2>
+                <p style={{ ...styles.muted, marginTop: "8px", maxWidth: "640px" }}>
+                  Highest-value premium opportunities across active markets. Every pick includes edge, EV,
+                  Kelly sizing, and confidence.
+                </p>
+              </div>
+              <Link to="/predict" style={{ ...styles.navBtn, background: "#2563eb", border: "1px solid rgba(59,130,246,0.36)" }}>
+                View All Picks
+              </Link>
+            </div>
 
-        {api.ok === false ? (
-          <Banner tone="danger" title="API offline">
-            Your web is up, but the API is not responding. Start API at <span className="mono">127.0.0.1:3001</span>.
-          </Banner>
-        ) : null}
-      </div>
+            {loading ? (
+              <div style={styles.empty}>Loading premium picks...</div>
+            ) : error ? (
+              <div style={{ ...styles.empty, color: "#fda4af" }}>{error}</div>
+            ) : picks.length === 0 ? (
+              <div style={styles.empty}>No validated premium picks available right now.</div>
+            ) : (
+              <div style={styles.picksGrid}>
+                {picks.map((row) => (
+                  <article key={`${row.league}-${row.gameId}`} style={styles.pickCard}>
+                    <div style={styles.pickTop}>
+                      <div>
+                        <div style={{ ...styles.pickLeague, color: leagueColor(row.league) }}>{row.league}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                          {row.awayLogo && (
+                            <img src={row.awayLogo} alt="" style={{ width: 26, height: 26, objectFit: "contain" }} />
+                          )}
+                          <div style={{ fontSize: 22, fontWeight: 800, color: "#f8fafc" }}>{row.matchup}</div>
+                          {row.homeLogo && (
+                            <img src={row.homeLogo} alt="" style={{ width: 26, height: 26, objectFit: "contain" }} />
+                          )}
+                        </div>
+                        <div style={styles.pickLine}>
+                          {marketText(row.bet)} • Odds {oddsText(row.bet?.odds)} {row.bet?.line != null ? `• Line ${row.bet.line}` : ""}
+                        </div>
+                      </div>
 
-      <DailyPicks date={date} nbaModel="v2" windowNba={14} windowNcaam={45} windowNhl={40} maxPicksPerLeague={8} />
+                      <span style={{ ...styles.badge, ...tierColors(row.bet?.tier) }}>
+                        {row.bet?.tier || "—"}
+                      </span>
+                    </div>
 
-      <div style={{ height: 12 }} />
+                    <div style={styles.metricsRow}>
+                      <div style={styles.miniStat}>
+                        <div style={styles.miniLabel}>Edge</div>
+                        <div style={{ ...styles.miniValue, color: "#86efac" }}>
+                          {row.bet?.edge == null ? "—" : pct((Number(row.bet.edge) || 0) * 100, 1)}
+                        </div>
+                      </div>
+                      <div style={styles.miniStat}>
+                        <div style={styles.miniLabel}>EV</div>
+                        <div style={{ ...styles.miniValue, color: "#93c5fd" }}>{fmtEv(row.bet?.evForStake100)}</div>
+                      </div>
+                      <div style={styles.miniStat}>
+                        <div style={styles.miniLabel}>Kelly</div>
+                        <div style={{ ...styles.miniValue, color: "#fcd34d" }}>
+                          {row.bet?.kellyHalf == null ? "—" : pct((Number(row.bet.kellyHalf) || 0) * 100, 1)}
+                        </div>
+                      </div>
+                    </div>
 
-      <ScoreConsole
-        today={date}
-        requestedDate={runDate}
-        setRequestedDate={setRunDate}
-        leagues={runLeagues}
-        setLeagues={setRunLeagues}
-        running={scoreRun.running}
-        onRun={runScoringForDate}
-        result={scoreRun.result}
-        error={scoreRun.error}
-        backfill={backfill}
-        onBackfill30={backfillLast30}
-        onCancelBackfill={cancelBackfill}
-      />
+                    <div style={styles.confidenceWrap}>
+                      <div style={styles.confidenceLabelRow}>
+                        <span>Confidence</span>
+                        <span>{pctFromUnit(row.bet?.modelProb, 1)}</span>
+                      </div>
+                      <div style={styles.barTrack}>
+                        <div
+                          style={{
+                            width: `${Math.max(0, Math.min(100, (Number(row.bet?.modelProb) || 0) * 100))}%`,
+                            height: "100%",
+                            background: "linear-gradient(90deg, #2563eb 0%, #22c55e 100%)",
+                            borderRadius: "999px",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
 
-      <div style={{ height: 12 }} />
+          <aside style={styles.rightColStack}>
+            <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+              <div style={styles.sectionTitle}>Active Market Policy</div>
+              <h2 style={{ margin: "0 0 14px", fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>Market Policy</h2>
+              <div style={{ display: "grid", gap: "12px" }}>
+                {policyRows().map((row) => (
+                  <div key={row.league} style={styles.policyCard}>
+                    <div style={{ fontSize: "12px", fontWeight: 800, letterSpacing: "0.10em", textTransform: "uppercase", color: leagueColor(row.league) }}>
+                      {row.league}
+                    </div>
+                    <div style={{ marginTop: "6px", fontSize: "18px", fontWeight: 700, color: "#f8fafc" }}>{row.market}</div>
+                    <div style={{ marginTop: "4px", fontSize: "13px", color: "#94a3b8" }}>{row.note}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
 
-      {perf.loading ? (
-        <div className="card">
-          <div style={{ fontWeight: 900 }}>Loading performance…</div>
-          <div className="subtle">Pulling {days} day performance rows.</div>
-        </div>
-      ) : perf.error ? (
-        <div className="card danger">
-          <div style={{ fontWeight: 900 }}>Performance error</div>
-          <div className="subtle pre">{perf.error}</div>
-        </div>
-      ) : (
-        <PerformancePanel today={date} days={days} setDays={setDays} perf={perf.data} onRefresh={loadPerformance} />
-      )}
+            <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+              <div style={styles.sectionTitle}>Recent Scoring</div>
+              <h2 style={{ margin: "0 0 14px", fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>Recent Performance</h2>
 
-      <div style={{ height: 12 }} />
+              {perfLoading ? (
+                <div style={styles.empty}>Loading recent performance...</div>
+              ) : perfError ? (
+                <div style={{ ...styles.empty, color: "#fda4af" }}>{perfError}</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" }}>
+                  <div style={styles.policyCard}>
+                    <div style={styles.miniLabel}>Total Picks</div>
+                    <div style={styles.statValue}>{perfSummary.picks}</div>
+                  </div>
+                  <div style={styles.policyCard}>
+                    <div style={styles.miniLabel}>Scored</div>
+                    <div style={styles.statValue}>{perfSummary.scored}</div>
+                  </div>
+                  <div style={styles.policyCard}>
+                    <div style={styles.miniLabel}>Wins</div>
+                    <div style={{ ...styles.statValue, color: "#86efac" }}>{perfSummary.wins}</div>
+                  </div>
+                  <div style={styles.policyCard}>
+                    <div style={styles.miniLabel}>Losses</div>
+                    <div style={{ ...styles.statValue, color: "#fda4af" }}>{perfSummary.losses}</div>
+                  </div>
+                </div>
+              )}
+            </section>
 
-      <div className="card">
-        <div className="panelHead">
-          <div>
-            <div style={{ fontSize: 16, fontWeight: 900 }}>League Snapshots</div>
-            <div className="subtle">Quick sanity check: games, picks, tier distribution, model name, response time.</div>
-          </div>
-        </div>
-
-        <div className="grid">
-          <SnapshotCard
-            title="NBA — Premium v2"
-            subtitle="Market-style contract: edge/tier/winProb + why"
-            loading={nba.loading}
-            error={nba.error}
-            meta={nba.meta}
-            counts={nba.counts}
-            href={`/predict/nba?date=${date}&model=v2&windowDays=14`}
-          />
-
-          <SnapshotCard
-            title="NCAAM — Premium"
-            subtitle="ESPN slate + conservative picks"
-            loading={ncaam.loading}
-            error={ncaam.error}
-            meta={ncaam.meta}
-            counts={ncaam.counts}
-            href={`/predict/ncaam?date=${date}&windowDays=45`}
-          />
-
-          <SnapshotCard
-            title="NHL — Premium"
-            subtitle="ESPN slate + conservative picks"
-            loading={nhl.loading}
-            error={nhl.error}
-            meta={nhl.meta}
-            counts={nhl.counts}
-            href={`/predict/nhl?date=${date}&windowDays=40`}
-          />
-        </div>
-
-        <div className="subtle" style={{ marginTop: 10 }}>
-          NHL is active — if you see missing rows, run scoring for those dates and refresh after ~2–5s.
+            <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+              <div style={styles.sectionTitle}>Application Hub</div>
+              <h2 style={{ margin: "0 0 14px", fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>Navigate</h2>
+              <div style={styles.navGrid}>
+                <Link to="/predict" style={{ ...styles.navBtn, background: "#2563eb", border: "1px solid rgba(59,130,246,0.36)" }}>All Picks</Link>
+                <Link to="/predict-nba" style={styles.navBtn}>NBA</Link>
+                <Link to="/ncaab-predictions" style={styles.navBtn}>NCAAM</Link>
+                <Link to="/predict-nhl" style={styles.navBtn}>NHL</Link>
+                <Link to="/parlays" style={styles.navBtn}>Parlays</Link>
+<Link to="/performance" style={styles.navBtn}>Performance</Link>
+              </div>
+            </section>
+          </aside>
         </div>
       </div>
     </div>

@@ -1,0 +1,48 @@
+import { NavLink } from "react-router-dom";
+import logo from "../assets/sports-mvp-logo.png";
+
+function NavItem({ to, children }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) => `navLink ${isActive ? "navLinkActive" : ""}`}
+    >
+      {children}
+    </NavLink>
+  );
+}
+
+export default function Layout({ children }) {
+  return (
+    <>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <NavLink
+            to="/"
+            style={{ display: "flex", alignItems: "center", gap: "12px", textDecoration: "none" }}
+          >
+            <img
+              src={logo}
+              alt="Sports MVP"
+              style={{ height: "44px", width: "auto", display: "block" }}
+            />
+            <span className="muted2" style={{ fontSize: 12 }}>
+              NBA • NHL • NCAAM
+            </span>
+          </NavLink>
+
+          <nav className="nav" aria-label="Primary">
+            <NavItem to="/">Home</NavItem>
+            <NavItem to="/league/nba">NBA</NavItem>
+            <NavItem to="/league/nhl">NHL</NavItem>
+            <NavItem to="/league/ncaam">NCAAM</NavItem>
+            <NavItem to="/upsets">Upset Watch</NavItem>
+            <NavItem to="/parlays">Parlays</NavItem>
+          </nav>
+        </div>
+      </header>
+
+      {children}
+    </>
+  );
+}

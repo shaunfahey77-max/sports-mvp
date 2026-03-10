@@ -1,0 +1,339 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+
+function fmtPctFrom100(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return `${Math.round(v)}%`;
+}
+
+function fmtNum(n, digits = 1) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return v.toFixed(digits);
+}
+
+function tierClasses(tier) {
+  const t = String(tier || "").toUpperCase();
+  if (t === "ELITE") return "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30";
+  if (t === "STRONG") return "bg-blue-500/15 text-blue-300 ring-1 ring-blue-500/30";
+  if (t === "EDGE") return "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30";
+  return "bg-slate-500/15 text-slate-300 ring-1 ring-slate-500/30";
+}
+
+function marketLabel(bet) {
+  if (!bet) return "—";
+  const mt = String(bet.marketType || "").toLowerCase();
+  const side = String(bet.side || "").toLowerCase();
+  const line = Number(bet.line);
+
+  if (mt === "spread") {
+    const prefix = side === "home" ? "HOME" : side === "away" ? "AWAY" : side.toUpperCase();
+    const lineTxt = Number.isFinite(line) ? (line > 0 ? `+${line}` : `${line}`) : "";
+    return `${prefix} ${lineTxt}`.trim();
+  }
+
+  if (mt === "total") {
+    const prefix = side === "over" ? "OVER" : side === "under" ? "UNDER" : side.toUpperCase();
+    return Number.isFinite(line) ? `${prefix} ${line}` : prefix;
+  }
+
+  if (mt === "moneyline") {
+    return side ? side.toUpperCase() : "MONEYLINE";
+  }
+
+  return "—";
+}
+
+function activePolicyRows() {
+  return [
+    { league: "NBA", market: "Spreads only", note: "Validated premium market" },
+    { league: "NCAAM", market: "Totals only", note: "Validated premium market" },
+    { league: "NHL", market: "Spreads only", note: "Validated premium market" },
+  ];
+}
+
+export default function Home() {
+  const [loading, setLoading] = useState(true);
+  const [perfLoading, setPerfLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [performanceError, setPerformanceError] = useState("");
+
+  const [nba, setNba] = useState([]);
+  const [ncaam, setNcaam] = useState([]);
+  const [nhl, setNhl] = useState([]);
+  const [performance, setPerformance] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPredictions() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const [nbaRes, ncaamRes, nhlRes] = await Promise.all([
+          fetch("/api/predictions?league=nba"),
+          fetch("/api/predictions?league=ncaam"),
+          fetch("/api/predictions?league=nhl"),
+        ]);
+
+        const [nbaJson, ncaamJson, nhlJson] = await Promise.all([
+          nbaRes.json(),
+          ncaamRes.json(),
+          nhlRes.json(),
+        ]);
+
+        const normalize = (league, games) =>
+          (games || [])
+            .filter((g) => g?.recommendedBet)
+            .map((g) => ({
+              league,
+              gameId: g.gameId,
+              matchup: `${g.away?.abbr || "AWAY"} @ ${g.home?.abbr || "HOME"}`,
+              away: g.away?.abbr || "AWAY",
+              home: g.home?.abbr || "HOME",
+              bet: g.recommendedBet,
+            }))
+            .sort((a, b) => {
+              const evA = Number(a?.bet?.evForStake100) || -9999;
+              const evB = Number(b?.bet?.evForStake100) || -9999;
+              return evB - evA;
+            });
+
+        if (!cancelled) {
+          setNba(normalize("NBA", nbaJson?.games));
+          setNcaam(normalize("NCAAM", ncaamJson?.games));
+          setNhl(normalize("NHL", nhlJson?.games));
+        }
+      } catch (e) {
+        if (!cancelled) setError("Failed to load premium picks.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    async function loadPerformance() {
+      setPerfLoading(true);
+      setPerformanceError("");
+
+      try {
+        const res = await fetch("/api/performance");
+        const json = await res.json();
+        if (!cancelled) setPerformance(json);
+      } catch (e) {
+        if (!cancelled) setPerformanceError("Failed to load performance.");
+      } finally {
+        if (!cancelled) setPerfLoading(false);
+      }
+    }
+
+    loadPredictions();
+    loadPerformance();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const topPicks = useMemo(() => {
+    return [...nba, ...ncaam, ...nhl]
+      .sort((a, b) => (Number(b?.bet?.evForStake100) || -9999) - (Number(a?.bet?.evForStake100) || -9999))
+      .slice(0, 10);
+  }, [nba, ncaam, nhl]);
+
+  const perfSummary = useMemo(() => {
+    const rows = performance?.rows?.nba || [];
+    const picks = rows.reduce((sum, r) => sum + (Number(r?.picks) || 0), 0);
+    const wins = rows.reduce((sum, r) => sum + (Number(r?.wins) || 0), 0);
+    const losses = rows.reduce((sum, r) => sum + (Number(r?.losses) || 0), 0);
+    const scored = rows.reduce((sum, r) => sum + (Number(r?.scored) || 0), 0);
+    const winRate = scored > 0 ? wins / scored : null;
+
+    return { picks, wins, losses, scored, winRate };
+  }, [performance]);
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 lg:px-8">
+        <div className="mb-6 rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 p-6 shadow-2xl">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <div className="mb-2 inline-flex items-center rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-blue-300 ring-1 ring-blue-500/20">
+                Premium Dashboard
+              </div>
+              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Sports MVP</h1>
+              <p className="mt-2 max-w-2xl text-sm text-slate-300 md:text-base">
+                Validated picks only. No forced bets. Premium market policy active.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl bg-slate-900/80 p-4 ring-1 ring-slate-800">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Today’s Picks</div>
+                <div className="mt-1 text-2xl font-semibold">{topPicks.length}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-900/80 p-4 ring-1 ring-slate-800">
+                <div className="text-xs uppercase tracking-wide text-slate-400">7-Day Wins</div>
+                <div className="mt-1 text-2xl font-semibold">{perfLoading ? "—" : perfSummary.wins}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-900/80 p-4 ring-1 ring-slate-800">
+                <div className="text-xs uppercase tracking-wide text-slate-400">7-Day Win Rate</div>
+                <div className="mt-1 text-2xl font-semibold">
+                  {perfLoading ? "—" : perfSummary.winRate == null ? "—" : `${Math.round(perfSummary.winRate * 100)}%`}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-6 grid gap-6 lg:grid-cols-[1.6fr_1fr]">
+          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Top Validated Picks</h2>
+              <Link
+                to="/predict"
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
+              >
+                View All Picks
+              </Link>
+            </div>
+
+            {loading ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-400">
+                Loading premium picks...
+              </div>
+            ) : error ? (
+              <div className="rounded-xl border border-rose-800 bg-rose-950/30 p-4 text-sm text-rose-300">
+                {error}
+              </div>
+            ) : topPicks.length === 0 ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-400">
+                No premium picks available right now.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl ring-1 ring-slate-800">
+                <div className="grid grid-cols-6 gap-3 bg-slate-950/80 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  <div>Game</div>
+                  <div>Pick</div>
+                  <div>Edge</div>
+                  <div>EV</div>
+                  <div>Kelly</div>
+                  <div>Tier</div>
+                </div>
+
+                {topPicks.map((row) => (
+                  <div
+                    key={`${row.league}-${row.gameId}`}
+                    className="grid grid-cols-6 gap-3 border-t border-slate-800 bg-slate-900/60 px-4 py-3 text-sm"
+                  >
+                    <div>
+                      <div className="font-medium text-slate-100">{row.matchup}</div>
+                      <div className="mt-1 text-xs uppercase tracking-wide text-slate-400">{row.league}</div>
+                    </div>
+
+                    <div>
+                      <div className="font-medium">{marketLabel(row.bet)}</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        Odds {row.bet?.odds ?? "—"} {row.bet?.line != null ? `• Line ${row.bet.line}` : ""}
+                      </div>
+                    </div>
+
+                    <div className="font-medium text-emerald-300">
+                      {row.bet?.edge == null ? "—" : `${fmtNum((Number(row.bet.edge) || 0) * 100, 1)}%`}
+                    </div>
+
+                    <div className="font-medium text-blue-300">{fmtPctFrom100(row.bet?.evForStake100)}</div>
+
+                    <div className="font-medium text-amber-300">
+                      {row.bet?.kellyHalf == null ? "—" : `${fmtNum((Number(row.bet.kellyHalf) || 0) * 100, 1)}%`}
+                    </div>
+
+                    <div>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tierClasses(row.bet?.tier)}`}>
+                        {row.bet?.tier || "—"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="space-y-6">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+              <h2 className="mb-4 text-xl font-semibold">Active Market Policy</h2>
+              <div className="space-y-3">
+                {activePolicyRows().map((row) => (
+                  <div key={row.league} className="rounded-xl bg-slate-950/50 p-4 ring-1 ring-slate-800">
+                    <div className="text-sm font-semibold">{row.league}</div>
+                    <div className="mt-1 text-sm text-slate-300">{row.market}</div>
+                    <div className="mt-1 text-xs text-slate-500">{row.note}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+              <h2 className="mb-4 text-xl font-semibold">Recent Performance</h2>
+
+              {perfLoading ? (
+                <div className="text-sm text-slate-400">Loading performance...</div>
+              ) : performanceError ? (
+                <div className="rounded-xl border border-rose-800 bg-rose-950/30 p-4 text-sm text-rose-300">
+                  {performanceError}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-slate-950/50 p-4 ring-1 ring-slate-800">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">Total Picks</div>
+                    <div className="mt-1 text-2xl font-semibold">{perfSummary.picks}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-950/50 p-4 ring-1 ring-slate-800">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">Scored</div>
+                    <div className="mt-1 text-2xl font-semibold">{perfSummary.scored}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-950/50 p-4 ring-1 ring-slate-800">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">Wins</div>
+                    <div className="mt-1 text-2xl font-semibold text-emerald-300">{perfSummary.wins}</div>
+                  </div>
+                  <div className="rounded-xl bg-slate-950/50 p-4 ring-1 ring-slate-800">
+                    <div className="text-xs uppercase tracking-wide text-slate-400">Losses</div>
+                    <div className="mt-1 text-2xl font-semibold text-rose-300">{perfSummary.losses}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl">
+          <h2 className="mb-4 text-xl font-semibold">Navigate</h2>
+          <div className="flex flex-wrap gap-3">
+            <Link to="/predict" className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">
+              All Picks
+            </Link>
+            <Link to="/predict-nba" className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700">
+              NBA
+            </Link>
+            <Link to="/ncaab-predictions" className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700">
+              NCAAM
+            </Link>
+            <Link to="/predict-nhl" className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700">
+              NHL
+            </Link>
+            <Link to="/parlays" className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700">
+              Parlays
+            </Link>
+            <Link to="/upsets" className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700">
+              Upsets
+            </Link>
+            <Link to="/performance" className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700">
+              Performance
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

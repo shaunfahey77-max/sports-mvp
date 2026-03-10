@@ -1,15 +1,20 @@
 // apps/api/src/index.js
 import "dotenv/config";
 import express from "express";
+import parlaysRouter from "./routes/parlays.js";
+import parlaysOddsRouter from "./routes/parlaysOdds.js";
 import cors from "cors";
 
 import adminPerformanceRouter from "./routes/adminPerformance.js";
+import performanceCacheRouter from "./routes/performanceCache.js";
 import predictRouter from "./routes/predict.js";
 import performanceRoutes from "./routes/performance.js";
 import upsetsRouter from "./routes/upsets.js";
 import scoreRouter from "./routes/score.js";
+import upsetsOddsRouter from "./routes/upsetsOdds.js";
 import { startDailyScoreJob } from "./cron/dailyScore.js";
 import evRouter from "./routes/ev.js";
+import betsRouter from "./routes/bets.js";
 
 /**
  * Optional: Premium NBA router (safe import)
@@ -35,6 +40,9 @@ app.disable("x-powered-by");
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
+app.use("/api/parlays", parlaysRouter);
+
+app.use("/api/parlaysOdds", parlaysOddsRouter);
 /* =============================
    Health + Ping
 ============================= */
@@ -62,10 +70,15 @@ app.use("/api", performanceRoutes);
 
 // League utilities
 app.use("/api/upsets", upsetsRouter);
+app.use("/api/upsetsOdds", upsetsOddsRouter);
 app.use("/api/score", scoreRouter);
 
 // EV calculator
 app.use("/api/ev", evRouter);
+
+// My Bets ledger
+app.use("/api", betsRouter);
+app.use("/api/performance", performanceCacheRouter);
 
 // Optional NBA premium router
 if (nbaPremiumRouter) {

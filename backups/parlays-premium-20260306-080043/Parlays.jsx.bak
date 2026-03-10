@@ -1,0 +1,151 @@
+// apps/web/src/pages/Parlays.jsx
+import { useEffect, useMemo, useState } from "react";
+
+function todayYMD() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function num(n, d = 2) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "—";
+  const m = Math.pow(10, d);
+  return String(Math.round(x * m) / m);
+}
+
+export default function Parlays() {
+  const [league, setLeague] = useState("nba");
+  const [date, setDate] = useState(todayYMD());
+  const [legs, setLegs] = useState(2);
+  const [limit, setLimit] = useState(5);
+  const [evOnly, setEvOnly] = useState(true);
+
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+
+  const url = useMemo(() => {
+    const p = new URLSearchParams();
+    p.set("league", league);
+    p.set("date", date);
+    p.set("legs", String(legs));
+    p.set("limit", String(limit));
+    p.set("evOnly", evOnly ? "1" : "0");
+    p.set("mode", "predictions");
+    return `/api/parlaysOdds?${p.toString()}`;
+  }, [league, date, legs, limit, evOnly]);
+
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(url);
+      const j = await r.json();
+      setData(j);
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  return (
+    <div className="page">
+      <h1>Parlays</h1>
+      <div className="muted2" style={{ marginBottom: 12 }}>
+        Parlays generated from your <b>/api/predictions</b> (+EV picks). (mode=predictions)
+      </div>
+
+      <div className="card" style={{ padding: 14, marginBottom: 14 }}>
+        <div className="grid2" style={{ gap: 12, alignItems: "end" }}>
+          <div>
+            <div className="muted2">League</div>
+            <select value={league} onChange={(e) => setLeague(e.target.value)}>
+              <option value="nba">NBA</option>
+              <option value="nhl">NHL</option>
+              <option value="ncaam">NCAAM</option>
+            </select>
+          </div>
+
+          <div>
+            <div className="muted2">Date</div>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+
+          <div>
+            <div className="muted2">Legs</div>
+            <input type="number" min={2} max={8} value={legs} onChange={(e) => setLegs(Number(e.target.value || 2))} />
+          </div>
+
+          <div>
+            <div className="muted2">Results</div>
+            <input type="number" min={1} max={25} value={limit} onChange={(e) => setLimit(Number(e.target.value || 5))} />
+          </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="checkbox" checked={evOnly} onChange={(e) => setEvOnly(e.target.checked)} />
+            <span>+EV only</span>
+          </label>
+
+          <button onClick={load} disabled={loading}>
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+        </div>
+
+        <div className="muted2" style={{ marginTop: 10 }}>
+          Endpoint: <code>{url}</code>
+        </div>
+
+        {!loading && data?.ok === false && (
+          <div style={{ marginTop: 10 }} className="warn">
+            {String(data?.error || "Unknown error")}
+          </div>
+        )}
+        {err && <div style={{ marginTop: 10 }} className="warn">{err}</div>}
+      </div>
+
+      <div className="card" style={{ padding: 14 }}>
+        <div className="muted2" style={{ marginBottom: 10 }}>
+          poolSize: <b>{data?.poolSize ?? "—"}</b> • candidates: <b>{data?.candidates ?? "—"}</b> • parlays:{" "}
+          <b>{data?.count ?? "—"}</b>
+        </div>
+
+        {Array.isArray(data?.parlays) && data.parlays.length === 0 && (
+          <div className="muted2">
+            No parlays. If this is a small slate or your model produced few +EV picks, toggle <b>+EV only</b> off or reduce legs.
+          </div>
+        )}
+
+        {Array.isArray(data?.parlays) &&
+          data.parlays.map((p, idx) => (
+            <div key={idx} className="card" style={{ padding: 14, marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <div>
+                  <b>Parlay #{idx + 1}</b> • {p?.legs?.length ?? 0} legs
+                </div>
+                <div className="muted2">
+                  Odds: <b>{p?.combinedAmericanOdds ?? "—"}</b> • Prob: <b>{num(p?.modelProb, 4)}</b> • EV100:{" "}
+                  <b>{num(p?.evForStake100, 2)}</b> • Kelly½: <b>{num(p?.kellyHalf, 3)}</b>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                {Array.isArray(p?.legs) &&
+                  p.legs.map((l, j) => (
+                    <div key={j} className="muted2" style={{ marginBottom: 6 }}>
+                      • {l.matchup} — <b>{l.marketType}</b> <b>{l.pick}</b> {l.line != null ? `(${l.line})` : ""} • odds{" "}
+                      <b>{l.odds}</b> • winProb <b>{num(l.winProb, 4)}</b> • EV100 <b>{num(l.evForStake100, 2)}</b> • tier{" "}
+                      <b>{l.tier}</b>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
