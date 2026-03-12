@@ -1,0 +1,293 @@
+import { useEffect, useMemo, useState } from "react";
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pct(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${n.toFixed(digits)}%`;
+}
+
+function pctFromUnit(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+function oddsText(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
+function fmtEv(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${Math.round(n)}%`;
+}
+
+function marketText(bet) {
+  if (!bet) return "—";
+  const mt = String(bet.marketType || "").toLowerCase();
+  const side = String(bet.side || "").toLowerCase();
+  const line = num(bet.line);
+
+  if (mt === "spread") {
+    const sideText = side === "away" ? "Away" : side === "home" ? "Home" : side;
+    return `${sideText} ${line == null ? "" : line > 0 ? `+${line}` : `${line}`}`.trim();
+  }
+  if (mt === "total") {
+    const sideText = side === "under" ? "Under" : side === "over" ? "Over" : side;
+    return `${sideText} ${line == null ? "" : line}`.trim();
+  }
+  if (mt === "moneyline") return side ? `${side.toUpperCase()} ML` : "Moneyline";
+  return "—";
+}
+
+function tierColors(tier) {
+  const t = String(tier || "").toUpperCase();
+  if (t === "ELITE") return { background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.28)", color: "#86efac" };
+  if (t === "STRONG") return { background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.28)", color: "#93c5fd" };
+  if (t === "EDGE") return { background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.28)", color: "#fcd34d" };
+  return { background: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.22)", color: "#cbd5e1" };
+}
+
+export default function Predict() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [league, setLeague] = useState("all");
+  const [tier, setTier] = useState("all");
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const [nbaRes, ncaamRes, nhlRes] = await Promise.all([
+          fetch("/api/predictions?league=nba"),
+          fetch("/api/predictions?league=ncaam"),
+          fetch("/api/predictions?league=nhl"),
+        ]);
+
+        const [nbaJson, ncaamJson, nhlJson] = await Promise.all([
+          nbaRes.json(),
+          ncaamRes.json(),
+          nhlRes.json(),
+        ]);
+
+        const normalize = (label, games) =>
+          (games || [])
+            .filter((g) => g?.recommendedBet)
+            .map((g) => ({
+              league: label,
+              id: `${label}-${g.gameId}`,
+              matchup: `${g.away?.abbr || "AWAY"} @ ${g.home?.abbr || "HOME"}`,
+              awayLogo: g.away?.logo || "",
+              homeLogo: g.home?.logo || "",
+              bet: g.recommendedBet,
+            }));
+
+        const all = [
+          ...normalize("NBA", nbaJson?.games),
+          ...normalize("NCAAM", ncaamJson?.games),
+          ...normalize("NHL", nhlJson?.games),
+        ].sort((a, b) => (num(b?.bet?.evForStake100) || -9999) - (num(a?.bet?.evForStake100) || -9999));
+
+        if (!cancelled) setRows(all);
+      } catch {
+        if (!cancelled) setError("Failed to load premium picks.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const filtered = useMemo(() => {
+    return rows.filter((row) => {
+      if (league !== "all" && row.league.toLowerCase() !== league) return false;
+      if (tier !== "all" && String(row.bet?.tier || "").toUpperCase() !== tier.toUpperCase()) return false;
+      return true;
+    });
+  }, [rows, league, tier]);
+
+  const corePlays = useMemo(
+    () => filtered.filter(r => {
+      const odds = Number(r?.bet?.odds);
+      return r?.bet?.pick !== "PASS" && Number.isFinite(odds) && Math.abs(odds) <= 200;
+    }),
+    [filtered]
+  );
+
+  const upsidePlays = useMemo(
+    () => filtered.filter(r => {
+      const odds = Number(r?.bet?.odds);
+      return r?.bet?.pick !== "PASS" && Number.isFinite(odds) && odds >= 200;
+    }),
+    [filtered]
+  );
+
+  const bestBet = useMemo(() => {
+    const candidates = filtered.filter(r => r?.bet?.pick !== "PASS");
+    if (!candidates.length) return null;
+    return [...candidates].sort(
+      (a,b) => (Number(b?.bet?.edge) || 0) - (Number(a?.bet?.edge) || 0)
+    )[0];
+  }, [filtered]);
+
+
+  const styles = {
+    page: {
+      minHeight: "100vh",
+      background:
+        "radial-gradient(circle at top left, rgba(30,111,219,0.20), transparent 26%), radial-gradient(circle at top right, rgba(139,92,246,0.16), transparent 24%), linear-gradient(180deg, #071224 0%, #040b18 100%)",
+      color: "#e5e7eb",
+      padding: "28px 20px 40px",
+    },
+    shell: { maxWidth: "1180px", margin: "0 auto" },
+    card: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "22px",
+      boxShadow: "0 18px 46px rgba(0,0,0,0.22)",
+    },
+  };
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.shell}>
+        <section style={{ ...styles.card, padding: 24, marginBottom: 20 }}>
+          <div style={{ fontSize: 12, color: "#93c5fd", textTransform: "uppercase", letterSpacing: "0.14em", fontWeight: 800, marginBottom: 10 }}>
+            Premium Picks Board
+          </div>
+          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800, color: "#f8fafc" }}>All Picks</h1>
+          <p style={{ color: "#94a3b8", marginTop: 8 }}>
+            Unified premium picks board with filters for league and tier. All picks are validated by the current market policy.
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "180px 180px 1fr", gap: 12, marginTop: 18 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", textTransform: "uppercase", marginBottom: 6, fontWeight: 700 }}>League</label>
+              <select value={league} onChange={(e) => setLeague(e.target.value)} style={{ width: "100%", background: "rgba(30,41,59,0.82)", border: "1px solid rgba(148,163,184,0.18)", color: "#f8fafc", borderRadius: 12, padding: "10px 12px" }}>
+                <option value="all">All</option>
+                <option value="nba">NBA</option>
+                <option value="ncaam">NCAAM</option>
+                <option value="nhl">NHL</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#94a3b8", textTransform: "uppercase", marginBottom: 6, fontWeight: 700 }}>Tier</label>
+              <select value={tier} onChange={(e) => setTier(e.target.value)} style={{ width: "100%", background: "rgba(30,41,59,0.82)", border: "1px solid rgba(148,163,184,0.18)", color: "#f8fafc", borderRadius: 12, padding: "10px 12px" }}>
+                <option value="all">All</option>
+                <option value="ELITE">ELITE</option>
+                <option value="STRONG">STRONG</option>
+                <option value="EDGE">EDGE</option>
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "end", color: "#94a3b8", fontSize: 14 }}>
+              Showing {filtered.length} validated picks
+            </div>
+          </div>
+
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(4,minmax(0,1fr))",
+            gap: 12,
+            marginTop: 16
+          }}>
+            <div style={{ background: "rgba(15,23,42,0.8)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 14 }}>
+              <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700 }}>Today's Card</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: "#f8fafc" }}>{filtered.length}</div>
+            </div>
+
+            <div style={{ background: "rgba(15,23,42,0.8)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 14 }}>
+              <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700 }}>Core Plays</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: "#86efac" }}>{corePlays.length}</div>
+            </div>
+
+            <div style={{ background: "rgba(15,23,42,0.8)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 14 }}>
+              <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700 }}>Upside Plays</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: "#93c5fd" }}>{upsidePlays.length}</div>
+            </div>
+
+            <div style={{ background: "rgba(15,23,42,0.8)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 14 }}>
+              <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700 }}>Best Bet</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#f8fafc" }}>
+                {bestBet ? bestBet.matchup : "—"}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {loading ? (
+          <section style={{ ...styles.card, padding: 22 }}>Loading picks...</section>
+        ) : error ? (
+          <section style={{ ...styles.card, padding: 22, color: "#fda4af" }}>{error}</section>
+        ) : filtered.length === 0 ? (
+          <section style={{ ...styles.card, padding: 22, color: "#94a3b8" }}>No validated picks match these filters.</section>
+        ) : (
+          <section style={{ display: "grid", gap: 14 }}>
+            {filtered.map((row) => (
+              <article key={row.id} style={{ ...styles.card, padding: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: "#93c5fd", textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 800 }}>
+                      {row.league}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+  {row.awayLogo && (
+    <img src={row.awayLogo} alt="" style={{ width: 26, height: 26, objectFit: "contain" }} />
+  )}
+  <div style={{ fontSize: 22, fontWeight: 800, color: "#f8fafc" }}>{row.matchup}</div>
+  {row.homeLogo && (
+    <img src={row.homeLogo} alt="" style={{ width: 26, height: 26, objectFit: "contain" }} />
+  )}
+</div>
+                    <div style={{ marginTop: 8, color: "#cbd5e1", fontSize: 15 }}>
+                      {marketText(row.bet)} • Odds {oddsText(row.bet?.odds)} {row.bet?.line != null ? `• Line ${row.bet.line}` : ""}
+                    </div>
+                  </div>
+                  <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", ...tierColors(row.bet?.tier) }}>
+                    {row.bet?.tier || "—"}
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginTop: 14 }}>
+                  <div style={{ background: "rgba(15,23,42,0.9)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Edge</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#86efac" }}>
+                      {row.bet?.edge == null ? "—" : pct((Number(row.bet.edge) || 0) * 100, 1)}
+                    </div>
+                  </div>
+                  <div style={{ background: "rgba(15,23,42,0.9)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>EV</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#93c5fd" }}>{fmtEv(row.bet?.evForStake100)}</div>
+                  </div>
+                  <div style={{ background: "rgba(15,23,42,0.9)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Kelly</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#fcd34d" }}>
+                      {row.bet?.kellyHalf == null ? "—" : pct((Number(row.bet.kellyHalf) || 0) * 100, 1)}
+                    </div>
+                  </div>
+                  <div style={{ background: "rgba(15,23,42,0.9)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 12 }}>
+                    <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700, marginBottom: 6 }}>Confidence</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc" }}>{pctFromUnit(row.bet?.modelProb, 1)}</div>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}

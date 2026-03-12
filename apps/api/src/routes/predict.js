@@ -957,7 +957,7 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
     }
 
     // Market sanity filters
-    if (recommended && league === "nba" && mt === "spread" && line != null && Math.abs(line) > 10.5) {
+    if (recommended && league === "nba" && mt === "spread" && line != null && Math.abs(line) > 17.5) {
       recommended = null;
     }
 

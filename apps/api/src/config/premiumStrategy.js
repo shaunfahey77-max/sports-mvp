@@ -1,7 +1,7 @@
 export const MARKET_GATING = {
-  nba:   { moneyline: false, spread: true,  total: false },
-  ncaam: { moneyline: false, spread: false, total: true  },
-  nhl:   { moneyline: false, spread: true,  total: false },
+  nba:   { moneyline: true, spread: true, total: true },
+  ncaam: { moneyline: true, spread: true, total: true },
+  nhl:   { moneyline: true, spread: true, total: true },
 };
 
 export const THRESHOLDS = {

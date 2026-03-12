@@ -220,7 +220,7 @@ async function fetchPerformanceWindow(days = 14, leagues = ["nba", "nhl", "ncaam
         picks: picks?.picks ?? 0,
         wins,
         losses,
-        pass: Math.max(perf?.pass ?? 0, picks?.pass ?? 0),
+        pass: Math.max(0, (perf?.games ?? 0) - (picks?.picks ?? 0)),
         scored,
         acc: scored > 0 ? wins / scored : null,
         avg_clv_line: picks?.avg_clv_line ?? null,
@@ -286,7 +286,7 @@ router.get("/performance", async (req, res) => {
         const wins = picks?.wins ?? 0;
         const losses = picks?.losses ?? 0;
         const scored = picks?.scored ?? 0;
-        const pass = Math.max(perf?.pass ?? 0, picks?.pass ?? 0);
+        const pass = Math.max(0, (perf?.games ?? 0) - (picks?.picks ?? 0));
         const totalPicks = picks?.picks ?? 0;
 
         return {

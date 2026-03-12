@@ -67,8 +67,16 @@ export default function Performance() {
 
         if (!cancelled) {
           setKpis(kpisJson?.data || null);
-          setLeagueRows(Array.isArray(leagueJson?.data) ? leagueJson.data : []);
-          setRecentRows(Array.isArray(recentJson?.data) ? recentJson.data : []);
+          setLeagueRows(
+  Array.isArray(leagueJson?.data)
+    ? leagueJson.data.filter(r => r?.error == null)
+    : []
+);
+setRecentRows(
+  Array.isArray(recentJson?.data)
+    ? recentJson.data.filter(r => r?.error == null)
+    : []
+);
         }
       } catch (e) {
         if (!cancelled) setError(String(e?.message || "Failed to load performance."));

@@ -202,7 +202,6 @@ async function buildPredictionsInternal(league, date) {
 
 function summarizeLedgerRows(games, rows) {
   let picks = 0;
-  let pass = 0;
   let completed = 0;
   let wins = 0;
   let losses = 0;
@@ -213,13 +212,7 @@ function summarizeLedgerRows(games, rows) {
   }
 
   for (const r of rows || []) {
-    const pick = String(r?.pick || "").toUpperCase();
     const result = String(r?.result || "").toUpperCase();
-
-    if (pick === "PASS" || result === "PASS") {
-      pass++;
-      continue;
-    }
 
     if (result === "WIN") {
       picks++;
@@ -235,8 +228,11 @@ function summarizeLedgerRows(games, rows) {
     }
   }
 
+  const gamesCount = Array.isArray(games) ? games.length : 0;
+  const pass = Math.max(0, gamesCount - picks);
   const acc = scored ? wins / scored : null;
-  return { games: games.length, picks, pass, completed, wins, losses, scored, acc };
+
+  return { games: gamesCount, picks, pass, completed, wins, losses, scored, acc };
 }
 
 // POST /api/admin/performance/run?date=YYYY-MM-DD&leagues=nba,nhl,ncaam
