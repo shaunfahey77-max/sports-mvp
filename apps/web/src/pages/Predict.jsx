@@ -120,31 +120,6 @@ export default function Predict() {
     });
   }, [rows, league, tier]);
 
-  const corePlays = useMemo(
-    () => filtered.filter(r => {
-      const odds = Number(r?.bet?.odds);
-      return r?.bet?.pick !== "PASS" && Number.isFinite(odds) && Math.abs(odds) <= 200;
-    }),
-    [filtered]
-  );
-
-  const upsidePlays = useMemo(
-    () => filtered.filter(r => {
-      const odds = Number(r?.bet?.odds);
-      return r?.bet?.pick !== "PASS" && Number.isFinite(odds) && odds >= 200;
-    }),
-    [filtered]
-  );
-
-  const bestBet = useMemo(() => {
-    const candidates = filtered.filter(r => r?.bet?.pick !== "PASS");
-    if (!candidates.length) return null;
-    return [...candidates].sort(
-      (a,b) => (Number(b?.bet?.edge) || 0) - (Number(a?.bet?.edge) || 0)
-    )[0];
-  }, [filtered]);
-
-
   const styles = {
     page: {
       minHeight: "100vh",
@@ -195,36 +170,6 @@ export default function Predict() {
             </div>
             <div style={{ display: "flex", alignItems: "end", color: "#94a3b8", fontSize: 14 }}>
               Showing {filtered.length} validated picks
-
-          <div style={{
-            display:"grid",
-            gridTemplateColumns:"repeat(4,minmax(0,1fr))",
-            gap:12,
-            marginTop:16
-          }}>
-            <div style={{background:"rgba(15,23,42,0.8)",border:"1px solid rgba(148,163,184,0.12)",borderRadius:16,padding:14}}>
-              <div style={{fontSize:11,color:"#94a3b8",textTransform:"uppercase",fontWeight:700}}>Today's Card</div>
-              <div style={{fontSize:26,fontWeight:800,color:"#f8fafc"}}>{filtered.length}</div>
-            </div>
-
-            <div style={{background:"rgba(15,23,42,0.8)",border:"1px solid rgba(148,163,184,0.12)",borderRadius:16,padding:14}}>
-              <div style={{fontSize:11,color:"#94a3b8",textTransform:"uppercase",fontWeight:700}}>Core Plays</div>
-              <div style={{fontSize:26,fontWeight:800,color:"#86efac"}}>{corePlays.length}</div>
-            </div>
-
-            <div style={{background:"rgba(15,23,42,0.8)",border:"1px solid rgba(148,163,184,0.12)",borderRadius:16,padding:14}}>
-              <div style={{fontSize:11,color:"#94a3b8",textTransform:"uppercase",fontWeight:700}}>Upside Plays</div>
-              <div style={{fontSize:26,fontWeight:800,color:"#93c5fd"}}>{upsidePlays.length}</div>
-            </div>
-
-            <div style={{background:"rgba(15,23,42,0.8)",border:"1px solid rgba(148,163,184,0.12)",borderRadius:16,padding:14}}>
-              <div style={{fontSize:11,color:"#94a3b8",textTransform:"uppercase",fontWeight:700}}>Best Bet</div>
-              <div style={{fontSize:18,fontWeight:800,color:"#f8fafc"}}>
-                {bestBet ? bestBet.matchup : "—"}
-              </div>
-            </div>
-          </div>
-
             </div>
           </div>
         </section>
