@@ -2,6 +2,7 @@
 import "dotenv/config";
 import express from "express";
 import { writeSlatePicksToLedger } from "../db/dailyLedger.js";
+import { upsertMarketSnapshotsBatch } from "../db/marketSnapshots.js";
 import { applyPremiumSelection } from "../lib/premiumSelection.js";
 
 const router = express.Router();
@@ -741,9 +742,9 @@ function overProb(meanTotal, totalLine, sdTotal) {
 }
 
 const CAL = {
-  nba: { marginSd: 11.5, totalSd: 14.0, baseTotal: 222.0, marginScale: 26.0 },
-  ncaam: { marginSd: 10.5, totalSd: 13.0, baseTotal: 142.0, marginScale: 24.0 },
-  nhl: { marginSd: 1.9, totalSd: 1.9, baseTotal: 6.1, marginScale: 4.2 },
+  nba: { marginSd: 13.5, totalSd: 18.0, baseTotal: 222.0, marginScale: 26.0 },
+  ncaam: { marginSd: 12.5, totalSd: 17.0, baseTotal: 142.0, marginScale: 24.0 },
+  nhl: { marginSd: 2.4, totalSd: 2.4, baseTotal: 6.1, marginScale: 4.2 },
 };
 
 function recommendedTierFromCandidate(c) {
@@ -797,7 +798,22 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
   };
 
   if (vegasRow?.h2h) {
-    const pHome = Number.isFinite(pHomeWin) ? clampNum(pHomeWin, 0, 1) : null;
+    const rawPHome = Number.isFinite(pHomeWin) ? clampNum(pHomeWin, 0, 1) : null;
+
+    // v24 ML calibration:
+    // compress raw win probabilities toward 50% so moneyline EV is less inflated
+    // while preserving directional signal.
+    const mlCompression =
+      league === "nba" ? 0.72 :
+      league === "ncaam" ? 0.76 :
+      league === "nhl" ? 0.80 :
+      0.75;
+
+    const pHome =
+      rawPHome == null
+        ? null
+        : clampNum(0.5 + (rawPHome - 0.5) * mlCompression, 0.05, 0.95);
+
     const pAway = pHome != null ? 1 - pHome : null;
 
     const homeOdds = vegasRow.h2h.home ?? null;
@@ -954,6 +970,63 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
       kh < minKellyHalf
     ) {
       recommended = null;
+    }
+
+    // v23 safety tightening:
+    // 1) Kill unrealistic EV bombs
+    // 2) Reject longshot moneylines
+    // 3) Require stronger confidence on ML selections
+    if (recommended && ev != null && ev > 80) {
+      recommended = null;
+    }
+
+    if (recommended && mt === "moneyline") {
+      const wp = Number.isFinite(recommended.modelProb) ? recommended.modelProb : null;
+
+      // Much stricter ML thresholds than spreads/totals
+      if (e == null || e < 0.07 || ev == null || ev < 8 || kh == null || kh < 0.02) {
+        recommended = null;
+      }
+
+      // Hard-cap longshot ML exposure
+      if (recommended && odds != null && odds > 350) {
+        recommended = null;
+      }
+
+      // Non-NBA dogs need stronger confirmation
+      if (recommended && league !== "nba" && odds != null && odds > 200 && (wp == null || wp < 0.52)) {
+        recommended = null;
+      }
+
+      // NCAAM dogs need real EV too
+      if (recommended && league === "ncaam" && odds != null && odds > 175 && (ev == null || ev < 12)) {
+        recommended = null;
+      }
+
+      // Even moderate NBA dogs need real confidence
+      if (recommended && league === "nba" && odds != null && odds > 200 && (wp == null || wp < 0.42)) {
+        recommended = null;
+      }
+
+      // Favorites that are too juiced are usually not premium picks either
+      if (recommended && odds != null && odds < -225) {
+        recommended = null;
+      }
+    }
+
+    if (recommended && mt === "total") {
+      const wp = Number.isFinite(recommended.modelProb) ? recommended.modelProb : null;
+
+      // Totals were still running too hot, especially NCAAM
+      if (wp != null && wp > 0.78) {
+        recommended = null;
+      }
+
+      if (league === "ncaam") {
+        if (e == null || e < 0.07 || ev == null || ev < 8 || kh == null || kh < 0.02) {
+          recommended = null;
+        }
+      }
     }
 
     // Market sanity filters
@@ -2264,6 +2337,125 @@ if (!pick.pick) noBetCount++;
    Safe no-op if Supabase env vars not present.
    ========================================================= */
 
+
+function normalizeSnapshotMarket(x) {
+  const m = String(x || "moneyline").trim().toLowerCase();
+  if (!m) return "moneyline";
+  if (m === "ml" || m === "money" || m === "h2h") return "moneyline";
+  if (m === "spread" || m === "spreads") return "spread";
+  if (m === "total" || m === "totals" || m === "ou") return "total";
+  return m;
+}
+
+function getSnapshotEventStart(g) {
+  return (
+    g?.startTime ||
+    g?.start_time ||
+    g?.commenceTime ||
+    g?.commence_time ||
+    g?.gameTime ||
+    g?.dateTime ||
+    null
+  );
+}
+
+async function persistMarketSnapshotsForResponse(resp) {
+  try {
+    const league = String(resp?.league || resp?.meta?.league || "").toLowerCase();
+    const date = String(resp?.date || resp?.meta?.date || "");
+    const meta = resp?.meta || {};
+    const games = Array.isArray(resp?.games) ? resp.games : [];
+    if (!league || !date || !games.length) return;
+
+    const rows = games.map((g) => {
+      const bet = g?.recommendedBet ?? null;
+      const compat = g?.market ?? {};
+      const m = g?.market ?? {};
+
+      const game_key =
+        g?.gameKey ||
+        g?.game_key ||
+        g?.id ||
+        g?.gameId ||
+        g?.eventId ||
+        `${g?.away?.abbr || g?.away?.name || "AWAY"}@${g?.home?.abbr || g?.home?.name || "HOME"}:${date}`;
+
+      const market = normalizeSnapshotMarket(
+        bet?.marketType ??
+        compat?.marketType ??
+        compat?.recommendedMarket ??
+        m?.marketType ??
+        m?.market ??
+        m?.type ??
+        g?.marketType ??
+        "moneyline"
+      );
+
+      const pick =
+        bet?.side ??
+        compat?.pick ??
+        m?.pick ??
+        g?.pick ??
+        "PASS";
+
+      const side =
+        bet?.side ??
+        compat?.marketSide ??
+        m?.marketSide ??
+        pick;
+
+      const line =
+        bet?.line ??
+        compat?.marketLine ??
+        m?.marketLine ??
+        m?.line ??
+        g?.line ??
+        null;
+
+      const odds =
+        bet?.odds ??
+        compat?.marketOdds ??
+        m?.marketOdds ??
+        m?.odds ??
+        g?.odds ??
+        null;
+
+      const mode =
+        g?.mode ??
+        g?.modeLabel ??
+        meta?.mode ??
+        "regular";
+
+      const book =
+        bet?.book ??
+        compat?.book ??
+        m?.book ??
+        meta?.odds?.bookmaker ??
+        null;
+
+      return {
+        snapshot_date: date,
+        league,
+        mode,
+        game_key,
+        market,
+        market_type: market,
+        pick,
+        side,
+        line,
+        odds,
+        book,
+        event_start: getSnapshotEventStart(g),
+        captured_at: new Date().toISOString(),
+      };
+    });
+
+    await upsertMarketSnapshotsBatch(rows, { chunkSize: 500 });
+  } catch (_err) {
+    // no-op
+  }
+}
+
 async function persistOddsSnapshotsForResponse(resp) {
   try {
     const persist = String(process.env.ODDS_SNAPSHOT_PERSIST || "true").toLowerCase() !== "false";
@@ -2403,6 +2595,7 @@ router.get("/predictions", async (req, res) => {
         modelVersion: wrapped.meta?.model
       });
 
+      await persistMarketSnapshotsForResponse(wrapped);
       await persistOddsSnapshotsForResponse(wrapped);
       return res.json(wrapped);
     }
@@ -2421,6 +2614,7 @@ router.get("/predictions", async (req, res) => {
         modelVersion: wrapped.meta?.model
       });
 
+      await persistMarketSnapshotsForResponse(wrapped);
       await persistOddsSnapshotsForResponse(wrapped);
       return res.json(wrapped);
     }
@@ -2439,6 +2633,7 @@ router.get("/predictions", async (req, res) => {
         modelVersion: wrapped.meta?.model
       });
 
+      await persistMarketSnapshotsForResponse(wrapped);
       await persistOddsSnapshotsForResponse(wrapped);
       return res.json(wrapped);
     }

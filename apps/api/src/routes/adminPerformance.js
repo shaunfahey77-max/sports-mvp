@@ -182,7 +182,9 @@ function computeClvLineDelta({ market, pick, publishLine, closeLine }) {
   }
 
   if (m === "spread") {
-    return clo - pub;
+    if (p === "home") return clo - pub;
+    if (p === "away") return pub - clo;
+    return null;
   }
 
   return null;
@@ -322,7 +324,7 @@ router.post("/admin/performance/run", requireAdmin, async (req, res) => {
           score_margin = totalScore - Number(pickRow.market_line);
         }
 
-        const closeSnap = closeSnapshotMap.get(`${pickRow.game_key}__${market}`) || null;
+        const closeSnap = closeSnapshotMap.get(`${pickRow.game_key}__${market}__${pick}`) || null;
 
         const publishLine = toFiniteNumber(
           pickRow.publish_line ?? pickRow.market_line
