@@ -18,6 +18,12 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
+let LEDGER_WRITES_DISABLED = false;
+
+export function setLedgerWritesDisabled(v) {
+  LEDGER_WRITES_DISABLED = Boolean(v);
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -265,6 +271,7 @@ export async function updatePickResultsBatch(rows, { chunkSize = 200 } = {}) {
  * Write an entire slate to the ledger.
  */
 export async function writeSlatePicksToLedger({ date, league, games, modelVersion }) {
+  if (LEDGER_WRITES_DISABLED) return { ok: true, written: 0, skipped: true };
   if (!Array.isArray(games) || games.length === 0) return { ok: true, written: 0 };
 
   const rows = [];

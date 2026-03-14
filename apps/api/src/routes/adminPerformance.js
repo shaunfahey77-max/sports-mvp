@@ -1,7 +1,7 @@
 import express from "express";
 import { supabaseAdmin } from "../lib/supabaseAdmin.js";
 import { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions } from "./predict.js";
-import { updatePickResultsBatch } from "../db/dailyLedger.js";
+import { updatePickResultsBatch, setLedgerWritesDisabled } from "../db/dailyLedger.js";
 import { getLatestClosingSnapshotMap } from "../db/marketSnapshots.js";
 
 const router = express.Router();
@@ -253,7 +253,14 @@ router.post("/admin/performance/run", requireAdmin, async (req, res) => {
     // console.log("[adminPerformance] run", { date, leagues });
 
     for (const league of leagues) {
-      const out = await buildPredictionsInternal(league, date);
+      let out = null;
+      setLedgerWritesDisabled(true);
+      try {
+        out = await buildPredictionsInternal(league, date);
+      } finally {
+        setLedgerWritesDisabled(false);
+      }
+
       const games = Array.isArray(out?.games) ? out.games : [];
       let scored = null;
 
