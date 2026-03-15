@@ -20,6 +20,33 @@ function signedNum(v, digits = 2) {
   return `${n > 0 ? "+" : n < 0 ? "-" : ""}${abs}`;
 }
 
+function currency(v, digits = 2) {
+  const n = num(v);
+  if (n == null) return "—";
+  const abs = Math.abs(n).toFixed(digits);
+  return `${n < 0 ? "-" : ""}$${abs}`;
+}
+
+function oddsText(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
+function formatDate(v) {
+  if (!v) return "—";
+  return v;
+}
+
+function resultMeta(result) {
+  const r = String(result || "").toLowerCase();
+  if (r === "win") return { label: "Win", color: "#86efac" };
+  if (r === "loss") return { label: "Loss", color: "#fda4af" };
+  if (r === "push") return { label: "Push", color: "#fde68a" };
+  if (r === "void") return { label: "Void", color: "#cbd5e1" };
+  return { label: r ? r[0].toUpperCase() + r.slice(1) : "Pending", color: "#93c5fd" };
+}
+
 function leagueMeta(key) {
   const k = String(key || "").toLowerCase();
   if (k === "nba") return { icon: "🏀", label: "NBA" };
@@ -28,12 +55,56 @@ function leagueMeta(key) {
   return { icon: "📊", label: String(key || "Unknown").toUpperCase() };
 }
 
+function betDisplay(row) {
+  if (!row) return "—";
+
+  const isParlay = String(row.bet_type || "").toLowerCase() === "parlay";
+  if (isParlay) {
+    const legs = num(row.legs_count);
+    return `${legs ? `${legs}-Leg ` : ""}Parlay`;
+  }
+
+  const market = String(row.market || "").toLowerCase();
+  const pick = String(row.pick || "");
+  const line = num(row.line);
+
+  if (market === "spread") {
+    return `${pick} ${line == null ? "" : line > 0 ? `+${line}` : `${line}`}`.trim();
+  }
+
+  if (market === "total") {
+    return `${pick} ${line == null ? "" : line}`.trim();
+  }
+
+  if (market === "moneyline") {
+    return pick ? `${pick} ML` : "Moneyline";
+  }
+
+  return pick || market || "—";
+}
+
+function gameDisplay(row) {
+  if (!row) return "—";
+  return row.game_label || row.legs_summary || "Manual Bet";
+}
+
+function signalMeta(value) {
+  const n = num(value);
+  if (n == null) return { label: "No signal yet", color: "#cbd5e1", bg: "rgba(148,163,184,0.12)", border: "1px solid rgba(148,163,184,0.18)" };
+  if (n > 0) return { label: "Positive edge capture", color: "#86efac", bg: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.18)" };
+  if (n < 0) return { label: "Negative edge capture", color: "#fda4af", bg: "rgba(244,63,94,0.12)", border: "1px solid rgba(244,63,94,0.18)" };
+  return { label: "Flat signal", color: "#fde68a", bg: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.18)" };
+}
+
 export default function Performance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [kpis, setKpis] = useState(null);
   const [leagueRows, setLeagueRows] = useState([]);
   const [recentRows, setRecentRows] = useState([]);
+  const [bankroll, setBankroll] = useState(null);
+  const [ledgerRows, setLedgerRows] = useState([]);
+  const [showFullTimeline, setShowFullTimeline] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,16 +114,20 @@ export default function Performance() {
       setError("");
 
       try {
-        const [kpisRes, leagueRes, recentRes] = await Promise.all([
+        const [kpisRes, leagueRes, recentRes, bankrollRes, ledgerRes] = await Promise.all([
           fetch(`${API_BASE}/api/performance/kpis`),
           fetch(`${API_BASE}/api/performance/league`),
           fetch(`${API_BASE}/api/performance/recent`),
+          fetch(`${API_BASE}/api/bets/summary`),
+          fetch(`${API_BASE}/api/bets?limit=12`),
         ]);
 
-        const [kpisJson, leagueJson, recentJson] = await Promise.all([
+        const [kpisJson, leagueJson, recentJson, bankrollJson, ledgerJson] = await Promise.all([
           kpisRes.json(),
           leagueRes.json(),
           recentRes.json(),
+          bankrollRes.json(),
+          ledgerRes.json(),
         ]);
 
         if (!kpisRes.ok || kpisJson?.ok === false) {
@@ -64,19 +139,27 @@ export default function Performance() {
         if (!recentRes.ok || recentJson?.ok === false) {
           throw new Error(recentJson?.error || "Failed to load recent performance.");
         }
+        if (!bankrollRes.ok || bankrollJson?.ok === false) {
+          throw new Error(bankrollJson?.error || "Failed to load bankroll summary.");
+        }
+        if (!ledgerRes.ok || ledgerJson?.ok === false) {
+          throw new Error(ledgerJson?.error || "Failed to load recent bet ledger.");
+        }
 
         if (!cancelled) {
           setKpis(kpisJson?.data || null);
           setLeagueRows(
-  Array.isArray(leagueJson?.data)
-    ? leagueJson.data.filter(r => r?.error == null)
-    : []
-);
-setRecentRows(
-  Array.isArray(recentJson?.data)
-    ? recentJson.data.filter(r => r?.error == null)
-    : []
-);
+            Array.isArray(leagueJson?.data)
+              ? leagueJson.data.filter((r) => r?.error == null)
+              : []
+          );
+          setRecentRows(
+            Array.isArray(recentJson?.data)
+              ? recentJson.data.filter((r) => r?.error == null)
+              : []
+          );
+          setBankroll(bankrollJson?.data || null);
+          setLedgerRows(Array.isArray(ledgerJson?.data) ? ledgerJson.data : []);
         }
       } catch (e) {
         if (!cancelled) setError(String(e?.message || "Failed to load performance."));
@@ -93,13 +176,49 @@ setRecentRows(
   }, []);
 
   const bestLeague = useMemo(() => {
-    const eligible = [...leagueRows].filter((r) => typeof num(r?.acc) === "number" && (num(r?.picks) || 0) > 0);
+    const eligible = [...leagueRows].filter(
+      (r) => typeof num(r?.acc) === "number" && (num(r?.picks) || 0) > 0
+    );
     if (!eligible.length) return "—";
-    eligible.sort((a, b) => (num(b?.acc) - num(a?.acc)) || ((num(b?.picks) || 0) - (num(a?.picks) || 0)));
+    eligible.sort(
+      (a, b) =>
+        num(b?.acc) - num(a?.acc) ||
+        (num(b?.picks) || 0) - (num(a?.picks) || 0)
+    );
     const best = eligible[0];
     const meta = leagueMeta(best?.league);
     return `${meta.icon} ${meta.label}`;
   }, [leagueRows]);
+
+  const marketSummary = useMemo(() => {
+    const bucket = new Map();
+
+    for (const row of recentRows) {
+      const lg = String(row?.league || "").toLowerCase();
+      if (!lg) continue;
+      if (!bucket.has(lg)) {
+        bucket.set(lg, { league: lg, picks: 0, wins: 0, losses: 0, pass: 0, acc: null });
+      }
+      const cur = bucket.get(lg);
+      cur.picks += num(row?.picks) || 0;
+      cur.wins += num(row?.wins) || 0;
+      cur.losses += num(row?.losses) || 0;
+      cur.pass += num(row?.pass) || 0;
+    }
+
+    return [...bucket.values()].map((x) => {
+      const scored = x.wins + x.losses;
+      return {
+        ...x,
+        acc: scored > 0 ? x.wins / scored : null,
+        ...leagueMeta(x.league),
+      };
+    });
+  }, [recentRows]);
+
+  const modelClvSignal = signalMeta(kpis?.avg_clv_line);
+  const bankrollClvSignal = signalMeta(bankroll?.avg_clv_line);
+  const timelineRowsToShow = showFullTimeline ? recentRows : recentRows.slice(0, 10);
 
   const styles = {
     page: {
@@ -122,25 +241,27 @@ setRecentRows(
     },
     hero: {
       display: "grid",
-      gridTemplateColumns: "220px 1fr 280px",
+      gridTemplateColumns: "420px 1fr 320px",
       gap: 22,
       alignItems: "center",
     },
     heroLogoWrap: {
-      width: 220,
-      height: 220,
+      width: 420,
+      height: 150,
       borderRadius: 28,
-      background: "linear-gradient(135deg, rgba(30,111,219,0.16), rgba(242,183,5,0.14))",
+      background: "linear-gradient(135deg, rgba(30,111,219,0.25), rgba(242,183,5,0.22))",
+      boxShadow: "0 12px 40px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.04)",
       border: "1px solid rgba(148,163,184,0.18)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       overflow: "hidden",
-      boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.02)",
+      padding: "18px 24px",
+      boxSizing: "border-box",
     },
     heroLogo: {
-      width: "88%",
-      height: "88%",
+      width: "100%",
+      height: "auto",
       objectFit: "contain",
       display: "block",
     },
@@ -196,11 +317,27 @@ setRecentRows(
       gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
       gap: 14,
     },
+    statsGrid6: {
+      display: "grid",
+      gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+      gap: 14,
+    },
+    statsGrid4: {
+      display: "grid",
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+      gap: 14,
+    },
+    statsGrid2: {
+      display: "grid",
+      gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+      gap: 14,
+    },
     statTile: {
       background: "rgba(15,23,42,0.9)",
       border: "1px solid rgba(148,163,184,0.12)",
       borderRadius: 18,
       padding: 16,
+      minHeight: 112,
     },
     statLabel: {
       fontSize: 11,
@@ -215,6 +352,28 @@ setRecentRows(
       fontWeight: 900,
       color: "#f8fafc",
     },
+    statSub: {
+      color: "#94a3b8",
+      fontSize: 13,
+      lineHeight: 1.5,
+      marginTop: 8,
+    },
+    signalTile: {
+      borderRadius: 18,
+      padding: 18,
+      minHeight: 132,
+    },
+    signalValue: {
+      fontSize: 30,
+      fontWeight: 900,
+      color: "#f8fafc",
+      marginTop: 6,
+    },
+    signalText: {
+      marginTop: 10,
+      fontSize: 14,
+      lineHeight: 1.6,
+    },
     sectionTitle: {
       fontSize: 24,
       fontWeight: 900,
@@ -224,6 +383,7 @@ setRecentRows(
     sectionSub: {
       color: "#94a3b8",
       marginTop: 6,
+      lineHeight: 1.6,
     },
     grid3: {
       display: "grid",
@@ -289,33 +449,61 @@ setRecentRows(
       borderRadius: 18,
       padding: 18,
     },
+    ledgerWrap: {
+      marginTop: 16,
+      overflowX: "auto",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: 18,
+    },
+    ledgerTable: {
+      width: "100%",
+      borderCollapse: "collapse",
+      minWidth: 1080,
+      background: "rgba(15,23,42,0.9)",
+    },
+    th: {
+      textAlign: "left",
+      fontSize: 11,
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      color: "#94a3b8",
+      padding: "14px 16px",
+      borderBottom: "1px solid rgba(148,163,184,0.12)",
+      background: "rgba(9,15,28,0.96)",
+      position: "sticky",
+      top: 0,
+    },
+    td: {
+      padding: "14px 16px",
+      borderBottom: "1px solid rgba(148,163,184,0.08)",
+      color: "#e5e7eb",
+      fontSize: 14,
+      verticalAlign: "top",
+    },
+    subCell: {
+      color: "#94a3b8",
+      fontSize: 12,
+      marginTop: 4,
+      lineHeight: 1.5,
+    },
+    toggleRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 12,
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    toggleBtn: {
+      border: "1px solid rgba(59,130,246,0.28)",
+      borderRadius: 12,
+      background: "rgba(37,99,235,0.14)",
+      color: "#bfdbfe",
+      padding: "10px 14px",
+      fontWeight: 800,
+      cursor: "pointer",
+    },
   };
-
-  const marketSummary = useMemo(() => {
-    const bucket = new Map();
-
-    for (const row of recentRows) {
-      const lg = String(row?.league || "").toLowerCase();
-      if (!lg) continue;
-      if (!bucket.has(lg)) {
-        bucket.set(lg, { league: lg, picks: 0, wins: 0, losses: 0, pass: 0, acc: null });
-      }
-      const cur = bucket.get(lg);
-      cur.picks += num(row?.picks) || 0;
-      cur.wins += num(row?.wins) || 0;
-      cur.losses += num(row?.losses) || 0;
-      cur.pass += num(row?.pass) || 0;
-    }
-
-    return [...bucket.values()].map((x) => {
-      const scored = x.wins + x.losses;
-      return {
-        ...x,
-        acc: scored > 0 ? x.wins / scored : null,
-        ...leagueMeta(x.league),
-      };
-    });
-  }, [recentRows]);
 
   return (
     <div style={styles.page}>
@@ -335,8 +523,8 @@ setRecentRows(
               <h1 style={styles.heroTitle}>Performance Dashboard</h1>
               <div style={styles.heroText}>
                 This is the section that proves or disproves the model. Clean scoring,
-                trusted aggregates, and premium league-level visibility built from the same
-                backend source powering the rest of Sports MVP.
+                trusted aggregates, real bankroll tracking, and closing-line comparison
+                now sit together in one premium analytics layer.
               </div>
             </div>
 
@@ -344,7 +532,7 @@ setRecentRows(
               <div style={styles.heroSideLabel}>🔥 Best League</div>
               <div style={styles.heroSideValue}>{bestLeague}</div>
               <div style={styles.heroSideSub}>
-                14-day validated window. Same trusted summary layer as the homepage.
+                14-day validated model window with bankroll context layered underneath it.
               </div>
             </div>
           </div>
@@ -390,6 +578,114 @@ setRecentRows(
             </section>
 
             <section style={{ ...styles.card, marginBottom: 20 }}>
+              <h2 style={styles.sectionTitle}>Bankroll Intelligence</h2>
+              <div style={styles.sectionSub}>
+                Real betting results from the Sports MVP ledger. This layer shows how tracked bets
+                are performing financially, separate from model-only scoring.
+              </div>
+
+              <div style={{ ...styles.statsGrid6, marginTop: 16 }}>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>💼 Total Bets</div>
+                  <div style={styles.statValue}>{bankroll?.bets ?? 0}</div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>🧾 Settled Bets</div>
+                  <div style={styles.statValue}>{bankroll?.settled ?? 0}</div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>💵 Net Profit</div>
+                  <div style={{ ...styles.statValue, color: (num(bankroll?.total_profit) || 0) >= 0 ? "#86efac" : "#fda4af" }}>
+                    {currency(bankroll?.total_profit, 2)}
+                  </div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>📊 ROI</div>
+                  <div style={styles.statValue}>{pctFromUnit(bankroll?.roi, 1)}</div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>📈 Avg CLV</div>
+                  <div style={styles.statValue}>{signedNum(bankroll?.avg_clv_line, 2)}</div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>🧠 Avg Implied CLV</div>
+                  <div style={styles.statValue}>{pctFromUnit(bankroll?.avg_clv_implied, 2)}</div>
+                </div>
+              </div>
+            </section>
+
+            <section style={{ ...styles.card, marginBottom: 20 }}>
+              <h2 style={styles.sectionTitle}>CLV Comparison</h2>
+              <div style={styles.sectionSub}>
+                This section compares model closing-line performance against actual tracked bankroll execution.
+                It is the clearest trust layer on the page because it separates prediction quality from bet execution quality.
+              </div>
+
+              <div style={{ ...styles.statsGrid4, marginTop: 16 }}>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>Model Avg CLV</div>
+                  <div style={styles.statValue}>{signedNum(kpis?.avg_clv_line, 2)}</div>
+                  <div style={styles.statSub}>Validated pick layer from scored model results.</div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>Model Implied CLV</div>
+                  <div style={styles.statValue}>{pctFromUnit(kpis?.avg_clv_implied, 2)}</div>
+                  <div style={styles.statSub}>Probability-based closing line movement signal.</div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>Bankroll Avg CLV</div>
+                  <div style={styles.statValue}>{signedNum(bankroll?.avg_clv_line, 2)}</div>
+                  <div style={styles.statSub}>Average closing-line edge across tracked user bets.</div>
+                </div>
+                <div style={styles.statTile}>
+                  <div style={styles.statLabel}>Bankroll Implied CLV</div>
+                  <div style={styles.statValue}>{pctFromUnit(bankroll?.avg_clv_implied, 2)}</div>
+                  <div style={styles.statSub}>Execution quality based on implied probability change.</div>
+                </div>
+              </div>
+
+              <div style={{ ...styles.statsGrid2, marginTop: 16 }}>
+                <div
+                  style={{
+                    ...styles.signalTile,
+                    background: modelClvSignal.bg,
+                    border: modelClvSignal.border,
+                  }}
+                >
+                  <div style={styles.statLabel}>Model CLV Signal</div>
+                  <div style={{ ...styles.signalValue, color: modelClvSignal.color }}>
+                    {signedNum(kpis?.avg_clv_line, 2)}
+                  </div>
+                  <div style={{ ...styles.signalText, color: modelClvSignal.color }}>
+                    {modelClvSignal.label}
+                  </div>
+                  <div style={styles.statSub}>
+                    This shows whether published model picks are beating the closing market on average.
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    ...styles.signalTile,
+                    background: bankrollClvSignal.bg,
+                    border: bankrollClvSignal.border,
+                  }}
+                >
+                  <div style={styles.statLabel}>Bankroll CLV Signal</div>
+                  <div style={{ ...styles.signalValue, color: bankrollClvSignal.color }}>
+                    {signedNum(bankroll?.avg_clv_line, 2)}
+                  </div>
+                  <div style={{ ...styles.signalText, color: bankrollClvSignal.color }}>
+                    {bankrollClvSignal.label}
+                  </div>
+                  <div style={styles.statSub}>
+                    This shows whether your tracked bet entries are capturing value before the close.
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section style={{ ...styles.card, marginBottom: 20 }}>
               <h2 style={styles.sectionTitle}>League Snapshot</h2>
               <div style={styles.sectionSub}>A cleaner look at where the model is performing best.</div>
 
@@ -429,12 +725,100 @@ setRecentRows(
               </div>
             </section>
 
+            <section style={{ ...styles.card, marginBottom: 20 }}>
+              <h2 style={styles.sectionTitle}>Recent Bet Ledger</h2>
+              <div style={styles.sectionSub}>
+                Most recent tracked bets from the user ledger. This gives the page real bankroll context
+                in addition to model performance.
+              </div>
+
+              <div style={styles.ledgerWrap}>
+                <table style={styles.ledgerTable}>
+                  <thead>
+                    <tr>
+                      <th style={styles.th}>Date</th>
+                      <th style={styles.th}>League</th>
+                      <th style={styles.th}>Bet</th>
+                      <th style={styles.th}>Market</th>
+                      <th style={styles.th}>Odds</th>
+                      <th style={styles.th}>Stake</th>
+                      <th style={styles.th}>Result</th>
+                      <th style={styles.th}>Profit</th>
+                      <th style={styles.th}>CLV</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledgerRows.length === 0 ? (
+                      <tr>
+                        <td style={styles.td} colSpan={9}>No recent bets found.</td>
+                      </tr>
+                    ) : (
+                      ledgerRows.map((row) => {
+                        const league = leagueMeta(row?.league);
+                        const result = resultMeta(row?.result);
+                        return (
+                          <tr key={row.id}>
+                            <td style={styles.td}>{formatDate(row?.date)}</td>
+                            <td style={styles.td}>
+                              <div>{league.icon} {league.label}</div>
+                            </td>
+                            <td style={styles.td}>
+                              <div style={{ fontWeight: 700, color: "#f8fafc" }}>{gameDisplay(row)}</div>
+                              <div style={styles.subCell}>
+                                {String(row?.bet_type || "").toLowerCase() === "parlay"
+                                  ? (row?.legs_summary || "Parlay")
+                                  : betDisplay(row)}
+                              </div>
+                            </td>
+                            <td style={styles.td}>
+                              <div>{String(row?.market || "—").toUpperCase()}</div>
+                              <div style={styles.subCell}>{betDisplay(row)}</div>
+                            </td>
+                            <td style={styles.td}>{oddsText(row?.odds)}</td>
+                            <td style={styles.td}>{currency(row?.stake, 2)}</td>
+                            <td style={styles.td}>
+                              <span style={{ color: result.color, fontWeight: 800 }}>{result.label}</span>
+                            </td>
+                            <td style={styles.td}>
+                              <span style={{ color: (num(row?.profit) || 0) >= 0 ? "#86efac" : "#fda4af", fontWeight: 800 }}>
+                                {currency(row?.profit, 2)}
+                              </span>
+                            </td>
+                            <td style={styles.td}>
+                              <div>{signedNum(row?.clv_line_delta, 2)}</div>
+                              <div style={styles.subCell}>{pctFromUnit(row?.clv_implied_delta, 2)}</div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
             <section style={styles.card}>
               <h2 style={styles.sectionTitle}>Recent Scoring Timeline</h2>
-              <div style={styles.sectionSub}>Most recent validated daily rows across all tracked leagues.</div>
+              <div style={styles.sectionSub}>
+                Most recent validated daily rows across all tracked leagues. Use this to compare outcome variance
+                against the CLV signals shown above.
+              </div>
+
+              <div style={styles.toggleRow}>
+                <div style={{ color: "#94a3b8", fontSize: 13 }}>
+                  Showing {timelineRowsToShow.length} of {recentRows.length} timeline rows
+                </div>
+                <button
+                  type="button"
+                  style={styles.toggleBtn}
+                  onClick={() => setShowFullTimeline((v) => !v)}
+                >
+                  {showFullTimeline ? "Show Recent 10" : "View Full Timeline"}
+                </button>
+              </div>
 
               <div style={{ ...styles.timeline, marginTop: 16 }}>
-                {recentRows.map((r, i) => {
+                {timelineRowsToShow.map((r, i) => {
                   const meta = leagueMeta(r?.league);
                   return (
                     <div key={`${r?.league}-${r?.date}-${i}`} style={styles.timelineRow}>
