@@ -18,12 +18,6 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-let LEDGER_WRITES_DISABLED = false;
-
-export function setLedgerWritesDisabled(v) {
-  LEDGER_WRITES_DISABLED = Boolean(v);
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -240,12 +234,17 @@ export async function updatePickResultsBatch(rows, { chunkSize = 200 } = {}) {
         score_margin: r.score_margin ?? null,
         graded_at: r.graded_at ?? nowIso(),
 
-        close_line: r.close_line ?? null,
-        close_odds: r.close_odds ?? null,
-        clv_line_delta: r.clv_line_delta ?? null,
-        clv_odds_delta: r.clv_odds_delta ?? null,
-        clv_implied_delta: r.clv_implied_delta ?? null,
-        close_reason: r.close_reason ?? null,
+        close_book: r.close_book ?? null,
+      close_line: r.close_line ?? null,
+      close_odds: r.close_odds ?? null,
+      close_captured_at: r.close_captured_at ?? null,
+      close_snapshot_key: r.close_snapshot_key ?? null,
+      close_method: r.close_method ?? null,
+      close_quality: r.close_quality ?? null,
+      clv_line_delta: r.clv_line_delta ?? null,
+      clv_odds_delta: r.clv_odds_delta ?? null,
+      clv_implied_delta: r.clv_implied_delta ?? null,
+      close_reason: r.close_reason ?? null,
 
         updated_at: nowIso(),
       };
@@ -271,7 +270,6 @@ export async function updatePickResultsBatch(rows, { chunkSize = 200 } = {}) {
  * Write an entire slate to the ledger.
  */
 export async function writeSlatePicksToLedger({ date, league, games, modelVersion }) {
-  if (LEDGER_WRITES_DISABLED) return { ok: true, written: 0, skipped: true };
   if (!Array.isArray(games) || games.length === 0) return { ok: true, written: 0 };
 
   const rows = [];
@@ -335,15 +333,29 @@ export async function writeSlatePicksToLedger({ date, league, games, modelVersio
       null;
 
     const raw_win_prob =
+      bet?.rawWinProb ??
+      compat?.rawWinProb ??
+      m?.rawWinProb ??
+      m?.raw_win_prob ??
+      bet?.modelProb ??
+      g?.rawWinProb ??
+      g?.raw_win_prob ??
+      null;
+
+    const cal_win_prob =
+      bet?.calWinProb ??
+      compat?.calWinProb ??
+      m?.calWinProb ??
+      m?.cal_win_prob ??
       bet?.modelProb ??
       compat?.winProb ??
       m?.winProb ??
       m?.win_prob ??
+      g?.calWinProb ??
+      g?.cal_win_prob ??
       g?.winProb ??
       g?.win_prob ??
       null;
-
-    const cal_win_prob = raw_win_prob;
 
     const win_prob = cal_win_prob;
 
@@ -378,6 +390,10 @@ export async function writeSlatePicksToLedger({ date, league, games, modelVersio
 
     const publish_book =
       bet?.book ??
+      compat?.oddsComparison?.bestBook ??
+      compat?.oddsComparison?.preferredBook ??
+      m?.oddsComparison?.bestBook ??
+      m?.oddsComparison?.preferredBook ??
       compat?.book ??
       m?.book ??
       g?.book ??
@@ -403,8 +419,22 @@ export async function writeSlatePicksToLedger({ date, league, games, modelVersio
       win_prob,
       raw_win_prob,
       cal_win_prob,
-      calibration_method: "identity",
-      calibration_version: "v1",
+      calibration_method:
+        bet?.calibrationMethod ??
+        compat?.calibrationMethod ??
+        m?.calibrationMethod ??
+        m?.calibration_method ??
+        g?.calibrationMethod ??
+        g?.calibration_method ??
+        "identity",
+      calibration_version:
+        bet?.calibrationVersion ??
+        compat?.calibrationVersion ??
+        m?.calibrationVersion ??
+        m?.calibration_version ??
+        g?.calibrationVersion ??
+        g?.calibration_version ??
+        "v1",
       publish_book,
       publish_line,
       publish_odds,
@@ -415,6 +445,36 @@ export async function writeSlatePicksToLedger({ date, league, games, modelVersio
         model_version: g?.model?.version ?? modelVersion ?? null,
         away: g?.away?.abbr ?? g?.away?.name ?? null,
         home: g?.home?.abbr ?? g?.home?.name ?? null,
+        tier:
+          bet?.tier ??
+          compat?.tier ??
+          m?.tier ??
+          g?.market?.tier ??
+          null,
+        topPick:
+          g?.market?.topPick ??
+          bet?.topPick ??
+          compat?.topPick ??
+          m?.topPick ??
+          false,
+        topPickBucket:
+          g?.market?.topPickBucket ??
+          bet?.topPickBucket ??
+          compat?.topPickBucket ??
+          m?.topPickBucket ??
+          null,
+        topPickReason:
+          g?.market?.topPickReason ??
+          bet?.topPickReason ??
+          compat?.topPickReason ??
+          m?.topPickReason ??
+          null,
+        topPickWinProb:
+          g?.market?.topPickWinProb ??
+          bet?.topPickWinProb ??
+          compat?.topPickWinProb ??
+          m?.topPickWinProb ??
+          null,
       },
     });
   }

@@ -2,7 +2,6 @@
 import "dotenv/config";
 import express from "express";
 import { writeSlatePicksToLedger } from "../db/dailyLedger.js";
-import { upsertMarketSnapshotsBatch } from "../db/marketSnapshots.js";
 import { applyPremiumSelection } from "../lib/premiumSelection.js";
 
 const router = express.Router();
@@ -43,6 +42,9 @@ const ODDS_REGIONS = String(process.env.ODDS_REGIONS || "us");
 const ODDS_ODDS_FORMAT = String(process.env.ODDS_ODDS_FORMAT || "american");
 const ODDS_ALLOW_HISTORICAL =
   String(process.env.ODDS_ALLOW_HISTORICAL || "false").toLowerCase() === "true";
+
+const ODDS_COMPARISON_ALL_BOOKS =
+  String(process.env.ODDS_COMPARISON_ALL_BOOKS || "true").toLowerCase() !== "false";
 
 const ODDS_SPORT_NBA = String(process.env.ODDS_SPORT_NBA || "basketball_nba");
 const ODDS_SPORT_NCAAM = String(process.env.ODDS_SPORT_NCAAM || "basketball_ncaab");
@@ -415,6 +417,47 @@ function americanToImpliedProbSafe(american) {
   if (a > 0) return 100 / (a + 100);
   return Math.abs(a) / (Math.abs(a) + 100);
 }
+function buildExplicitMarketNodes(markets) {
+  const src = markets && typeof markets === "object" ? markets : {};
+
+  const moneyline = src.moneyline || null;
+  const spread = src.spread || null;
+  const total = src.total || null;
+
+  return {
+    moneyline: moneyline
+      ? {
+          market: "moneyline",
+          marketType: "moneyline",
+          oddsComparison: moneyline.oddsComparison || null,
+          home: moneyline.home || null,
+          away: moneyline.away || null,
+          line: null,
+        }
+      : null,
+    spread: spread
+      ? {
+          market: "spread",
+          marketType: "spread",
+          oddsComparison: spread.oddsComparison || null,
+          home: spread.home || null,
+          away: spread.away || null,
+          line: spread.line ?? null,
+        }
+      : null,
+    total: total
+      ? {
+          market: "total",
+          marketType: "total",
+          oddsComparison: total.oddsComparison || null,
+          over: total.over || null,
+          under: total.under || null,
+          line: total.line ?? null,
+        }
+      : null,
+  };
+}
+
 function americanToImpliedProb(american) {
   const a = Number(american);
   if (!Number.isFinite(a) || a === 0) return null;
@@ -435,29 +478,38 @@ function kellyFraction(p, decimalOdds) {
 function computeMarketEV({ oddsAmerican, winProb, stake = 100 }) {
   const odds = Number(oddsAmerican);
   const pRaw = Number(winProb);
+  const stakeAmt = Number(stake);
 
-  if (!Number.isFinite(odds) || odds === 0) return null;
-  if (!Number.isFinite(pRaw)) return null;
-
-  const p = clampNum(pRaw, 0, 1);
+  if (!Number.isFinite(odds) || !Number.isFinite(pRaw) || !Number.isFinite(stakeAmt)) return {};
+  if (odds === 0) return {};
 
   const decimalOdds = americanToDecimalOdds(odds);
   const impliedProb = americanToImpliedProbSafe(odds);
-  if (decimalOdds == null || impliedProb == null) return null;
+  if (decimalOdds == null || impliedProb == null) return {};
+
+  const pModel = clampNum(pRaw, 0.02, 0.98);
+  const anchorWeight = clampNum(Number(process.env.MARKET_ANCHOR_WEIGHT || 0.35), 0, 0.60);
+  const p = clampNum((pModel * (1 - anchorWeight)) + (impliedProb * anchorWeight), 0.02, 0.98);
 
   const edge = p - impliedProb;
-  const ev1 = evPerDollarStake(p, decimalOdds);
-  const evStake = ev1 == null ? null : ev1 * stake;
-
+  const profitIfWin = stakeAmt * (decimalOdds - 1);
+  const evStake = (p * profitIfWin) - ((1 - p) * stakeAmt);
   const k = kellyFraction(p, decimalOdds);
-  const kClamped = k == null ? null : clampNum(k, -0.10, 0.10);
+  const kClamped = k == null ? null : clampNum(k, 0, Number(process.env.KELLY_CAP || 0.12));
 
   return {
+    oddsAmerican: odds,
+    decimalOdds,
+    winProb: p,
+    modelProb: p,
+    rawWinProb: pModel,
+    calWinProb: p,
+    calibrationMethod: "market_anchor",
+    calibrationVersion: `market_anchor_${anchorWeight.toFixed(2)}`,
     impliedProb,
     breakEvenProb: impliedProb,
-    modelProb: p,
     edge,
-    evPerDollar: ev1,
+    profitIfWin,
     evForStake100: evStake,
     kellyFull: kClamped,
     kellyHalf: kClamped == null ? null : kClamped / 2,
@@ -495,7 +547,7 @@ function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
     `&markets=${encodeURIComponent(ODDS_MARKETS)}` +
     `&oddsFormat=${encodeURIComponent(ODDS_ODDS_FORMAT)}` +
     `&dateFormat=iso` +
-    `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`;
+    (ODDS_COMPARISON_ALL_BOOKS ? "" : `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`);
 
   if (historical) {
     const snap = `${ymd}T12:00:00Z`;
@@ -589,10 +641,75 @@ async function fetchVegasForLeagueDate(league, ymd) {
     const out = {
       bookmaker: bk?.key || ODDS_BOOKMAKER,
       lastUpdate: bk?.last_update || null,
+      eventStart: ev?.commence_time || null,
       h2h: null,
       spreads: null,
       totals: null,
+      books: {
+        h2h: [],
+        spreads: [],
+        totals: [],
+      },
     };
+
+    for (const bkRow of bks) {
+      const bkMarkets = Array.isArray(bkRow?.markets) ? bkRow.markets : [];
+      const bookKey = String(bkRow?.key || "").toLowerCase() || null;
+      const bookTitle = String(bkRow?.title || bkRow?.key || "Book");
+      const bookLastUpdate = bkRow?.last_update || null;
+
+      const bkH2h = bkMarkets.find((m) => m?.key === "h2h");
+      if (bkH2h?.outcomes?.length >= 2) {
+        const oHome = bkH2h.outcomes.find((o) => normTeamName(o?.name) === home);
+        const oAway = bkH2h.outcomes.find((o) => normTeamName(o?.name) === away);
+        const pHomeRaw = americanToImpliedProb(oHome?.price);
+        const pAwayRaw = americanToImpliedProb(oAway?.price);
+        const nv = normalizeNoVig(pHomeRaw, pAwayRaw);
+        out.books.h2h.push({
+          bookmaker: bookKey,
+          bookTitle,
+          lastUpdate: bookLastUpdate,
+          home: oHome?.price ?? null,
+          away: oAway?.price ?? null,
+          pHome: nv.pA,
+          pAway: nv.pB,
+          vig: nv.vig,
+        });
+      }
+
+      const bkSpreads = bkMarkets.find((m) => m?.key === "spreads");
+      if (bkSpreads?.outcomes?.length >= 2) {
+        const oHome = bkSpreads.outcomes.find((o) => normTeamName(o?.name) === home);
+        const oAway = bkSpreads.outcomes.find((o) => normTeamName(o?.name) === away);
+        out.books.spreads.push({
+          bookmaker: bookKey,
+          bookTitle,
+          lastUpdate: bookLastUpdate,
+          homeSpread: Number.isFinite(Number(oHome?.point)) ? Number(oHome.point) : null,
+          awaySpread: Number.isFinite(Number(oAway?.point)) ? Number(oAway.point) : null,
+          homePrice: oHome?.price ?? null,
+          awayPrice: oAway?.price ?? null,
+        });
+      }
+
+      const bkTotals = bkMarkets.find((m) => m?.key === "totals");
+      if (bkTotals?.outcomes?.length >= 2) {
+        const oOver = bkTotals.outcomes.find((o) => String(o?.name || "").toLowerCase() === "over");
+        const oUnder = bkTotals.outcomes.find((o) => String(o?.name || "").toLowerCase() === "under");
+        out.books.totals.push({
+          bookmaker: bookKey,
+          bookTitle,
+          lastUpdate: bookLastUpdate,
+          total: Number.isFinite(Number(oOver?.point))
+            ? Number(oOver.point)
+            : Number.isFinite(Number(oUnder?.point))
+              ? Number(oUnder.point)
+              : null,
+          overPrice: oOver?.price ?? null,
+          underPrice: oUnder?.price ?? null,
+        });
+      }
+    }
 
     const h2h = markets.find((m) => m?.key === "h2h");
     if (h2h?.outcomes?.length >= 2) {
@@ -659,6 +776,29 @@ function invertVegasRow(row) {
     h2h: null,
     spreads: null,
     totals: row.totals ? { ...row.totals } : null,
+    books: {
+      h2h: Array.isArray(row?.books?.h2h)
+        ? row.books.h2h.map((b) => ({
+            ...b,
+            home: b?.away ?? null,
+            away: b?.home ?? null,
+            pHome: b?.pAway ?? null,
+            pAway: b?.pHome ?? null,
+          }))
+        : [],
+      spreads: Array.isArray(row?.books?.spreads)
+        ? row.books.spreads.map((b) => ({
+            ...b,
+            homeSpread: b?.awaySpread ?? null,
+            awaySpread: b?.homeSpread ?? null,
+            homePrice: b?.awayPrice ?? null,
+            awayPrice: b?.homePrice ?? null,
+          }))
+        : [],
+      totals: Array.isArray(row?.books?.totals)
+        ? row.books.totals.map((b) => ({ ...b }))
+        : [],
+    },
   };
 
   if (row.h2h) {
@@ -742,25 +882,23 @@ function overProb(meanTotal, totalLine, sdTotal) {
 }
 
 const CAL = {
-  nba: { marginSd: 13.5, totalSd: 18.0, baseTotal: 222.0, marginScale: 26.0 },
-  ncaam: { marginSd: 12.5, totalSd: 17.0, baseTotal: 142.0, marginScale: 24.0 },
-  nhl: { marginSd: 2.4, totalSd: 2.4, baseTotal: 6.1, marginScale: 4.2 },
+  nba: { marginSd: 11.5, totalSd: 14.0, baseTotal: 222.0, marginScale: 26.0 },
+  ncaam: { marginSd: 10.5, totalSd: 13.0, baseTotal: 142.0, marginScale: 24.0 },
+  nhl: { marginSd: 1.9, totalSd: 1.9, baseTotal: 6.1, marginScale: 4.2 },
 };
 
 function recommendedTierFromCandidate(c) {
   const e = Number.isFinite(c?.edge) ? c.edge : null;
   const ev = Number.isFinite(c?.evForStake100) ? c.evForStake100 : null;
   const kh = Number.isFinite(c?.kellyHalf) ? c.kellyHalf : null;
+  const p = Number.isFinite(c?.modelProb) ? c.modelProb : null;
 
-  if (e == null || ev == null || kh == null) return "PASS";
+  if (!Number.isFinite(e) || !Number.isFinite(ev) || !Number.isFinite(kh) || !Number.isFinite(p)) return "PASS";
+  if (p < 0.52 || p > 0.75) return "PASS";
 
-  // Second tightening pass:
-  // - only keep stronger conviction bets
-  // - remove EDGE entirely
-  if (e < 0.08 || ev < 8 || kh < 0.02) return "PASS";
-
-  if (e >= 0.15 && ev >= 20 && kh >= 0.04) return "ELITE";
-  if (e >= 0.08 && ev >= 8 && kh >= 0.02) return "STRONG";
+  if (e >= 0.10 && ev >= 12 && kh >= 0.015) return "ELITE";
+  if (e >= 0.07 && ev >= 8 && kh >= 0.010) return "STRONG";
+  if (e >= 0.05 && ev >= 5 && kh >= 0.0075) return "EDGE";
 
   return "PASS";
 }
@@ -788,6 +926,218 @@ function marketPickStringFromRecommendedBet(recommendedBet) {
   return "PASS";
 }
 
+function americanOddsSortValue(odds) {
+  const n = Number(odds);
+  if (!Number.isFinite(n)) return -999999;
+  return n;
+}
+
+function buildOddsComparisonForMarketType(marketType, vegasRow) {
+  const mt = String(marketType || "").toLowerCase();
+  const books = Array.isArray(vegasRow?.books) ? vegasRow.books : [];
+  if (!mt || !books.length) return null;
+
+  const rows = [];
+
+  for (const b of books) {
+    if (!b) continue;
+
+    if (mt === "moneyline") {
+      const homeOdds = Number(b?.homeOdds);
+      const awayOdds = Number(b?.awayOdds);
+
+      if (Number.isFinite(homeOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "home",
+          odds: homeOdds,
+          line: null,
+        });
+      }
+
+      if (Number.isFinite(awayOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "away",
+          odds: awayOdds,
+          line: null,
+        });
+      }
+    }
+
+    if (mt === "spread") {
+      const homeLine = Number(b?.homeSpread);
+      const awayLine = Number(b?.awaySpread);
+      const homeOdds = Number(b?.homeSpreadOdds);
+      const awayOdds = Number(b?.awaySpreadOdds);
+
+      if (Number.isFinite(homeLine) && Number.isFinite(homeOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "home",
+          odds: homeOdds,
+          line: homeLine,
+        });
+      }
+
+      if (Number.isFinite(awayLine) && Number.isFinite(awayOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "away",
+          odds: awayOdds,
+          line: awayLine,
+        });
+      }
+    }
+
+    if (mt === "total") {
+      const totalLine = Number(b?.totalLine);
+      const overOdds = Number(b?.overOdds);
+      const underOdds = Number(b?.underOdds);
+
+      if (Number.isFinite(totalLine) && Number.isFinite(overOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "over",
+          odds: overOdds,
+          line: totalLine,
+        });
+      }
+
+      if (Number.isFinite(totalLine) && Number.isFinite(underOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "under",
+          odds: underOdds,
+          line: totalLine,
+        });
+      }
+    }
+  }
+
+  if (!rows.length) return null;
+
+  return {
+    preferredBook: ODDS_BOOKMAKER,
+    bestBook: null,
+    bestBookKey: null,
+    bestOdds: null,
+    bestLine: null,
+    booksLastUpdate: vegasRow?.lastUpdate ?? null,
+    books: rows,
+  };
+}
+
+function buildExplicitMarketNodesFromVegas(markets, vegasRow) {
+  const src = markets && typeof markets === "object" ? markets : {};
+
+  const moneyline = src.moneyline || null;
+  const spread = src.spread || null;
+  const total = src.total || null;
+
+  return {
+    moneyline: moneyline
+      ? {
+          market: "moneyline",
+          marketType: "moneyline",
+          oddsComparison: buildOddsComparisonForMarketType("moneyline", vegasRow),
+          home: moneyline.home || null,
+          away: moneyline.away || null,
+          line: null,
+        }
+      : null,
+    spread: spread
+      ? {
+          market: "spread",
+          marketType: "spread",
+          oddsComparison: buildOddsComparisonForMarketType("spread", vegasRow),
+          home: spread.home || null,
+          away: spread.away || null,
+          line: spread.line ?? null,
+        }
+      : null,
+    total: total
+      ? {
+          market: "total",
+          marketType: "total",
+          oddsComparison: buildOddsComparisonForMarketType("total", vegasRow),
+          over: total.over || null,
+          under: total.under || null,
+          line: total.line ?? null,
+        }
+      : null,
+  };
+}
+
+function buildOddsComparisonForCompatMarket(recommendedBet, vegasRow) {
+  if (!recommendedBet?.marketType || !recommendedBet?.side || !vegasRow?.books) return null;
+
+  const marketType = String(recommendedBet.marketType || "").toLowerCase();
+  const side = String(recommendedBet.side || "").toLowerCase();
+
+  let books = [];
+
+  if (marketType === "moneyline") {
+    books = (vegasRow?.books?.h2h || [])
+      .map((b) => ({
+        bookKey: b?.bookmaker ?? null,
+        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
+        lastUpdate: b?.lastUpdate ?? null,
+        odds: side === "home" ? b?.home ?? null : side === "away" ? b?.away ?? null : null,
+        line: null,
+      }))
+      .filter((b) => Number.isFinite(Number(b.odds)));
+  } else if (marketType === "spread") {
+    books = (vegasRow?.books?.spreads || [])
+      .map((b) => ({
+        bookKey: b?.bookmaker ?? null,
+        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
+        lastUpdate: b?.lastUpdate ?? null,
+        odds: side === "home" ? b?.homePrice ?? null : side === "away" ? b?.awayPrice ?? null : null,
+        line: side === "home" ? b?.homeSpread ?? null : side === "away" ? b?.awaySpread ?? null : null,
+      }))
+      .filter((b) => Number.isFinite(Number(b.odds)));
+  } else if (marketType === "total") {
+    books = (vegasRow?.books?.totals || [])
+      .map((b) => ({
+        bookKey: b?.bookmaker ?? null,
+        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
+        lastUpdate: b?.lastUpdate ?? null,
+        odds: side === "over" ? b?.overPrice ?? null : side === "under" ? b?.underPrice ?? null : null,
+        line: b?.total ?? null,
+      }))
+      .filter((b) => Number.isFinite(Number(b.odds)));
+  }
+
+  if (!books.length) return null;
+
+  books = books.sort((a, b) => americanOddsSortValue(b.odds) - americanOddsSortValue(a.odds));
+
+  const best = books[0] || null;
+
+  return {
+    preferredBook: vegasRow?.bookmaker ?? null,
+    bestBook: best?.book ?? null,
+    bestBookKey: best?.bookKey ?? null,
+    bestOdds: best?.odds ?? null,
+    bestLine: best?.line ?? (recommendedBet?.line ?? null),
+    booksLastUpdate: best?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+    books,
+  };
+}
+
 function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, isTournamentContext = false }) {
   const cal = CAL[league] || CAL.nba;
 
@@ -798,22 +1148,7 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
   };
 
   if (vegasRow?.h2h) {
-    const rawPHome = Number.isFinite(pHomeWin) ? clampNum(pHomeWin, 0, 1) : null;
-
-    // v24 ML calibration:
-    // compress raw win probabilities toward 50% so moneyline EV is less inflated
-    // while preserving directional signal.
-    const mlCompression =
-      league === "nba" ? 0.72 :
-      league === "ncaam" ? 0.76 :
-      league === "nhl" ? 0.80 :
-      0.75;
-
-    const pHome =
-      rawPHome == null
-        ? null
-        : clampNum(0.5 + (rawPHome - 0.5) * mlCompression, 0.05, 0.95);
-
+    const pHome = Number.isFinite(pHomeWin) ? clampNum(pHomeWin, 0, 1) : null;
     const pAway = pHome != null ? 1 - pHome : null;
 
     const homeOdds = vegasRow.h2h.home ?? null;
@@ -883,11 +1218,16 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
     if (!Number.isFinite(edge) || !Number.isFinite(evForStake100) || !Number.isFinite(kellyHalf)) return;
 
     const c = {
+      league,
       marketType,
       side,
       line: payload.line ?? (marketType === "total" ? markets.total.line : null),
       odds: payload.odds ?? null,
-      modelProb: payload.modelProb ?? null,
+      modelProb: payload.calWinProb ?? payload.winProb ?? payload.modelProb ?? null,
+      rawWinProb: payload.rawWinProb ?? null,
+      calWinProb: payload.calWinProb ?? payload.winProb ?? payload.modelProb ?? null,
+      calibrationMethod: payload.calibrationMethod ?? null,
+      calibrationVersion: payload.calibrationVersion ?? null,
       impliedProb: payload.impliedProb ?? null,
       edge,
       evForStake100,
@@ -934,6 +1274,7 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
     const kh = Number.isFinite(recommended.kellyHalf) ? recommended.kellyHalf : null;
     const odds = Number.isFinite(recommended.odds) ? recommended.odds : null;
     const line = Number.isFinite(recommended.line) ? recommended.line : null;
+    const pModel = Number.isFinite(recommended.modelProb) ? recommended.modelProb : null;
     const mt = String(recommended.marketType || "").toLowerCase();
 
     let minEdge = 0.06;
@@ -941,13 +1282,30 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
     let minKellyHalf = 0.02;
 
     if (mt === "moneyline") {
-      minEdge = 0.04;
-      minEv = 3;
-      minKellyHalf = 0.01;
+      if (league === "ncaam") {
+        minEdge = 0.025;
+        minEv = 2;
+        minKellyHalf = 0.008;
+      } else
+      if (league === "nba") {
+        minEdge = 0.06;
+        minEv = 5;
+        minKellyHalf = 0.02;
+      } else {
+        minEdge = 0.04;
+        minEv = 3;
+        minKellyHalf = 0.01;
+      }
     } else if (mt === "spread") {
-      minEdge = 0.045;
-      minEv = 3.5;
-      minKellyHalf = 0.015;
+      if (league === "nba") {
+        minEdge = 0.055;
+        minEv = 5;
+        minKellyHalf = 0.02;
+      } else {
+        minEdge = 0.045;
+        minEv = 3.5;
+        minKellyHalf = 0.015;
+      }
     } else if (mt === "total") {
       minEdge = 0.055;
       minEv = 4.5;
@@ -965,6 +1323,9 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
       e == null ||
       ev == null ||
       kh == null ||
+      pModel == null ||
+      pModel < 0.52 ||
+      pModel > 0.75 ||
       e < minEdge ||
       ev < minEv ||
       kh < minKellyHalf
@@ -972,65 +1333,12 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
       recommended = null;
     }
 
-    // v23 safety tightening:
-    // 1) Kill unrealistic EV bombs
-    // 2) Reject longshot moneylines
-    // 3) Require stronger confidence on ML selections
-    if (recommended && ev != null && ev > 80) {
+    // Market sanity filters
+    if (recommended && league === "nba" && mt === "spread" && line != null && Math.abs(line) > 17.5) {
       recommended = null;
     }
 
-    if (recommended && mt === "moneyline") {
-      const wp = Number.isFinite(recommended.modelProb) ? recommended.modelProb : null;
-
-      // Much stricter ML thresholds than spreads/totals
-      if (e == null || e < 0.07 || ev == null || ev < 8 || kh == null || kh < 0.02) {
-        recommended = null;
-      }
-
-      // Hard-cap longshot ML exposure
-      if (recommended && odds != null && odds > 350) {
-        recommended = null;
-      }
-
-      // Non-NBA dogs need stronger confirmation
-      if (recommended && league !== "nba" && odds != null && odds > 200 && (wp == null || wp < 0.52)) {
-        recommended = null;
-      }
-
-      // NCAAM dogs need real EV too
-      if (recommended && league === "ncaam" && odds != null && odds > 175 && (ev == null || ev < 12)) {
-        recommended = null;
-      }
-
-      // Even moderate NBA dogs need real confidence
-      if (recommended && league === "nba" && odds != null && odds > 200 && (wp == null || wp < 0.42)) {
-        recommended = null;
-      }
-
-      // Favorites that are too juiced are usually not premium picks either
-      if (recommended && odds != null && odds < -225) {
-        recommended = null;
-      }
-    }
-
-    if (recommended && mt === "total") {
-      const wp = Number.isFinite(recommended.modelProb) ? recommended.modelProb : null;
-
-      // Totals were still running too hot, especially NCAAM
-      if (wp != null && wp > 0.78) {
-        recommended = null;
-      }
-
-      if (league === "ncaam") {
-        if (e == null || e < 0.07 || ev == null || ev < 8 || kh == null || kh < 0.02) {
-          recommended = null;
-        }
-      }
-    }
-
-    // Market sanity filters
-    if (recommended && league === "nba" && mt === "spread" && line != null && Math.abs(line) > 17.5) {
+    if (recommended && league === "nba" && mt === "moneyline" && odds != null && odds > 400) {
       recommended = null;
     }
 
@@ -1066,7 +1374,64 @@ function deriveMeansFromStats(league, pHome, homeStats, awayStats) {
   return { meanMargin, meanTotal };
 }
 
-function buildCompatMarket(recommendedBet) {
+function topPickMeta(league, recommendedBet) {
+  const lg = String(league || "").toLowerCase();
+  if (!recommendedBet) {
+    return {
+      topPick: false,
+      topPickBucket: "all-picks",
+      topPickReason: null,
+      topPickWinProb: null,
+    };
+  }
+
+  const marketType = String(recommendedBet.marketType || "").toLowerCase();
+  const wp =
+    Number.isFinite(recommendedBet.calWinProb) ? Number(recommendedBet.calWinProb) :
+    (Number.isFinite(recommendedBet.modelProb) ? Number(recommendedBet.modelProb) :
+    (Number.isFinite(recommendedBet.winProb) ? Number(recommendedBet.winProb) : null));
+
+  let topPick = false;
+  let topPickReason = null;
+
+  if (wp != null) {
+    if (lg === "nba") {
+      topPick = (marketType === "moneyline" || marketType === "total") && wp >= 0.58;
+      if (topPick) topPickReason = "NBA premium: moneyline/total and winProb >= 0.58";
+    } else if (lg === "nhl") {
+      topPick = marketType === "moneyline" && wp >= 0.60;
+      if (topPick) topPickReason = "NHL premium: moneyline and winProb >= 0.60";
+    } else if (lg === "ncaam") {
+      const edgeVal =
+        Number.isFinite(recommendedBet.edgeVsMarket) ? Number(recommendedBet.edgeVsMarket) :
+        (Number.isFinite(recommendedBet.edge) ? Number(recommendedBet.edge) : null);
+
+      const lineVal =
+        Number.isFinite(recommendedBet.line) ? Number(recommendedBet.line) :
+        (Number.isFinite(recommendedBet.marketLine) ? Number(recommendedBet.marketLine) : null);
+
+      topPick =
+        marketType === "total" &&
+        String(recommendedBet.tier || "").toUpperCase() === "ELITE" &&
+        wp >= 0.65 &&
+        wp < 0.70 &&
+        edgeVal != null &&
+        edgeVal >= 0.12 &&
+        !(String(recommendedBet.pick || "").toLowerCase() === "under" && lineVal != null && lineVal >= 155.5);
+
+      if (topPick) topPickReason = "NCAAM premium: ELITE totals only, winProb 0.65-0.70, edge >= 0.12, exclude high-total unders";
+    }
+  }
+
+  return {
+    topPick,
+    topPickBucket: topPick ? "top-picks" : "all-picks",
+    topPickReason,
+    topPickWinProb: wp,
+  };
+}
+
+function buildCompatMarket(league, recommendedBet) {
   // Backward compatible "market" object for frontend
   if (!recommendedBet) {
     return {
@@ -1081,6 +1446,10 @@ function buildCompatMarket(recommendedBet) {
       pick: "PASS",
       evForStake100: null,
       kellyHalf: null,
+      topPick: false,
+      topPickBucket: "all-picks",
+      topPickReason: null,
+      topPickWinProb: null,
 };
   }
 
@@ -1099,12 +1468,17 @@ function buildCompatMarket(recommendedBet) {
     marketLine: Number.isFinite(recommendedBet.line) ? recommendedBet.line : null,
     marketSide: side,
     winProb: Number.isFinite(recommendedBet.modelProb) ? Number(recommendedBet.modelProb) : (Number.isFinite(recommendedBet.winProb) ? Number(recommendedBet.winProb) : null),
+    rawWinProb: Number.isFinite(recommendedBet.rawWinProb) ? Number(recommendedBet.rawWinProb) : null,
+    calWinProb: Number.isFinite(recommendedBet.calWinProb) ? Number(recommendedBet.calWinProb) : (Number.isFinite(recommendedBet.modelProb) ? Number(recommendedBet.modelProb) : null),
+    calibrationMethod: recommendedBet.calibrationMethod ?? null,
+    calibrationVersion: recommendedBet.calibrationVersion ?? null,
     edgeVsMarket: Number.isFinite(recommendedBet.edge) ? recommendedBet.edge : null,
     recommendedMarket: mt,
     tier: String(recommendedBet.tier || "PASS"),
     pick,
     evForStake100: Number.isFinite(recommendedBet.evForStake100) ? recommendedBet.evForStake100 : null,
     kellyHalf: Number.isFinite(recommendedBet.kellyHalf) ? recommendedBet.kellyHalf : null,
+    ...topPickMeta(league, recommendedBet),
 
     // Forward full two-sided moneyline odds for Upsets / downstream consumers
   };
@@ -1396,7 +1770,7 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
           league: "nba",
           date: dateYYYYMMDD,
           windowDays,
-          model: `NBA premium-v21`,
+          model: `NBA premium-v22`,
           mode: "regular",
           odds: { ok: false, reason: "no_games", events: null, bookmaker: ODDS_BOOKMAKER, url: null, sampleKeys: null },
           warnings: [],
@@ -1527,6 +1901,10 @@ if (!pick.pick) noBetCount++;
             odds: recommended.odds ?? null,
             tier: recommended.tier,
             modelProb: recommended.modelProb ?? null,
+            rawWinProb: recommended.rawWinProb ?? null,
+            calWinProb: recommended.calWinProb ?? recommended.modelProb ?? null,
+            calibrationMethod: recommended.calibrationMethod ?? null,
+            calibrationVersion: recommended.calibrationVersion ?? null,
             impliedProb: recommended.impliedProb ?? null,
             edge: recommended.edge,
             evForStake100: recommended.evForStake100,
@@ -1558,6 +1936,7 @@ if (!pick.pick) noBetCount++;
         gameId: g.gameId,
         date: dateYYYYMMDD,
         status: g.status,
+        eventStart: vegasRow?.eventStart ?? null,
 
         home: g.home,
         away: g.away,
@@ -1568,7 +1947,7 @@ if (!pick.pick) noBetCount++;
         },
 
         model: {
-          version: `NBA premium-v21`,
+          version: `NBA premium-v22`,
           windowDays,
           pHomeModel,
           pHomeAnchored,
@@ -1578,11 +1957,13 @@ if (!pick.pick) noBetCount++;
         },
 
         markets: marketBundle.markets,
+        ...buildExplicitMarketNodesFromVegas(marketBundle.markets, vegasRow),
         premiumCandidates: marketBundle.premiumCandidates || [],
         recommendedBet,
 
         market: {
-          ...buildCompatMarket(recommendedBet),
+          ...buildCompatMarket("nba", recommendedBet),
+          oddsComparison: buildOddsComparisonForCompatMarket(recommendedBet, vegasRow),
           moneyline: {
             homeOdds: marketBundle?.markets?.moneyline?.home?.odds ?? null,
             awayOdds: marketBundle?.markets?.moneyline?.away?.odds ?? null,
@@ -1604,7 +1985,7 @@ if (!pick.pick) noBetCount++;
         league: "nba",
         date: dateYYYYMMDD,
         windowDays,
-        model: `NBA premium-v21`,
+        model: `NBA premium-v22`,
         mode: "regular",
         noBetCount,
         modelOnlyCount,
@@ -1903,6 +2284,10 @@ if (!pick.pick) noBetCount++;
             odds: recommended.odds ?? null,
             tier: recommended.tier,
             modelProb: recommended.modelProb ?? null,
+            rawWinProb: recommended.rawWinProb ?? null,
+            calWinProb: recommended.calWinProb ?? recommended.modelProb ?? null,
+            calibrationMethod: recommended.calibrationMethod ?? null,
+            calibrationVersion: recommended.calibrationVersion ?? null,
             impliedProb: recommended.impliedProb ?? null,
             edge: recommended.edge,
             evForStake100: recommended.evForStake100,
@@ -1915,6 +2300,7 @@ if (!pick.pick) noBetCount++;
         gameId: `nhl-${g.id}`,
         date: dateYYYYMMDD,
         status: g.status,
+        eventStart: vegasRow?.eventStart ?? null,
 
         home: homeObj,
         away: awayObj,
@@ -1933,7 +2319,8 @@ if (!pick.pick) noBetCount++;
         recommendedBet,
 
         market: {
-          ...buildCompatMarket(recommendedBet),
+          ...buildCompatMarket("nhl", recommendedBet),
+          oddsComparison: buildOddsComparisonForCompatMarket(recommendedBet, vegasRow),
           moneyline: {
             homeOdds: marketBundle?.markets?.moneyline?.home?.odds ?? null,
             awayOdds: marketBundle?.markets?.moneyline?.away?.odds ?? null,
@@ -2249,6 +2636,10 @@ if (!pick.pick) noBetCount++;
             odds: recommended.odds ?? null,
             tier: recommended.tier,
             modelProb: recommended.modelProb ?? null,
+            rawWinProb: recommended.rawWinProb ?? null,
+            calWinProb: recommended.calWinProb ?? recommended.modelProb ?? null,
+            calibrationMethod: recommended.calibrationMethod ?? null,
+            calibrationVersion: recommended.calibrationVersion ?? null,
             impliedProb: recommended.impliedProb ?? null,
             edge: recommended.edge,
             evForStake100: recommended.evForStake100,
@@ -2261,6 +2652,7 @@ if (!pick.pick) noBetCount++;
         gameId: `ncaam-${g.id}`,
         date: dateYYYYMMDD,
         status: g.status,
+        eventStart: vegasRow?.eventStart ?? null,
 
         home: homeObj,
         away: awayObj,
@@ -2283,7 +2675,8 @@ if (!pick.pick) noBetCount++;
         recommendedBet,
 
         market: {
-          ...buildCompatMarket(recommendedBet),
+          ...buildCompatMarket("ncaam", recommendedBet),
+          oddsComparison: buildOddsComparisonForCompatMarket(recommendedBet, vegasRow),
           moneyline: {
             homeOdds: marketBundle?.markets?.moneyline?.home?.odds ?? null,
             awayOdds: marketBundle?.markets?.moneyline?.away?.odds ?? null,
@@ -2336,125 +2729,6 @@ if (!pick.pick) noBetCount++;
    Table: odds_snapshots (see README in bundle for SQL)
    Safe no-op if Supabase env vars not present.
    ========================================================= */
-
-
-function normalizeSnapshotMarket(x) {
-  const m = String(x || "moneyline").trim().toLowerCase();
-  if (!m) return "moneyline";
-  if (m === "ml" || m === "money" || m === "h2h") return "moneyline";
-  if (m === "spread" || m === "spreads") return "spread";
-  if (m === "total" || m === "totals" || m === "ou") return "total";
-  return m;
-}
-
-function getSnapshotEventStart(g) {
-  return (
-    g?.startTime ||
-    g?.start_time ||
-    g?.commenceTime ||
-    g?.commence_time ||
-    g?.gameTime ||
-    g?.dateTime ||
-    null
-  );
-}
-
-async function persistMarketSnapshotsForResponse(resp) {
-  try {
-    const league = String(resp?.league || resp?.meta?.league || "").toLowerCase();
-    const date = String(resp?.date || resp?.meta?.date || "");
-    const meta = resp?.meta || {};
-    const games = Array.isArray(resp?.games) ? resp.games : [];
-    if (!league || !date || !games.length) return;
-
-    const rows = games.map((g) => {
-      const bet = g?.recommendedBet ?? null;
-      const compat = g?.market ?? {};
-      const m = g?.market ?? {};
-
-      const game_key =
-        g?.gameKey ||
-        g?.game_key ||
-        g?.id ||
-        g?.gameId ||
-        g?.eventId ||
-        `${g?.away?.abbr || g?.away?.name || "AWAY"}@${g?.home?.abbr || g?.home?.name || "HOME"}:${date}`;
-
-      const market = normalizeSnapshotMarket(
-        bet?.marketType ??
-        compat?.marketType ??
-        compat?.recommendedMarket ??
-        m?.marketType ??
-        m?.market ??
-        m?.type ??
-        g?.marketType ??
-        "moneyline"
-      );
-
-      const pick =
-        bet?.side ??
-        compat?.pick ??
-        m?.pick ??
-        g?.pick ??
-        "PASS";
-
-      const side =
-        bet?.side ??
-        compat?.marketSide ??
-        m?.marketSide ??
-        pick;
-
-      const line =
-        bet?.line ??
-        compat?.marketLine ??
-        m?.marketLine ??
-        m?.line ??
-        g?.line ??
-        null;
-
-      const odds =
-        bet?.odds ??
-        compat?.marketOdds ??
-        m?.marketOdds ??
-        m?.odds ??
-        g?.odds ??
-        null;
-
-      const mode =
-        g?.mode ??
-        g?.modeLabel ??
-        meta?.mode ??
-        "regular";
-
-      const book =
-        bet?.book ??
-        compat?.book ??
-        m?.book ??
-        meta?.odds?.bookmaker ??
-        null;
-
-      return {
-        snapshot_date: date,
-        league,
-        mode,
-        game_key,
-        market,
-        market_type: market,
-        pick,
-        side,
-        line,
-        odds,
-        book,
-        event_start: getSnapshotEventStart(g),
-        captured_at: new Date().toISOString(),
-      };
-    });
-
-    await upsertMarketSnapshotsBatch(rows, { chunkSize: 500 });
-  } catch (_err) {
-    // no-op
-  }
-}
 
 async function persistOddsSnapshotsForResponse(resp) {
   try {
@@ -2595,7 +2869,6 @@ router.get("/predictions", async (req, res) => {
         modelVersion: wrapped.meta?.model
       });
 
-      await persistMarketSnapshotsForResponse(wrapped);
       await persistOddsSnapshotsForResponse(wrapped);
       return res.json(wrapped);
     }
@@ -2614,7 +2887,6 @@ router.get("/predictions", async (req, res) => {
         modelVersion: wrapped.meta?.model
       });
 
-      await persistMarketSnapshotsForResponse(wrapped);
       await persistOddsSnapshotsForResponse(wrapped);
       return res.json(wrapped);
     }
@@ -2633,7 +2905,6 @@ router.get("/predictions", async (req, res) => {
         modelVersion: wrapped.meta?.model
       });
 
-      await persistMarketSnapshotsForResponse(wrapped);
       await persistOddsSnapshotsForResponse(wrapped);
       return res.json(wrapped);
     }

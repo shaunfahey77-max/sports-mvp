@@ -31,12 +31,95 @@ function setPerfCache(key, value) {
 
 
 function num(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string" && v.trim() === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
+}
+
+function topPickWinProb(row) {
+  return num(row?.cal_win_prob ?? row?.win_prob ?? row?.winProb ?? null);
+}
+
+function topPickTier(row) {
+  const meta = row?.meta && typeof row.meta === "object" ? row.meta : null;
+  return String(
+    meta?.tier ??
+    meta?.recommended_tier ??
+    meta?.bet_tier ??
+    meta?.recommendedBet?.tier ??
+    meta?.market?.tier ??
+    ""
+  ).toUpperCase();
+}
+
+function persistedTopPickFlag(row) {
+  const meta = row?.meta && typeof row.meta === "object" ? row.meta : null;
+  if (!meta) return null;
+  if (typeof meta.topPick === "boolean") return meta.topPick;
+  if (meta.topPick === 1 || meta.topPick === 0) return Boolean(meta.topPick);
+  if (typeof meta.topPick === "string") {
+    const v = meta.topPick.trim().toLowerCase();
+    if (v === "true") return true;
+    if (v === "false") return false;
+  }
+  return null;
+}
+
+function isTopPickRow(row) {
+  const persisted = persistedTopPickFlag(row);
+  const league = String(row?.league || "").toLowerCase();
+  const market = String(row?.market || "").toLowerCase();
+  const tier = topPickTier(row);
+  const wp = topPickWinProb(row);
+  const edge = num(row?.edge);
+  const line = num(row?.publish_line ?? row?.market_line ?? row?.line);
+  const pick = String(row?.pick || row?.market_side || "").toLowerCase();
+
+  if (persisted != null) {
+    if (league !== "ncaam") return persisted;
+
+    return persisted &&
+      tier === "ELITE" &&
+      market === "total" &&
+      wp != null &&
+      wp >= 0.65 &&
+      wp < 0.70 &&
+      edge != null &&
+      edge >= 0.12 &&
+      !(pick === "under" && line != null && line >= 155.5);
+  }
+
+  if (league === "nba") {
+    return (tier === "STRONG" || tier === "ELITE") &&
+      wp != null &&
+      wp >= 0.58 &&
+      (market === "moneyline" || market === "total");
+  }
+
+  if (league === "nhl") {
+    return (tier === "STRONG" || tier === "ELITE") &&
+      wp != null &&
+      wp >= 0.60 &&
+      market === "moneyline";
+  }
+
+  if (league === "ncaam") {
+    return tier === "ELITE" &&
+      market === "total" &&
+      wp != null &&
+      wp >= 0.65 &&
+      wp < 0.70 &&
+      edge != null &&
+      edge >= 0.12 &&
+      !(pick === "under" && line != null && line >= 155.5);
+  }
+
+  return false;
 }
 
 function yyyymmddUTC(d) {
@@ -89,7 +172,7 @@ async function fetchPerformanceDaily(leagues, start, end) {
   if (error) throw new Error(`performance_daily fetch failed: ${error.message}`);
 
   const byKey = new Map();
-  for (const r of data || []) {
+  for (const r of (data || [])) {
     byKey.set(`${r.league}:${r.date}`, r);
   }
   return byKey;
@@ -99,11 +182,13 @@ async function fetchPickResults(leagues, start, end) {
   const { table, data } = await fetchFromFirstAvailableTable((tableName) =>
     supabaseAdmin
       .from(tableName)
-      .select("league,date,market,result,odds,clv_line_delta,clv_implied_delta")
+      .select("league,date,market,pick,odds,edge,publish_line,market_line,result,clv_line_delta,clv_implied_delta,win_prob,cal_win_prob,meta")
       .in("league", leagues)
       .gte("date", start)
       .lte("date", end)
   );
+
+  const filtered = (data || []).filter(isTopPickRow);
 
   const byKey = new Map();
   const byMarket = {
@@ -112,7 +197,7 @@ async function fetchPickResults(leagues, start, end) {
     total: { wins: 0, losses: 0, pushes: 0, scored: 0, winRate: null, avg_clv_line: null, avg_clv_implied: null, _clvLineSum: 0, _clvLineN: 0, _clvImpSum: 0, _clvImpN: 0 },
   };
 
-  for (const r of data || []) {
+  for (const r of filtered) {
     const key = `${r.league}:${r.date}`;
     if (!byKey.has(key)) {
       byKey.set(key, {
@@ -156,7 +241,9 @@ async function fetchPickResults(leagues, start, end) {
       row.pass += 1;
     }
 
-    if (clvLine != null) {
+    const isScoredResult = result === "WIN" || result === "LOSS" || result === "PUSH";
+
+    if (isScoredResult && clvLine != null) {
       row._clvLineSum += clvLine;
       row._clvLineN += 1;
       if (byMarket[market]) {
@@ -165,7 +252,7 @@ async function fetchPickResults(leagues, start, end) {
       }
     }
 
-    if (clvImp != null) {
+    if (isScoredResult && clvImp != null) {
       row._clvImpSum += clvImp;
       row._clvImpN += 1;
       if (byMarket[market]) {
@@ -176,15 +263,23 @@ async function fetchPickResults(leagues, start, end) {
   }
 
   for (const row of byKey.values()) {
+    row.clv_line_count = row._clvLineN;
+    row.clv_implied_count = row._clvImpN;
     row.avg_clv_line = row._clvLineN ? row._clvLineSum / row._clvLineN : null;
     row.avg_clv_implied = row._clvImpN ? row._clvImpSum / row._clvImpN : null;
+    row.clv_coverage = row.picks > 0 ? row._clvLineN / row.picks : null;
+    row.implied_clv_coverage = row.picks > 0 ? row._clvImpN / row.picks : null;
   }
 
   for (const k of Object.keys(byMarket)) {
     const m = byMarket[k];
     m.winRate = m.scored ? m.wins / m.scored : null;
+    m.clv_line_count = m._clvLineN;
+    m.clv_implied_count = m._clvImpN;
     m.avg_clv_line = m._clvLineN ? m._clvLineSum / m._clvLineN : null;
     m.avg_clv_implied = m._clvImpN ? m._clvImpSum / m._clvImpN : null;
+    m.clv_coverage = m.scored ? m._clvLineN / m.scored : null;
+    m.implied_clv_coverage = m.scored ? m._clvImpN / m.scored : null;
     delete m._clvLineSum;
     delete m._clvLineN;
     delete m._clvImpSum;
@@ -192,6 +287,78 @@ async function fetchPickResults(leagues, start, end) {
   }
 
   return { byKey, byMarket, sourceTable: table };
+}
+
+function americanProfitPerUnit(odds) {
+  const o = num(odds);
+  if (o == null || o == 0) return null;
+  return o > 0 ? o / 100 : 100 / Math.abs(o);
+}
+
+async function fetchModelPerformanceSummary(days = 30, leagues = ["nba", "nhl", "ncaam"]) {
+  const end = yyyymmddUTC(new Date());
+  const start = addDaysUTC(end, -(days - 1));
+
+  const { table, data } = await fetchFromFirstAvailableTable((tableName) =>
+    supabaseAdmin
+      .from(tableName)
+      .select("league,date,market,result,odds,clv_line_delta,clv_implied_delta,win_prob,cal_win_prob,meta")
+      .in("league", leagues)
+      .gte("date", start)
+      .lte("date", end)
+  );
+
+  const rows = (Array.isArray(data) ? data : []).filter(isTopPickRow);
+  const settled = rows.filter((r) => {
+    const result = String(r.result || "").toUpperCase();
+    return result === "WIN" || result === "LOSS" || result === "PUSH";
+  });
+
+  let unitsWon = 0;
+  let stakeUnits = 0;
+
+  for (const row of settled) {
+    const result = String(row.result || "").toUpperCase();
+    const odds = num(row.odds);
+    const profitPerUnit = americanProfitPerUnit(odds);
+
+    if (result === "WIN") {
+      stakeUnits += 1;
+      unitsWon += profitPerUnit != null ? profitPerUnit : 0;
+    } else if (result === "LOSS") {
+      stakeUnits += 1;
+      unitsWon -= 1;
+    } else if (result === "PUSH") {
+      stakeUnits += 1;
+    }
+  }
+
+  const clvRows = rows.filter((r) => num(r.clv_line_delta) != null);
+  const clvImpRows = rows.filter((r) => num(r.clv_implied_delta) != null);
+
+  const avgClvLine = clvRows.length
+    ? clvRows.reduce((a, r) => a + num(r.clv_line_delta), 0) / clvRows.length
+    : null;
+
+  const avgClvImplied = clvImpRows.length
+    ? clvImpRows.reduce((a, r) => a + num(r.clv_implied_delta), 0) / clvImpRows.length
+    : null;
+
+  return {
+    sourceTable: table,
+    start,
+    end,
+    bets: settled.length,
+    stakeUnits,
+    unitsWon,
+    roi: stakeUnits > 0 ? unitsWon / stakeUnits : null,
+    avgClvLine,
+    avgClvImplied,
+    clvLineCount: clvRows.length,
+    clvImpliedCount: clvImpRows.length,
+    clvCoverage: settled.length ? clvRows.length / settled.length : null,
+    impliedClvCoverage: settled.length ? clvImpRows.length / settled.length : null,
+  };
 }
 
 async function fetchPerformanceWindow(days = 14, leagues = ["nba", "nhl", "ncaam"]) {
@@ -225,6 +392,10 @@ async function fetchPerformanceWindow(days = 14, leagues = ["nba", "nhl", "ncaam
         acc: scored > 0 ? wins / scored : null,
         avg_clv_line: picks?.avg_clv_line ?? null,
         avg_clv_implied: picks?.avg_clv_implied ?? null,
+        clv_line_count: picks?.clv_line_count ?? 0,
+        clv_implied_count: picks?.clv_implied_count ?? 0,
+        clv_coverage: picks?.clv_coverage ?? null,
+        implied_clv_coverage: picks?.implied_clv_coverage ?? null,
       });
     }
     cur = addDaysUTC(cur, 1);
@@ -339,16 +510,19 @@ router.get("/performance/kpis", async (_req, res) => {
     const pass = rows.reduce((a, r) => a + (num(r.pass) || 0), 0);
     const scored = rows.reduce((a, r) => a + (num(r.scored) || 0), 0);
 
-    const clvRows = rows.filter((r) => num(r.avg_clv_line) != null);
-    const clvImpRows = rows.filter((r) => num(r.avg_clv_implied) != null);
+    const clvLineCount = rows.reduce((a, r) => a + (num(r.clv_line_count) || 0), 0);
+    const clvImpCount = rows.reduce((a, r) => a + (num(r.clv_implied_count) || 0), 0);
 
-    const avg_clv_line = clvRows.length
-      ? clvRows.reduce((a, r) => a + num(r.avg_clv_line), 0) / clvRows.length
+    const avg_clv_line = clvLineCount
+      ? rows.reduce((a, r) => a + ((num(r.avg_clv_line) || 0) * (num(r.clv_line_count) || 0)), 0) / clvLineCount
       : null;
 
-    const avg_clv_implied = clvImpRows.length
-      ? clvImpRows.reduce((a, r) => a + num(r.avg_clv_implied), 0) / clvImpRows.length
+    const avg_clv_implied = clvImpCount
+      ? rows.reduce((a, r) => a + ((num(r.avg_clv_implied) || 0) * (num(r.clv_implied_count) || 0)), 0) / clvImpCount
       : null;
+
+    const clv_coverage = scored ? clvLineCount / scored : null;
+    const implied_clv_coverage = scored ? clvImpCount / scored : null;
 
     return res.json({
       ok: true,
@@ -361,6 +535,10 @@ router.get("/performance/kpis", async (_req, res) => {
         acc: scored > 0 ? wins / scored : null,
         avg_clv_line,
         avg_clv_implied,
+        clv_line_count: clvLineCount,
+        clv_implied_count: clvImpCount,
+        clv_coverage,
+        implied_clv_coverage,
       },
     });
   } catch (err) {
@@ -398,13 +576,15 @@ router.get("/performance/league", async (_req, res) => {
 
       const clvLine = num(row.avg_clv_line);
       const clvImp = num(row.avg_clv_implied);
-      if (clvLine != null) {
-        cur._clvLineSum += clvLine;
-        cur._clvLineN += 1;
+      const clvLineCount = num(row.clv_line_count) || 0;
+      const clvImpCount = num(row.clv_implied_count) || 0;
+      if (clvLine != null && clvLineCount > 0) {
+        cur._clvLineSum += clvLine * clvLineCount;
+        cur._clvLineN += clvLineCount;
       }
-      if (clvImp != null) {
-        cur._clvImpSum += clvImp;
-        cur._clvImpN += 1;
+      if (clvImp != null && clvImpCount > 0) {
+        cur._clvImpSum += clvImp * clvImpCount;
+        cur._clvImpN += clvImpCount;
       }
     }
 
@@ -418,6 +598,10 @@ router.get("/performance/league", async (_req, res) => {
       acc: x.scored > 0 ? x.wins / x.scored : null,
       avg_clv_line: x._clvLineN ? x._clvLineSum / x._clvLineN : null,
       avg_clv_implied: x._clvImpN ? x._clvImpSum / x._clvImpN : null,
+      clv_line_count: x._clvLineN,
+      clv_implied_count: x._clvImpN,
+      clv_coverage: x.picks ? x._clvLineN / x.picks : null,
+      implied_clv_coverage: x.picks ? x._clvImpN / x.picks : null,
     }));
 
     return res.json({ ok: true, data });
@@ -434,6 +618,35 @@ router.get("/performance/recent", async (_req, res) => {
       return String(b.date).localeCompare(String(a.date));
     });
     return res.json({ ok: true, data });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
+});
+
+router.get("/performance/model-summary", async (_req, res) => {
+  try {
+    const [d7, d30, season] = await Promise.all([
+      fetchModelPerformanceSummary(7, ["nba", "nhl", "ncaam"]),
+      fetchModelPerformanceSummary(30, ["nba", "nhl", "ncaam"]),
+      fetchModelPerformanceSummary(180, ["nba", "nhl", "ncaam"]),
+    ]);
+
+    return res.json({
+      ok: true,
+      data: {
+        roi7d: d7.roi,
+        roi30d: d30.roi,
+        roiSeason: season.roi,
+        unitsWonSeason: season.unitsWon,
+        avgClvLine: season.avgClvLine,
+        avgClvImplied: season.avgClvImplied,
+        stakeUnitsSeason: season.stakeUnits,
+        betsSeason: season.bets,
+        startSeason: season.start,
+        endSeason: season.end,
+        sourceTable: season.sourceTable,
+      },
+    });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
