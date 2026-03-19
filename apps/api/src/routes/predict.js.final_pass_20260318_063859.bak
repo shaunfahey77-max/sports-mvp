@@ -1,0 +1,2876 @@
+// apps/api/src/routes/predict.js
+import "dotenv/config";
+import express from "express";
+import { writeSlatePicksToLedger } from "../db/dailyLedger.js";
+import { applyPremiumSelection } from "../lib/premiumSelection.js";
+
+const router = express.Router();
+
+/* =========================================================
+   Sports MVP — Premium v19 Predictor (Ultra Contract)
+   Leagues: NBA + NCAAM + NHL
+
+   v18 “premium upgrades” over your v17:
+   - ✅ Backwards-compatible `game.market` object (so existing UI doesn’t break)
+     - marketType / marketOdds / marketLine / marketSide / winProb / edgeVsMarket
+     - recommendedMarket / tier + EV/Kelly fields
+   - ✅ Backwards-compatible top-level `meta.vegasOk / vegasReason / vegasEvents / vegasSampleKeys`
+     (keeps your richer `meta.odds` too)
+   - ✅ Odds matching upgrade: supports reversed home/away mapping safely
+   - ✅ Candidate selection improved: prefer higher tier first, then EV
+   - ✅ Fix: duplicate `pointsAgainstPerGame` in NCAAM team stats
+   - ✅ Extra safety: stable null handling + consistent field names
+   ========================================================= */
+
+/* ----------------------------
+   Upstreams / Env
+---------------------------- */
+const NBA_API_BASE = "https://api.balldontlie.io/v1";
+const NBA_API_KEY = process.env.NBA_API_KEY || "";
+
+// ESPN
+const ESPN_SITE_V2 = "https://site.api.espn.com/apis/site/v2/sports";
+const ESPN_NCAAM_PATH = "basketball/mens-college-basketball";
+const ESPN_NHL_PATH = "hockey/nhl";
+
+// Odds API
+const ODDS_API_BASE = (process.env.ODDS_API_BASE || "https://api.the-odds-api.com/v4").replace(/\/$/, "");
+const ODDS_API_KEY = process.env.ODDS_API_KEY || "";
+const ODDS_BOOKMAKER = String(process.env.ODDS_BOOKMAKER || process.env.ODDS_BOOK || "draftkings").toLowerCase();
+const ODDS_MARKETS = String(process.env.ODDS_MARKETS || "h2h,spreads,totals");
+const ODDS_REGIONS = String(process.env.ODDS_REGIONS || "us");
+const ODDS_ODDS_FORMAT = String(process.env.ODDS_ODDS_FORMAT || "american");
+const ODDS_ALLOW_HISTORICAL =
+  String(process.env.ODDS_ALLOW_HISTORICAL || "false").toLowerCase() === "true";
+
+const ODDS_COMPARISON_ALL_BOOKS =
+  String(process.env.ODDS_COMPARISON_ALL_BOOKS || "true").toLowerCase() !== "false";
+
+const ODDS_SPORT_NBA = String(process.env.ODDS_SPORT_NBA || "basketball_nba");
+const ODDS_SPORT_NCAAM = String(process.env.ODDS_SPORT_NCAAM || "basketball_ncaab");
+const ODDS_SPORT_NHL = String(process.env.ODDS_SPORT_NHL || "icehockey_nhl");
+
+/* ----------------------------
+   Cache / In-flight
+---------------------------- */
+const CACHE_TTL_MS = 60_000;
+const HEAVY_CACHE_TTL_MS = 20 * 60_000;
+const MAX_CACHE_KEYS = 800;
+
+const cache = new Map(); // key -> { time, ttl, value }
+const inFlight = new Map(); // key -> Promise
+const predInFlight = new Map(); // key -> Promise
+
+let _lastCacheSweep = 0;
+function sweepExpiredCache(maxToCheck = 500) {
+  const now = Date.now();
+  if (now - _lastCacheSweep < 30_000) return;
+  _lastCacheSweep = now;
+
+  let checked = 0;
+  for (const [k, v] of cache.entries()) {
+    checked++;
+    if (now - v.time > v.ttl) cache.delete(k);
+    if (checked >= maxToCheck) break;
+  }
+}
+function pruneCacheIfNeeded() {
+  if (cache.size <= MAX_CACHE_KEYS) return;
+  const entries = [...cache.entries()].sort((a, b) => a[1].time - b[1].time);
+  const removeN = Math.ceil(entries.length * 0.1);
+  for (let i = 0; i < removeN; i++) cache.delete(entries[i][0]);
+}
+function getCache(key) {
+  sweepExpiredCache();
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.time > hit.ttl) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+function setCache(key, value, ttl = CACHE_TTL_MS) {
+  cache.set(key, { time: Date.now(), ttl, value });
+  pruneCacheIfNeeded();
+}
+
+/* ----------------------------
+   Small utils
+---------------------------- */
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+function jitter(ms, pct = 0.2) {
+  const j = ms * pct;
+  return Math.max(0, Math.round(ms + (Math.random() * 2 - 1) * j));
+}
+function clampNum(x, a, b) {
+  return Math.max(a, Math.min(b, x));
+}
+function isAbortLike(e) {
+  const name = String(e?.name || "");
+  const msg = String(e?.message || e || "");
+  return name === "AbortError" || msg.toLowerCase().includes("aborted");
+}
+function trimUpstreamText(s, max = 500) {
+  const t = String(s || "");
+  if (t.length <= max) return t;
+  return t.slice(0, max) + "…";
+}
+function parseRetryAfterSeconds(res) {
+  const ra = res?.headers?.get?.("retry-after");
+  if (!ra) return null;
+  const n = Number(ra);
+  return Number.isFinite(n) ? n : null;
+}
+function safeNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/* ----------------------------
+   Per-host concurrency gate
+---------------------------- */
+const hostGates = new Map(); // host -> { active, queue: [] }
+const DEFAULT_HOST_QUEUE_CAP = 200;
+
+async function withHostGate(url, limit, fn, { queueCap = DEFAULT_HOST_QUEUE_CAP } = {}) {
+  const host = new URL(url).host;
+  if (!hostGates.has(host)) hostGates.set(host, { active: 0, queue: [] });
+  const gate = hostGates.get(host);
+
+  if (gate.active >= limit) {
+    if (gate.queue.length >= queueCap) {
+      await sleep(35);
+    } else {
+      await new Promise((resolve) => gate.queue.push(resolve));
+    }
+  }
+
+  gate.active++;
+  try {
+    return await fn();
+  } finally {
+    gate.active--;
+    const next = gate.queue.shift();
+    if (next) next();
+  }
+}
+
+/* ----------------------------
+   fetchJson (cache + retry + timeout)
+---------------------------- */
+async function fetchJson(
+  url,
+  { headers } = {},
+  {
+    cacheTtlMs = CACHE_TTL_MS,
+    retries = 5,
+    baseBackoffMs = 650,
+    hostConcurrency = 2,
+    timeoutMs = 25_000,
+  } = {}
+) {
+  const auth = headers?.Authorization ? String(headers.Authorization) : "";
+  const cacheKey = `GET:${url}:AUTH=${auth}`;
+
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const existing = inFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const p = (async () => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const res = await withHostGate(
+          url,
+          hostConcurrency,
+          async () => {
+            const controller = new AbortController();
+            const t = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+              return await fetch(url, {
+                headers: {
+                  "User-Agent": "sports-mvp-api/1.0",
+                  ...(headers || {}),
+                },
+                signal: controller.signal,
+              });
+            } finally {
+              clearTimeout(t);
+            }
+          },
+          { queueCap: DEFAULT_HOST_QUEUE_CAP }
+        );
+
+        const contentType = String(res.headers?.get?.("content-type") || "").toLowerCase();
+        const bodyText = await res.text().catch(() => "");
+
+        if (res.status === 429) {
+          const retryAfter = parseRetryAfterSeconds(res);
+          const waitMs =
+            retryAfter != null
+              ? retryAfter * 1000
+              : jitter(baseBackoffMs * Math.pow(2, attempt), 0.25);
+
+          if (attempt >= retries) {
+            throw new Error(
+              `Upstream 429 for ${url}${bodyText ? ` — ${trimUpstreamText(bodyText)}` : ""} — exceeded retry limit`
+            );
+          }
+          await sleep(waitMs);
+          continue;
+        }
+
+        if (res.status >= 500 && res.status <= 599) {
+          const waitMs = jitter(baseBackoffMs * Math.pow(2, attempt), 0.25);
+          if (attempt >= retries) {
+            throw new Error(
+              `Upstream ${res.status} for ${url}${bodyText ? ` — ${trimUpstreamText(bodyText)}` : ""}`
+            );
+          }
+          await sleep(waitMs);
+          continue;
+        }
+
+        if (!res.ok) {
+          throw new Error(
+            `Upstream ${res.status} for ${url}${bodyText ? ` — ${trimUpstreamText(bodyText)}` : ""}`
+          );
+        }
+
+        let data;
+        if (contentType.includes("application/json") || contentType.includes("+json")) {
+          try {
+            data = bodyText ? JSON.parse(bodyText) : null;
+          } catch {
+            throw new Error(`Upstream returned invalid JSON for ${url}`);
+          }
+        } else {
+          try {
+            data = bodyText ? JSON.parse(bodyText) : null;
+          } catch {
+            throw new Error(`Upstream returned non-JSON for ${url}`);
+          }
+        }
+
+        setCache(cacheKey, data, cacheTtlMs);
+        return data;
+      } catch (e) {
+        const msg = String(e?.message || e);
+        const isTransient =
+          isAbortLike(e) ||
+          msg.includes("fetch failed") ||
+          msg.includes("ECONNRESET") ||
+          msg.includes("ETIMEDOUT") ||
+          msg.includes("EAI_AGAIN") ||
+          msg.includes("ENOTFOUND") ||
+          msg.includes("network timeout");
+
+        if (!isTransient || attempt >= retries) throw e;
+        await sleep(jitter(baseBackoffMs * Math.pow(2, attempt), 0.25));
+      }
+    }
+    throw new Error(`Upstream failure for ${url}`);
+  })();
+
+  inFlight.set(cacheKey, p);
+  try {
+    return await p;
+  } finally {
+    inFlight.delete(cacheKey);
+  }
+}
+
+async function computeCached(key, ttlMs, fn) {
+  const hit = getCache(key);
+  if (hit) return hit;
+
+  const existing = predInFlight.get(key);
+  if (existing) return existing;
+
+  const p = (async () => {
+    const val = await fn();
+    setCache(key, val, ttlMs);
+    return val;
+  })();
+
+  predInFlight.set(key, p);
+  try {
+    return await p;
+  } finally {
+    predInFlight.delete(key);
+  }
+}
+
+/* ----------------------------
+   Team/logo helpers
+---------------------------- */
+function sanitizeLogoUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  if (!/^https?:\/\//i.test(u)) return null;
+  return u;
+}
+function nbaLogoFromAbbr(abbr) {
+  const a = String(abbr || "").trim().toLowerCase();
+  if (!a) return null;
+  return `https://a.espncdn.com/i/teamlogos/nba/500/${a}.png`;
+}
+function espnNhlLogoFromTeamId(teamId) {
+  const id = String(teamId || "").trim();
+  if (!id) return null;
+  return `https://a.espncdn.com/i/teamlogos/nhl/500/${id}.png`;
+}
+function espnNcaamLogoFromTeamId(teamId) {
+  const id = String(teamId || "").trim();
+  if (!id) return null;
+  return `https://a.espncdn.com/i/teamlogos/ncaa/500/${id}.png`;
+}
+function countMissingLogos(games = []) {
+  let totalTeams = 0;
+  let missing = 0;
+  for (const g of games) {
+    for (const side of ["home", "away"]) {
+      const t = g?.[side];
+      if (!t) continue;
+      totalTeams++;
+      const logo = sanitizeLogoUrl(t.logo);
+      if (!logo) missing++;
+    }
+  }
+  return { totalTeams, missing, ok: missing === 0 };
+}
+
+/* ----------------------------
+   Params / dates
+---------------------------- */
+function normalizeDateParam(date) {
+  if (!date) return null;
+  const ok = /^\d{4}-\d{2}-\d{2}$/.test(date);
+  return ok ? date : null;
+}
+function readDateFromReq(req) {
+  const d1 = normalizeDateParam(req.query.date);
+  const d2 = normalizeDateParam(req.query["dates[]"]);
+  return d1 || d2 || new Date().toISOString().slice(0, 10);
+}
+function readWindowFromReq(req, def, min, max) {
+  const raw = req.query.windowDays ?? req.query.window ?? def;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return def;
+  return clampNum(n, min, max);
+}
+function readModeFromReq(req) {
+  const mode = String(req.query.mode || "").toLowerCase();
+  const t = String(req.query.tournament || "").toLowerCase();
+  const isTournament = mode === "tournament" || t === "1" || t === "true" || t === "yes";
+  return { mode: isTournament ? "tournament" : "regular", tournament: isTournament };
+}
+function readModelFromReq(req, def = "v2") {
+  const raw = String(req.query.model || req.query.modelVersion || def).toLowerCase();
+  if (raw === "v1" || raw === "1") return "v1";
+  return "v2";
+}
+function toEspnYYYYMMDD(dateYYYYMMDD) {
+  return dateYYYYMMDD.replaceAll("-", "");
+}
+function yyyymmddUTC(d) {
+  return d.toISOString().slice(0, 10);
+}
+function addDaysUTC(dateYYYYMMDD, deltaDays) {
+  const [y, m, d] = dateYYYYMMDD.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  return yyyymmddUTC(dt);
+}
+function todayUTCYMD() {
+  return new Date().toISOString().slice(0, 10);
+}
+function isPastDateUTC(dateYYYYMMDD) {
+  return String(dateYYYYMMDD) < todayUTCYMD();
+}
+
+/* ----------------------------
+   Odds helpers
+---------------------------- */
+function normTeamName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+&\s+/g, " and ")
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function americanToDecimalOdds(american) {
+  const a = Number(american);
+  if (!Number.isFinite(a) || a === 0) return null;
+  if (a > 0) return 1 + a / 100;
+  return 1 + 100 / Math.abs(a);
+}
+function americanToImpliedProbSafe(american) {
+  const a = Number(american);
+  if (!Number.isFinite(a) || a === 0) return null;
+  if (a > 0) return 100 / (a + 100);
+  return Math.abs(a) / (Math.abs(a) + 100);
+}
+function buildExplicitMarketNodes(markets) {
+  const src = markets && typeof markets === "object" ? markets : {};
+
+  const moneyline = src.moneyline || null;
+  const spread = src.spread || null;
+  const total = src.total || null;
+
+  return {
+    moneyline: moneyline
+      ? {
+          market: "moneyline",
+          marketType: "moneyline",
+          oddsComparison: moneyline.oddsComparison || null,
+          home: moneyline.home || null,
+          away: moneyline.away || null,
+          line: null,
+        }
+      : null,
+    spread: spread
+      ? {
+          market: "spread",
+          marketType: "spread",
+          oddsComparison: spread.oddsComparison || null,
+          home: spread.home || null,
+          away: spread.away || null,
+          line: spread.line ?? null,
+        }
+      : null,
+    total: total
+      ? {
+          market: "total",
+          marketType: "total",
+          oddsComparison: total.oddsComparison || null,
+          over: total.over || null,
+          under: total.under || null,
+          line: total.line ?? null,
+        }
+      : null,
+  };
+}
+
+function americanToImpliedProb(american) {
+  const a = Number(american);
+  if (!Number.isFinite(a) || a === 0) return null;
+  if (a > 0) return 100 / (a + 100);
+  return -a / (-a + 100);
+}
+function evPerDollarStake(p, decimalOdds) {
+  if (!Number.isFinite(p) || !Number.isFinite(decimalOdds)) return null;
+  return p * (decimalOdds - 1) - (1 - p);
+}
+function kellyFraction(p, decimalOdds) {
+  if (!Number.isFinite(p) || !Number.isFinite(decimalOdds)) return null;
+  const b = decimalOdds - 1;
+  if (!(b > 0)) return null;
+  const q = 1 - p;
+  return (b * p - q) / b;
+}
+function computeMarketEV({ oddsAmerican, winProb, stake = 100 }) {
+  const odds = Number(oddsAmerican);
+  const pRaw = Number(winProb);
+
+  if (!Number.isFinite(odds) || odds === 0) return null;
+  if (!Number.isFinite(pRaw)) return null;
+
+  const p = clampNum(pRaw, 0, 1);
+
+  const decimalOdds = americanToDecimalOdds(odds);
+  const impliedProb = americanToImpliedProbSafe(odds);
+  if (decimalOdds == null || impliedProb == null) return null;
+
+  const edge = p - impliedProb;
+  const ev1 = evPerDollarStake(p, decimalOdds);
+  const evStake = ev1 == null ? null : ev1 * stake;
+
+  const k = kellyFraction(p, decimalOdds);
+  const kClamped = k == null ? null : clampNum(k, -0.10, 0.10);
+
+  return {
+    impliedProb,
+    breakEvenProb: impliedProb,
+    modelProb: p,
+    edge,
+    evPerDollar: ev1,
+    evForStake100: evStake,
+    kellyFull: kClamped,
+    kellyHalf: kClamped == null ? null : kClamped / 2,
+  };
+}
+function normalizeNoVig(pA, pB) {
+  if (!Number.isFinite(pA) || !Number.isFinite(pB)) return { pA: null, pB: null, vig: null };
+  const sum = pA + pB;
+  if (!(sum > 0)) return { pA: null, pB: null, vig: null };
+  return { pA: pA / sum, pB: pB / sum, vig: sum - 1 };
+}
+function ymdToOddsIsoRange(ymd) {
+  const startIso = `${ymd}T00:00:00Z`;
+  const startMs = Date.parse(`${ymd}T00:00:00Z`);
+  const endMs = startMs + 30 * 60 * 60 * 1000;
+  const endIso = new Date(endMs).toISOString().replace(/\.\d{3}Z$/, "Z");
+  return { startIso, endIso };
+}
+function redactOddsUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.searchParams.has("apiKey")) u.searchParams.set("apiKey", "REDACTED");
+    return u.toString();
+  } catch {
+    return String(url || "").replace(/apiKey=([^&]+)/gi, "apiKey=REDACTED");
+  }
+}
+function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
+  const sport = String(sportKey || "").trim();
+  if (!sport) throw new Error("Missing Odds API sportKey");
+
+  const common =
+    `apiKey=${encodeURIComponent(ODDS_API_KEY)}` +
+    `&regions=${encodeURIComponent(ODDS_REGIONS)}` +
+    `&markets=${encodeURIComponent(ODDS_MARKETS)}` +
+    `&oddsFormat=${encodeURIComponent(ODDS_ODDS_FORMAT)}` +
+    `&dateFormat=iso` +
+    (ODDS_COMPARISON_ALL_BOOKS ? "" : `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`);
+
+  if (historical) {
+    const snap = `${ymd}T12:00:00Z`;
+    return `${ODDS_API_BASE}/historical/sports/${sport}/odds?date=${encodeURIComponent(snap)}&${common}`;
+  }
+
+  const { startIso, endIso } = ymdToOddsIsoRange(ymd);
+  return (
+    `${ODDS_API_BASE}/sports/${sport}/odds` +
+    `?${common}` +
+    `&commenceTimeFrom=${encodeURIComponent(startIso)}` +
+    `&commenceTimeTo=${encodeURIComponent(endIso)}`
+  );
+}
+
+async function fetchVegasForLeagueDate(league, ymd) {
+  if (!ODDS_API_KEY) {
+    return { ok: false, reason: "missing_odds_key", map: new Map(), meta: { league, url: null, events: null } };
+  }
+
+  const sportKey =
+    league === "nba" ? ODDS_SPORT_NBA : league === "ncaam" ? ODDS_SPORT_NCAAM : league === "nhl" ? ODDS_SPORT_NHL : "";
+
+  if (!sportKey) {
+    return {
+      ok: false,
+      reason: "unsupported_league_for_odds",
+      map: new Map(),
+      meta: { league, url: null, events: null },
+    };
+  }
+
+  const isPast = isPastDateUTC(ymd);
+  if (isPast && !ODDS_ALLOW_HISTORICAL) {
+    const urlWouldBe = buildOddsUrlForDate(ymd, { sportKey, historical: true });
+    return {
+      ok: false,
+      reason: "historical_disabled_for_past_dates",
+      map: new Map(),
+      meta: { league, url: redactOddsUrl(urlWouldBe), events: null, bookmaker: ODDS_BOOKMAKER, shape: "historical" },
+    };
+  }
+
+  const url = buildOddsUrlForDate(ymd, { sportKey, historical: isPast });
+
+  const data = await fetchJson(
+    url,
+    {},
+    { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 1, timeoutMs: 7_000, hostConcurrency: 1 }
+  ).catch((e) => ({ __error: String(e?.message || e) }));
+
+  const errMsg = String(data?.__error || "");
+  if (errMsg.includes("HISTORICAL_UNAVAILABLE_ON_FREE_USAGE_PLAN")) {
+    return {
+      ok: false,
+      reason: "historical_unavailable_on_free_plan",
+      map: new Map(),
+      meta: { league, url: redactOddsUrl(url), events: null, bookmaker: ODDS_BOOKMAKER, shape: "historical" },
+    };
+  }
+  if (errMsg.includes("INVALID_COMMENCE_TIME_FROM")) {
+    return {
+      ok: false,
+      reason: "invalid_commence_time_from",
+      map: new Map(),
+      meta: { league, url: redactOddsUrl(url), events: null, bookmaker: ODDS_BOOKMAKER },
+    };
+  }
+  if (!data || data.__error) {
+    return {
+      ok: false,
+      reason: data?.__error || "odds_fetch_failed",
+      map: new Map(),
+      meta: { league, url: redactOddsUrl(url), events: null, bookmaker: ODDS_BOOKMAKER },
+    };
+  }
+
+  const eventsArray = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
+  const map = new Map();
+  const sampleKeys = [];
+
+  for (const ev of eventsArray) {
+    const home = normTeamName(ev?.home_team);
+    const away = normTeamName(ev?.away_team);
+    if (!home || !away) continue;
+
+    const bks = Array.isArray(ev?.bookmakers) ? ev.bookmakers : [];
+    const bk = bks.find((b) => String(b?.key || "").toLowerCase() === ODDS_BOOKMAKER) || bks[0] || null;
+    const markets = Array.isArray(bk?.markets) ? bk.markets : [];
+
+    const out = {
+      bookmaker: bk?.key || ODDS_BOOKMAKER,
+      lastUpdate: bk?.last_update || null,
+      eventStart: ev?.commence_time || null,
+      h2h: null,
+      spreads: null,
+      totals: null,
+      books: {
+        h2h: [],
+        spreads: [],
+        totals: [],
+      },
+    };
+
+    for (const bkRow of bks) {
+      const bkMarkets = Array.isArray(bkRow?.markets) ? bkRow.markets : [];
+      const bookKey = String(bkRow?.key || "").toLowerCase() || null;
+      const bookTitle = String(bkRow?.title || bkRow?.key || "Book");
+      const bookLastUpdate = bkRow?.last_update || null;
+
+      const bkH2h = bkMarkets.find((m) => m?.key === "h2h");
+      if (bkH2h?.outcomes?.length >= 2) {
+        const oHome = bkH2h.outcomes.find((o) => normTeamName(o?.name) === home);
+        const oAway = bkH2h.outcomes.find((o) => normTeamName(o?.name) === away);
+        const pHomeRaw = americanToImpliedProb(oHome?.price);
+        const pAwayRaw = americanToImpliedProb(oAway?.price);
+        const nv = normalizeNoVig(pHomeRaw, pAwayRaw);
+        out.books.h2h.push({
+          bookmaker: bookKey,
+          bookTitle,
+          lastUpdate: bookLastUpdate,
+          home: oHome?.price ?? null,
+          away: oAway?.price ?? null,
+          pHome: nv.pA,
+          pAway: nv.pB,
+          vig: nv.vig,
+        });
+      }
+
+      const bkSpreads = bkMarkets.find((m) => m?.key === "spreads");
+      if (bkSpreads?.outcomes?.length >= 2) {
+        const oHome = bkSpreads.outcomes.find((o) => normTeamName(o?.name) === home);
+        const oAway = bkSpreads.outcomes.find((o) => normTeamName(o?.name) === away);
+        out.books.spreads.push({
+          bookmaker: bookKey,
+          bookTitle,
+          lastUpdate: bookLastUpdate,
+          homeSpread: Number.isFinite(Number(oHome?.point)) ? Number(oHome.point) : null,
+          awaySpread: Number.isFinite(Number(oAway?.point)) ? Number(oAway.point) : null,
+          homePrice: oHome?.price ?? null,
+          awayPrice: oAway?.price ?? null,
+        });
+      }
+
+      const bkTotals = bkMarkets.find((m) => m?.key === "totals");
+      if (bkTotals?.outcomes?.length >= 2) {
+        const oOver = bkTotals.outcomes.find((o) => String(o?.name || "").toLowerCase() === "over");
+        const oUnder = bkTotals.outcomes.find((o) => String(o?.name || "").toLowerCase() === "under");
+        out.books.totals.push({
+          bookmaker: bookKey,
+          bookTitle,
+          lastUpdate: bookLastUpdate,
+          total: Number.isFinite(Number(oOver?.point))
+            ? Number(oOver.point)
+            : Number.isFinite(Number(oUnder?.point))
+              ? Number(oUnder.point)
+              : null,
+          overPrice: oOver?.price ?? null,
+          underPrice: oUnder?.price ?? null,
+        });
+      }
+    }
+
+    const h2h = markets.find((m) => m?.key === "h2h");
+    if (h2h?.outcomes?.length >= 2) {
+      const oHome = h2h.outcomes.find((o) => normTeamName(o?.name) === home);
+      const oAway = h2h.outcomes.find((o) => normTeamName(o?.name) === away);
+      const pHomeRaw = americanToImpliedProb(oHome?.price);
+      const pAwayRaw = americanToImpliedProb(oAway?.price);
+      const nv = normalizeNoVig(pHomeRaw, pAwayRaw);
+      out.h2h = { home: oHome?.price ?? null, away: oAway?.price ?? null, pHome: nv.pA, pAway: nv.pB, vig: nv.vig };
+    }
+
+    const sp = markets.find((m) => m?.key === "spreads");
+    if (sp?.outcomes?.length >= 2) {
+      const oHome = sp.outcomes.find((o) => normTeamName(o?.name) === home);
+      const oAway = sp.outcomes.find((o) => normTeamName(o?.name) === away);
+      out.spreads = {
+        homeSpread: Number.isFinite(Number(oHome?.point)) ? Number(oHome.point) : null,
+        awaySpread: Number.isFinite(Number(oAway?.point)) ? Number(oAway.point) : null,
+        homePrice: oHome?.price ?? null,
+        awayPrice: oAway?.price ?? null,
+      };
+    }
+
+    const tt = markets.find((m) => m?.key === "totals");
+    if (tt?.outcomes?.length >= 2) {
+      const oOver = tt.outcomes.find((o) => String(o?.name || "").toLowerCase() === "over");
+      const oUnder = tt.outcomes.find((o) => String(o?.name || "").toLowerCase() === "under");
+      out.totals = {
+        total: Number.isFinite(Number(oOver?.point))
+          ? Number(oOver.point)
+          : Number.isFinite(Number(oUnder?.point))
+            ? Number(oUnder.point)
+            : null,
+        overPrice: oOver?.price ?? null,
+        underPrice: oUnder?.price ?? null,
+      };
+    }
+
+    const k = `${home}|${away}`;
+    map.set(k, out);
+    if (sampleKeys.length < 6) sampleKeys.push(k);
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    map,
+    meta: {
+      league,
+      url: redactOddsUrl(url),
+      events: map.size,
+      bookmaker: ODDS_BOOKMAKER,
+      sampleKeys,
+      shape: Array.isArray(data) ? "live" : Array.isArray(data?.data) ? "historical" : "unknown",
+    },
+  };
+}
+
+function invertVegasRow(row) {
+  if (!row) return null;
+  const out = {
+    bookmaker: row.bookmaker ?? null,
+    lastUpdate: row.lastUpdate ?? null,
+    h2h: null,
+    spreads: null,
+    totals: row.totals ? { ...row.totals } : null,
+    books: {
+      h2h: Array.isArray(row?.books?.h2h)
+        ? row.books.h2h.map((b) => ({
+            ...b,
+            home: b?.away ?? null,
+            away: b?.home ?? null,
+            pHome: b?.pAway ?? null,
+            pAway: b?.pHome ?? null,
+          }))
+        : [],
+      spreads: Array.isArray(row?.books?.spreads)
+        ? row.books.spreads.map((b) => ({
+            ...b,
+            homeSpread: b?.awaySpread ?? null,
+            awaySpread: b?.homeSpread ?? null,
+            homePrice: b?.awayPrice ?? null,
+            awayPrice: b?.homePrice ?? null,
+          }))
+        : [],
+      totals: Array.isArray(row?.books?.totals)
+        ? row.books.totals.map((b) => ({ ...b }))
+        : [],
+    },
+  };
+
+  if (row.h2h) {
+    out.h2h = {
+      home: row.h2h.away ?? null,
+      away: row.h2h.home ?? null,
+      pHome: row.h2h.pAway ?? null,
+      pAway: row.h2h.pHome ?? null,
+      vig: row.h2h.vig ?? null,
+    };
+  }
+  if (row.spreads) {
+    out.spreads = {
+      homeSpread: row.spreads.awaySpread ?? null,
+      awaySpread: row.spreads.homeSpread ?? null,
+      homePrice: row.spreads.awayPrice ?? null,
+      awayPrice: row.spreads.homePrice ?? null,
+    };
+  }
+  return out;
+}
+
+function lookupVegas(vegasMap, homeName, awayName) {
+  if (!vegasMap || !(vegasMap instanceof Map)) return null;
+  const key = `${normTeamName(homeName)}|${normTeamName(awayName)}`;
+  const direct = vegasMap.get(key) || null;
+  if (direct) return direct;
+
+  const revKey = `${normTeamName(awayName)}|${normTeamName(homeName)}`;
+  const rev = vegasMap.get(revKey) || null;
+  if (rev) return invertVegasRow(rev);
+
+  return null;
+}
+
+function normalizeStatusForScoring(rawState) {
+  const s = String(rawState || "").toLowerCase().trim();
+  if (!s) return "Scheduled";
+  if (s === "post" || s === "final" || s.includes("final") || s.includes("post")) return "Final";
+  if (s === "in" || s.includes("in progress") || s.includes("live")) return "In Progress";
+  if (s === "pre" || s.includes("scheduled") || s.includes("preview")) return "Scheduled";
+  return String(rawState) || "Scheduled";
+}
+
+function sigmoid(x) {
+  return 1 / (1 + Math.exp(-x));
+}
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + p * ax);
+  const y =
+    1 -
+    (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) *
+      Math.exp(-ax * ax);
+  return sign * y;
+}
+function normalCdf(x, mean, sd) {
+  if (!Number.isFinite(x) || !Number.isFinite(mean) || !Number.isFinite(sd) || sd <= 0) return null;
+  const z = (x - mean) / (sd * Math.SQRT2);
+  return 0.5 * (1 + erf(z));
+}
+function coverProbHome(meanMargin, homeSpreadLine, sdMargin) {
+  if (!Number.isFinite(meanMargin) || !Number.isFinite(homeSpreadLine) || !Number.isFinite(sdMargin)) return null;
+  const threshold = -homeSpreadLine;
+  const cdf = normalCdf(threshold, meanMargin, sdMargin);
+  if (cdf == null) return null;
+  return clampNum(1 - cdf, 0, 1);
+}
+function overProb(meanTotal, totalLine, sdTotal) {
+  if (!Number.isFinite(meanTotal) || !Number.isFinite(totalLine) || !Number.isFinite(sdTotal)) return null;
+  const cdf = normalCdf(totalLine, meanTotal, sdTotal);
+  if (cdf == null) return null;
+  return clampNum(1 - cdf, 0, 1);
+}
+
+const CAL = {
+  nba: { marginSd: 11.5, totalSd: 14.0, baseTotal: 222.0, marginScale: 26.0 },
+  ncaam: { marginSd: 10.5, totalSd: 13.0, baseTotal: 142.0, marginScale: 24.0 },
+  nhl: { marginSd: 1.9, totalSd: 1.9, baseTotal: 6.1, marginScale: 4.2 },
+};
+
+function recommendedTierFromCandidate(c) {
+  const e = Number.isFinite(c?.edge) ? c.edge : null;
+  const ev = Number.isFinite(c?.evForStake100) ? c.evForStake100 : null;
+  const kh = Number.isFinite(c?.kellyHalf) ? c.kellyHalf : null;
+  const league = String(c?.league || "").toLowerCase();
+
+  if (e == null || ev == null || kh == null) return "PASS";
+
+  if (league === "ncaam") {
+    if (e >= 0.08 && ev >= 8 && kh >= 0.02) return "ELITE";
+    if (e >= 0.025 && ev >= 2 && kh >= 0.008) return "STRONG";
+    return "PASS";
+  }
+
+  // Second tightening pass:
+  // - only keep stronger conviction bets
+  // - remove EDGE entirely
+  if (e < 0.08 || ev < 8 || kh < 0.02) return "PASS";
+
+  if (e >= 0.15 && ev >= 20 && kh >= 0.04) return "ELITE";
+  if (e >= 0.08 && ev >= 8 && kh >= 0.02) return "STRONG";
+
+  return "PASS";
+}
+const TIER_RANK = { PASS: 0, LEAN: 1, EDGE: 2, STRONG: 3, ELITE: 4 };
+
+function pickFromCandidate(reco) {
+  if (!reco || reco.tier === "PASS") return { pick: null, tier: "PASS" };
+  return { pick: { marketType: reco.marketType, side: reco.side, line: reco.line ?? null }, tier: reco.tier };
+}
+
+function pickStringFromPickDetail(pickDetail) {
+  // Back-compat for scorers/UI expecting a simple string.
+  // Returns: "home" | "away" | "over" | "under" | "PASS"
+  const p = pickDetail?.pick;
+  if (!p || !p.marketType || !p.side) return "PASS";
+  const side = String(p.side).toLowerCase();
+  if (side === "home" || side === "away" || side === "over" || side === "under") return side;
+  return "PASS";
+}
+
+function marketPickStringFromRecommendedBet(recommendedBet) {
+  if (!recommendedBet?.marketType || !recommendedBet?.side) return "PASS";
+  const side = String(recommendedBet.side).toLowerCase();
+  if (side === "home" || side === "away" || side === "over" || side === "under") return side;
+  return "PASS";
+}
+
+function americanOddsSortValue(odds) {
+  const n = Number(odds);
+  if (!Number.isFinite(n)) return -999999;
+  return n;
+}
+
+function buildOddsComparisonForMarketType(marketType, vegasRow) {
+  const mt = String(marketType || "").toLowerCase();
+  const books = Array.isArray(vegasRow?.books) ? vegasRow.books : [];
+  if (!mt || !books.length) return null;
+
+  const rows = [];
+
+  for (const b of books) {
+    if (!b) continue;
+
+    if (mt === "moneyline") {
+      const homeOdds = Number(b?.homeOdds);
+      const awayOdds = Number(b?.awayOdds);
+
+      if (Number.isFinite(homeOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "home",
+          odds: homeOdds,
+          line: null,
+        });
+      }
+
+      if (Number.isFinite(awayOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "away",
+          odds: awayOdds,
+          line: null,
+        });
+      }
+    }
+
+    if (mt === "spread") {
+      const homeLine = Number(b?.homeSpread);
+      const awayLine = Number(b?.awaySpread);
+      const homeOdds = Number(b?.homeSpreadOdds);
+      const awayOdds = Number(b?.awaySpreadOdds);
+
+      if (Number.isFinite(homeLine) && Number.isFinite(homeOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "home",
+          odds: homeOdds,
+          line: homeLine,
+        });
+      }
+
+      if (Number.isFinite(awayLine) && Number.isFinite(awayOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "away",
+          odds: awayOdds,
+          line: awayLine,
+        });
+      }
+    }
+
+    if (mt === "total") {
+      const totalLine = Number(b?.totalLine);
+      const overOdds = Number(b?.overOdds);
+      const underOdds = Number(b?.underOdds);
+
+      if (Number.isFinite(totalLine) && Number.isFinite(overOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "over",
+          odds: overOdds,
+          line: totalLine,
+        });
+      }
+
+      if (Number.isFinite(totalLine) && Number.isFinite(underOdds)) {
+        rows.push({
+          bookKey: b?.bookmaker ?? null,
+          book: b?.bookTitle ?? b?.bookmaker ?? null,
+          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+          side: "under",
+          odds: underOdds,
+          line: totalLine,
+        });
+      }
+    }
+  }
+
+  if (!rows.length) return null;
+
+  return {
+    preferredBook: ODDS_BOOKMAKER,
+    bestBook: null,
+    bestBookKey: null,
+    bestOdds: null,
+    bestLine: null,
+    booksLastUpdate: vegasRow?.lastUpdate ?? null,
+    books: rows,
+  };
+}
+
+function buildExplicitMarketNodesFromVegas(markets, vegasRow) {
+  const src = markets && typeof markets === "object" ? markets : {};
+
+  const moneyline = src.moneyline || null;
+  const spread = src.spread || null;
+  const total = src.total || null;
+
+  return {
+    moneyline: moneyline
+      ? {
+          market: "moneyline",
+          marketType: "moneyline",
+          oddsComparison: buildOddsComparisonForMarketType("moneyline", vegasRow),
+          home: moneyline.home || null,
+          away: moneyline.away || null,
+          line: null,
+        }
+      : null,
+    spread: spread
+      ? {
+          market: "spread",
+          marketType: "spread",
+          oddsComparison: buildOddsComparisonForMarketType("spread", vegasRow),
+          home: spread.home || null,
+          away: spread.away || null,
+          line: spread.line ?? null,
+        }
+      : null,
+    total: total
+      ? {
+          market: "total",
+          marketType: "total",
+          oddsComparison: buildOddsComparisonForMarketType("total", vegasRow),
+          over: total.over || null,
+          under: total.under || null,
+          line: total.line ?? null,
+        }
+      : null,
+  };
+}
+
+function buildOddsComparisonForCompatMarket(recommendedBet, vegasRow) {
+  if (!recommendedBet?.marketType || !recommendedBet?.side || !vegasRow?.books) return null;
+
+  const marketType = String(recommendedBet.marketType || "").toLowerCase();
+  const side = String(recommendedBet.side || "").toLowerCase();
+
+  let books = [];
+
+  if (marketType === "moneyline") {
+    books = (vegasRow?.books?.h2h || [])
+      .map((b) => ({
+        bookKey: b?.bookmaker ?? null,
+        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
+        lastUpdate: b?.lastUpdate ?? null,
+        odds: side === "home" ? b?.home ?? null : side === "away" ? b?.away ?? null : null,
+        line: null,
+      }))
+      .filter((b) => Number.isFinite(Number(b.odds)));
+  } else if (marketType === "spread") {
+    books = (vegasRow?.books?.spreads || [])
+      .map((b) => ({
+        bookKey: b?.bookmaker ?? null,
+        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
+        lastUpdate: b?.lastUpdate ?? null,
+        odds: side === "home" ? b?.homePrice ?? null : side === "away" ? b?.awayPrice ?? null : null,
+        line: side === "home" ? b?.homeSpread ?? null : side === "away" ? b?.awaySpread ?? null : null,
+      }))
+      .filter((b) => Number.isFinite(Number(b.odds)));
+  } else if (marketType === "total") {
+    books = (vegasRow?.books?.totals || [])
+      .map((b) => ({
+        bookKey: b?.bookmaker ?? null,
+        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
+        lastUpdate: b?.lastUpdate ?? null,
+        odds: side === "over" ? b?.overPrice ?? null : side === "under" ? b?.underPrice ?? null : null,
+        line: b?.total ?? null,
+      }))
+      .filter((b) => Number.isFinite(Number(b.odds)));
+  }
+
+  if (!books.length) return null;
+
+  books = books.sort((a, b) => americanOddsSortValue(b.odds) - americanOddsSortValue(a.odds));
+
+  const best = books[0] || null;
+
+  return {
+    preferredBook: vegasRow?.bookmaker ?? null,
+    bestBook: best?.book ?? null,
+    bestBookKey: best?.bookKey ?? null,
+    bestOdds: best?.odds ?? null,
+    bestLine: best?.line ?? (recommendedBet?.line ?? null),
+    booksLastUpdate: best?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+    books,
+  };
+}
+
+function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, isTournamentContext = false }) {
+  const cal = CAL[league] || CAL.nba;
+
+  const markets = {
+    moneyline: { home: null, away: null },
+    spread: { home: null, away: null },
+    total: { over: null, under: null, line: null },
+  };
+
+  if (vegasRow?.h2h) {
+    const pHome = Number.isFinite(pHomeWin) ? clampNum(pHomeWin, 0, 1) : null;
+    const pAway = pHome != null ? 1 - pHome : null;
+
+    const homeOdds = vegasRow.h2h.home ?? null;
+    const awayOdds = vegasRow.h2h.away ?? null;
+
+    markets.moneyline.home =
+      homeOdds != null && pHome != null
+        ? { odds: homeOdds, ...computeMarketEV({ oddsAmerican: homeOdds, winProb: pHome }) }
+        : null;
+
+    markets.moneyline.away =
+      awayOdds != null && pAway != null
+        ? { odds: awayOdds, ...computeMarketEV({ oddsAmerican: awayOdds, winProb: pAway }) }
+        : null;
+  }
+
+  if (vegasRow?.spreads) {
+    const homeLine = Number.isFinite(Number(vegasRow.spreads.homeSpread)) ? Number(vegasRow.spreads.homeSpread) : null;
+    const awayLine = Number.isFinite(Number(vegasRow.spreads.awaySpread)) ? Number(vegasRow.spreads.awaySpread) : null;
+
+    const homeOdds = vegasRow.spreads.homePrice ?? null;
+    const awayOdds = vegasRow.spreads.awayPrice ?? null;
+
+    const pHomeCover = homeLine != null ? coverProbHome(meanMargin, homeLine, cal.marginSd) : null;
+    const pAwayCover = pHomeCover != null ? 1 - pHomeCover : null;
+
+    markets.spread.home =
+      homeOdds != null && pHomeCover != null
+        ? { line: homeLine, odds: homeOdds, ...computeMarketEV({ oddsAmerican: homeOdds, winProb: pHomeCover }) }
+        : null;
+
+    markets.spread.away =
+      awayOdds != null && pAwayCover != null
+        ? { line: awayLine, odds: awayOdds, ...computeMarketEV({ oddsAmerican: awayOdds, winProb: pAwayCover }) }
+        : null;
+  }
+
+  if (vegasRow?.totals) {
+    const line = Number.isFinite(Number(vegasRow.totals.total)) ? Number(vegasRow.totals.total) : null;
+    const overOdds = vegasRow.totals.overPrice ?? null;
+    const underOdds = vegasRow.totals.underPrice ?? null;
+
+    const pOver = line != null ? overProb(meanTotal, line, cal.totalSd) : null;
+    const pUnder = pOver != null ? 1 - pOver : null;
+
+    markets.total.line = line;
+
+    markets.total.over =
+      overOdds != null && pOver != null
+        ? { odds: overOdds, ...computeMarketEV({ oddsAmerican: overOdds, winProb: pOver }) }
+        : null;
+
+    markets.total.under =
+      underOdds != null && pUnder != null
+        ? { odds: underOdds, ...computeMarketEV({ oddsAmerican: underOdds, winProb: pUnder }) }
+        : null;
+  }
+
+  const candidates = [];
+  let bestRejectedCandidate = null;
+
+  function pushCandidate(marketType, side, payload) {
+    if (!payload) return;
+    const edge = payload.edge;
+    const evForStake100 = payload.evForStake100;
+    const kellyHalf = payload.kellyHalf;
+    if (!Number.isFinite(edge) || !Number.isFinite(evForStake100) || !Number.isFinite(kellyHalf)) return;
+
+    const c = {
+      league,
+      marketType,
+      side,
+      line: payload.line ?? (marketType === "total" ? markets.total.line : null),
+      odds: payload.odds ?? null,
+      modelProb: payload.modelProb ?? null,
+      impliedProb: payload.impliedProb ?? null,
+      edge,
+      evForStake100,
+      kellyHalf,
+      tier: "PASS",
+    };
+    c.tier = recommendedTierFromCandidate(c);
+
+    if (
+      !bestRejectedCandidate ||
+      (Number.isFinite(c.edge) ? c.edge : -999) > (Number.isFinite(bestRejectedCandidate.edge) ? bestRejectedCandidate.edge : -999) ||
+      (
+        (Number.isFinite(c.edge) ? c.edge : -999) === (Number.isFinite(bestRejectedCandidate.edge) ? bestRejectedCandidate.edge : -999) &&
+        (Number.isFinite(c.evForStake100) ? c.evForStake100 : -999) > (Number.isFinite(bestRejectedCandidate.evForStake100) ? bestRejectedCandidate.evForStake100 : -999)
+      )
+    ) {
+      bestRejectedCandidate = { ...c };
+    }
+
+    if (c.tier !== "PASS") candidates.push(c);
+  }
+
+  pushCandidate("moneyline", "home", markets.moneyline.home);
+  pushCandidate("moneyline", "away", markets.moneyline.away);
+
+  pushCandidate("spread", "home", markets.spread.home);
+  pushCandidate("spread", "away", markets.spread.away);
+
+  pushCandidate("total", "over", markets.total.over);
+  pushCandidate("total", "under", markets.total.under);
+
+  if (candidates.length === 0 && bestRejectedCandidate) {
+    bestRejectedCandidate.tier = "LEAN";
+    candidates.push(bestRejectedCandidate);
+  }
+
+  const premiumSelection = applyPremiumSelection(league, candidates);
+  let recommended = premiumSelection.recommended ?? null;
+
+  // Premium quality gate
+  if (recommended) {
+    const e = Number.isFinite(recommended.edge) ? recommended.edge : null;
+    const ev = Number.isFinite(recommended.evForStake100) ? recommended.evForStake100 : null;
+    const kh = Number.isFinite(recommended.kellyHalf) ? recommended.kellyHalf : null;
+    const odds = Number.isFinite(recommended.odds) ? recommended.odds : null;
+    const line = Number.isFinite(recommended.line) ? recommended.line : null;
+    const mt = String(recommended.marketType || "").toLowerCase();
+
+    let minEdge = 0.06;
+    let minEv = 5;
+    let minKellyHalf = 0.02;
+
+    if (mt === "moneyline") {
+      if (league === "ncaam") {
+        minEdge = 0.025;
+        minEv = 2;
+        minKellyHalf = 0.008;
+      } else
+      if (league === "nba") {
+        minEdge = 0.06;
+        minEv = 5;
+        minKellyHalf = 0.02;
+      } else {
+        minEdge = 0.04;
+        minEv = 3;
+        minKellyHalf = 0.01;
+      }
+    } else if (mt === "spread") {
+      if (league === "nba") {
+        minEdge = 0.055;
+        minEv = 5;
+        minKellyHalf = 0.02;
+      } else {
+        minEdge = 0.045;
+        minEv = 3.5;
+        minKellyHalf = 0.015;
+      }
+    } else if (mt === "total") {
+      minEdge = 0.055;
+      minEv = 4.5;
+      minKellyHalf = 0.02;
+    }
+
+    // Tournament totals need stronger discipline
+    if (league === "ncaam" && mt === "total" && isTournamentContext) {
+      minEdge = 0.08;
+      minEv = 8;
+      minKellyHalf = 0.02;
+    }
+
+    if (
+      e == null ||
+      ev == null ||
+      kh == null ||
+      e < minEdge ||
+      ev < minEv ||
+      kh < minKellyHalf
+    ) {
+      recommended = null;
+    }
+
+    // Market sanity filters
+    if (recommended && league === "nba" && mt === "spread" && line != null && Math.abs(line) > 17.5) {
+      recommended = null;
+    }
+
+    if (recommended && league === "nba" && mt === "moneyline" && odds != null && odds > 400) {
+      recommended = null;
+    }
+
+    if (recommended && league === "nhl" && odds != null && odds < -200) {
+      recommended = null;
+    }
+  }
+
+  return {
+    markets,
+    recommended,
+    premiumCandidates: premiumSelection.candidates || [],
+  };
+}
+
+function deriveMeansFromStats(league, pHome, homeStats, awayStats) {
+  const cal = CAL[league] || CAL.nba;
+
+  const p = Number.isFinite(pHome) ? clampNum(pHome, 0, 1) : 0.5;
+  const meanMargin = (p - 0.5) * cal.marginScale;
+
+  const hPF = Number.isFinite(homeStats?.pointsForPerGame) ? homeStats.pointsForPerGame : null;
+  const hPA = Number.isFinite(homeStats?.pointsAgainstPerGame) ? homeStats.pointsAgainstPerGame : null;
+  const aPF = Number.isFinite(awayStats?.pointsForPerGame) ? awayStats.pointsForPerGame : null;
+  const aPA = Number.isFinite(awayStats?.pointsAgainstPerGame) ? awayStats.pointsAgainstPerGame : null;
+
+  let meanTotal = cal.baseTotal;
+  if (hPF != null && hPA != null && aPF != null && aPA != null) {
+    const proxy = (hPF + aPF + hPA + aPA) / 2;
+    meanTotal = 0.75 * cal.baseTotal + 0.25 * proxy;
+  }
+
+  return { meanMargin, meanTotal };
+}
+
+function buildCompatMarket(recommendedBet) {
+  // Backward compatible "market" object for frontend
+  if (!recommendedBet) {
+    return {
+      marketType: null,
+      marketOdds: null,
+      marketLine: null,
+      marketSide: null,
+      winProb: null,
+      edgeVsMarket: null,
+      recommendedMarket: null,
+      tier: "PASS",
+      pick: "PASS",
+      evForStake100: null,
+      kellyHalf: null,
+};
+  }
+
+  const mt = recommendedBet.marketType ?? null;
+  const side = recommendedBet.side ?? null;
+
+  // Normalize pick string the UI already expects
+  let pick = "PASS";
+  if (mt === "moneyline" && (side === "home" || side === "away")) pick = side;
+  else if (mt === "spread" && (side === "home" || side === "away")) pick = side;
+  else if (mt === "total" && (side === "over" || side === "under")) pick = side;
+
+  return {
+    marketType: mt,
+    marketOdds: Number.isFinite(recommendedBet.odds) ? recommendedBet.odds : null,
+    marketLine: Number.isFinite(recommendedBet.line) ? recommendedBet.line : null,
+    marketSide: side,
+    winProb: Number.isFinite(recommendedBet.modelProb) ? Number(recommendedBet.modelProb) : (Number.isFinite(recommendedBet.winProb) ? Number(recommendedBet.winProb) : null),
+    edgeVsMarket: Number.isFinite(recommendedBet.edge) ? recommendedBet.edge : null,
+    recommendedMarket: mt,
+    tier: String(recommendedBet.tier || "PASS"),
+    pick,
+    evForStake100: Number.isFinite(recommendedBet.evForStake100) ? recommendedBet.evForStake100 : null,
+    kellyHalf: Number.isFinite(recommendedBet.kellyHalf) ? recommendedBet.kellyHalf : null,
+
+    // Forward full two-sided moneyline odds for Upsets / downstream consumers
+  };
+}
+
+function toNbaTeamId(abbr) {
+  return `nba-${String(abbr || "").toLowerCase()}`;
+}
+function buildNbaDisplayName(teamObj, abbrFallback) {
+  const full = String(teamObj?.full_name || "").trim();
+  if (full) return full;
+  const city = String(teamObj?.city || "").trim();
+  const name = String(teamObj?.name || "").trim();
+  const composed = `${city} ${name}`.trim();
+  return composed || String(abbrFallback || "").trim() || "";
+}
+
+async function getNbaGamesByDate(dateYYYYMMDD) {
+  if (!NBA_API_KEY) throw new Error("Missing NBA_API_KEY (set in apps/api/.env)");
+
+  const url = `${NBA_API_BASE}/games?per_page=100&dates[]=${encodeURIComponent(dateYYYYMMDD)}`;
+  const json = await fetchJson(
+    url,
+    { headers: { Authorization: NBA_API_KEY } },
+    { cacheTtlMs: CACHE_TTL_MS, hostConcurrency: 2 }
+  );
+
+  const rows = json?.data || [];
+  return rows.map((g) => {
+    const homeAbbr = g?.home_team?.abbreviation || null;
+    const awayAbbr = g?.visitor_team?.abbreviation || null;
+
+    const homeName = buildNbaDisplayName(g?.home_team, homeAbbr);
+    const awayName = buildNbaDisplayName(g?.visitor_team, awayAbbr);
+
+    const homeScore = typeof g?.home_team_score === "number" ? g.home_team_score : null;
+    const awayScore = typeof g?.visitor_team_score === "number" ? g.visitor_team_score : null;
+
+    const rawStatus = String(g?.status || "");
+    const s = rawStatus.toLowerCase();
+    const status = s.includes("final") ? "Final" : s.includes("in progress") || s === "in" ? "In Progress" : "Scheduled";
+
+    return {
+      gameId: `nba-${g.id}`,
+      date: String(g?.date || "").slice(0, 10),
+      status,
+      home: {
+        id: toNbaTeamId(homeAbbr),
+        name: homeName || homeAbbr || "",
+        abbr: homeAbbr,
+        logo: sanitizeLogoUrl(nbaLogoFromAbbr(homeAbbr)),
+        score: homeScore,
+      },
+      away: {
+        id: toNbaTeamId(awayAbbr),
+        name: awayName || awayAbbr || "",
+        abbr: awayAbbr,
+        logo: sanitizeLogoUrl(nbaLogoFromAbbr(awayAbbr)),
+        score: awayScore,
+      },
+    };
+  });
+}
+
+async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
+  if (!NBA_API_KEY) throw new Error("Missing NBA_API_KEY");
+
+  const cacheKey = `NBA_DATES_RANGE:${startYYYYMMDD}:${endYYYYMMDD}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
+  const dates = [];
+  let cur = startYYYYMMDD;
+  while (cur <= endYYYYMMDD) {
+    dates.push(cur);
+    cur = addDaysUTC(cur, 1);
+  }
+
+  const CHUNK = 7;
+  const MAX_PAGES_PER_CHUNK = 15;
+  const all = [];
+
+  for (let i = 0; i < dates.length; i += CHUNK) {
+    const chunk = dates.slice(i, i + CHUNK);
+    const qs = chunk.map((d) => `dates[]=${encodeURIComponent(d)}`).join("&");
+
+    let page = 1;
+    while (page <= MAX_PAGES_PER_CHUNK) {
+      const url = `${NBA_API_BASE}/games?per_page=100&page=${page}&${qs}`;
+      const json = await fetchJson(
+        url,
+        { headers: { Authorization: NBA_API_KEY } },
+        { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 6, baseBackoffMs: 700, hostConcurrency: 2, timeoutMs: 30_000 }
+      );
+
+      const pageRows = json?.data || [];
+      if (pageRows.length) all.push(...pageRows);
+      if (pageRows.length < 100) break;
+
+      page++;
+      await sleep(250);
+    }
+    await sleep(250);
+  }
+
+  setCache(cacheKey, all, HEAVY_CACHE_TTL_MS);
+  return all;
+}
+
+function buildTeamStatsFromHistory_Generic(histRows, { recent5 = 5, recent10 = 10, scoreFn }) {
+  const byTeamGames = new Map();
+  function add(teamId, game) {
+    if (!byTeamGames.has(teamId)) byTeamGames.set(teamId, []);
+    byTeamGames.get(teamId).push(game);
+  }
+
+  for (const g of histRows) {
+    const parsed = scoreFn(g);
+    if (!parsed) continue;
+
+    const { date, homeId, awayId, homeScore, awayScore } = parsed;
+    if (!homeId || !awayId) continue;
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+    if (homeScore === 0 && awayScore === 0) continue;
+
+    add(homeId, { date, my: homeScore, opp: awayScore });
+    add(awayId, { date, my: awayScore, opp: homeScore });
+  }
+
+  const out = new Map();
+  for (const [teamId, games] of byTeamGames.entries()) {
+    games.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+    const played = games.length;
+    if (!played) {
+      out.set(teamId, { ok: false });
+      continue;
+    }
+
+    let wins = 0, pf = 0, pa = 0;
+    for (const g of games) {
+      pf += g.my;
+      pa += g.opp;
+      if (g.my > g.opp) wins++;
+    }
+
+    const recentN = (n) => {
+      const slice = games.slice(0, n);
+      if (!slice.length) return { played: 0, winPct: null, margin: null };
+      let w = 0, mp = 0;
+      for (const gg of slice) {
+        if (gg.my > gg.opp) w++;
+        mp += gg.my - gg.opp;
+      }
+      return { played: slice.length, winPct: w / slice.length, margin: mp / slice.length };
+    };
+
+    out.set(teamId, {
+      ok: true,
+      played,
+      winPct: wins / played,
+      marginPerGame: (pf - pa) / played,
+      recent5: recentN(recent5),
+      recent10: recentN(recent10),
+      pointsForPerGame: pf / played,
+      pointsAgainstPerGame: pa / played,
+    });
+  }
+
+  return out;
+}
+
+function shrink(x, prior, n, k) {
+  const xx = Number.isFinite(x) ? x : prior;
+  const nn = Number.isFinite(n) ? n : 0;
+  return (nn * xx + k * prior) / (nn + k);
+}
+function pickThresholdFromUncertainty(homePlayed, awayPlayed, base = 0.03) {
+  const n = Math.min(Number(homePlayed) || 0, Number(awayPlayed) || 0);
+  const unc = n > 0 ? 1 / Math.sqrt(n) : 1;
+  return clampNum(base + 0.06 * unc, 0.03, 0.12);
+}
+function nbaEdge(home, away, mode = "v2") {
+  if (!home?.ok || !away?.ok) return NaN;
+
+  if (mode === "v1") {
+    const wWin = 0.42;
+    const wMargin = 0.28;
+    const wR10 = 0.18;
+    const wR5 = 0.12;
+    const winDiff = home.winPct - away.winPct;
+    const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 12, -1, 1);
+    const r10Diff = (safeNum(home.recent10?.winPct) ?? 0.5) - (safeNum(away.recent10?.winPct) ?? 0.5);
+    const r5MarginScaled = clampNum(((safeNum(home.recent5?.margin) ?? 0) - (safeNum(away.recent5?.margin) ?? 0)) / 14, -1, 1);
+    const homeAdv = 0.018;
+    return wWin * winDiff + wMargin * marginScaled + wR10 * r10Diff + wR5 * r5MarginScaled + homeAdv;
+  }
+
+  const nH = home.played ?? 0;
+  const nA = away.played ?? 0;
+
+  const priorWin = 0.5;
+  const priorMargin = 0;
+
+  const homeWin = shrink(home.winPct, priorWin, nH, 18);
+  const awayWin = shrink(away.winPct, priorWin, nA, 18);
+
+  const homeMargin = shrink(home.marginPerGame, priorMargin, nH, 10);
+  const awayMargin = shrink(away.marginPerGame, priorMargin, nA, 10);
+
+  const hR10 = shrink(home.recent10?.winPct, priorWin, home.recent10?.played ?? 0, 6);
+  const aR10 = shrink(away.recent10?.winPct, priorWin, away.recent10?.played ?? 0, 6);
+
+  const hR5m = shrink(home.recent5?.margin, priorMargin, home.recent5?.played ?? 0, 5);
+  const aR5m = shrink(away.recent5?.margin, priorMargin, away.recent5?.played ?? 0, 5);
+
+  const winDiff = homeWin - awayWin;
+  const marginDiff = clampNum((homeMargin - awayMargin) / 12, -1, 1);
+  const r10Diff = clampNum(hR10 - aR10, -1, 1);
+  const r5MarginDiff = clampNum((hR5m - aR5m) / 14, -1, 1);
+
+  const wWin = 0.38;
+  const wMargin = 0.32;
+  const wR10 = 0.18;
+  const wR5m = 0.12;
+  const homeAdv = 0.012;
+
+  return wWin * winDiff + wMargin * marginDiff + wR10 * r10Diff + wR5m * r5MarginDiff + homeAdv;
+}
+function nbaProbFromEdge(edge, edgeScale = 0.11) {
+  if (!Number.isFinite(edge)) return 0.5;
+  return clampNum(sigmoid(edge / edgeScale), 0.33, 0.77);
+}
+function normalizeValueEdge(homeValueEdgeSigned) {
+  const e = Number(homeValueEdgeSigned);
+  if (!Number.isFinite(e)) return null;
+  const shrunk = 0.55 * e;
+  return clampNum(shrunk, -0.20, 0.20);
+}
+
+function buildWhy({ marketPick, notes = [], deltas = [] }) {
+  const bullets = [];
+  if (!marketPick) bullets.push("PASS: no qualifying market met EV/Kelly gates.");
+  else
+    bullets.push(
+      `Recommended: ${marketPick.marketType.toUpperCase()} — ${marketPick.side.toUpperCase()}${marketPick.line != null ? ` (${marketPick.line})` : ""}`
+    );
+
+  for (const n of notes.slice(0, 2)) bullets.push(n);
+
+  for (const d of deltas.slice(0, 3)) {
+    if (!d?.label || !Number.isFinite(d?.value)) continue;
+    const sign = d.value > 0 ? "+" : "";
+    bullets.push(`${d.label}: ${sign}${d.value.toFixed(d.dp ?? 3)}${d.suffix ?? ""}`);
+  }
+  return { bullets: bullets.slice(0, 6) };
+}
+
+
+/* ----------------------------
+   Phase 1: Model-only fallback (historical backfill)
+   - When Vegas odds are unavailable for past dates (free plan), we still emit
+     a conservative MONEYLINE pick so cron can backfill win-rate for 30–90 days.
+   - These picks are flagged as "modelOnly" and do not include odds/EV/Kelly.
+---------------------------- */
+function modelOnlyMoneylinePick(pHome, league) {
+  return null;
+}
+
+function pickStringFromPickObj(pickObj) {
+  const p = pickObj?.pick;
+  if (!p) return "PASS";
+  if (p.marketType === "total") return p.side === "over" ? "over" : p.side === "under" ? "under" : "PASS";
+  if (p.side === "home" || p.side === "away") return p.side;
+  return "PASS";
+}
+
+async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
+  const mv = modelVersion === "v1" ? "v1" : "v2";
+  const key = `PREDV18:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
+
+  return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
+    const t0 = Date.now();
+
+    const slate = await getNbaGamesByDate(dateYYYYMMDD);
+    if (!slate.length) {
+      return {
+        meta: {
+          league: "nba",
+          date: dateYYYYMMDD,
+          windowDays,
+          model: `NBA premium-v22`,
+          mode: "regular",
+          odds: { ok: false, reason: "no_games", events: null, bookmaker: ODDS_BOOKMAKER, url: null, sampleKeys: null },
+          warnings: [],
+          elapsedMs: Date.now() - t0,
+        },
+        games: [],
+      };
+    }
+
+    const odds = await fetchVegasForLeagueDate("nba", dateYYYYMMDD);
+    const oddsMap = odds.ok ? odds.map : new Map();
+    const warnings = [];
+    if (!odds.ok) warnings.push(`Odds unavailable: ${String(odds.reason || "unknown")}`);
+
+    const end = addDaysUTC(dateYYYYMMDD, -1);
+    const start = addDaysUTC(end, -(windowDays - 1));
+    const histRows = await getNbaGamesInRange(start, end);
+
+    const teamStats = buildTeamStatsFromHistory_Generic(histRows, {
+      recent5: 5,
+      recent10: 10,
+      scoreFn: (g) => {
+        const hs = g?.home_team_score;
+        const as = g?.visitor_team_score;
+        if (typeof hs !== "number" || typeof as !== "number") return null;
+        const homeAbbr = g?.home_team?.abbreviation;
+        const awayAbbr = g?.visitor_team?.abbreviation;
+        if (!homeAbbr || !awayAbbr) return null;
+        return {
+          date: String(g?.date || "").slice(0, 10),
+          homeId: toNbaTeamId(homeAbbr),
+          awayId: toNbaTeamId(awayAbbr),
+          homeScore: hs,
+          awayScore: as,
+        };
+      },
+    });
+
+    const games = [];
+    let noBetCount = 0;
+    let modelOnlyCount = 0;
+
+    for (const g of slate) {
+      const homeS = teamStats.get(g.home.id) || { ok: false };
+      const awayS = teamStats.get(g.away.id) || { ok: false };
+
+      const statEdge = nbaEdge(homeS, awayS, mv);
+      const pHomeModel = nbaProbFromEdge(statEdge, 0.11);
+
+      const vegasRow = odds.ok ? lookupVegas(oddsMap, g.home.name, g.away.name) : null;
+      const pHomeMarket = Number.isFinite(vegasRow?.h2h?.pHome) ? vegasRow.h2h.pHome : null;
+
+      let pHomeAnchored = pHomeModel;
+      let anchorAlpha = 0;
+      if (Number.isFinite(pHomeMarket)) {
+        const gap = Math.abs(pHomeModel - pHomeMarket);
+        anchorAlpha = gap <= 0.04 ? 0.65 : gap <= 0.08 ? 0.45 : 0.25;
+        pHomeAnchored = clampNum((1 - anchorAlpha) * pHomeModel + anchorAlpha * pHomeMarket, 0.35, 0.80);
+      }
+
+      const rawHomeValueEdge = Number.isFinite(pHomeMarket) ? (pHomeAnchored - pHomeMarket) : (pHomeAnchored - 0.5);
+      const homeValueEdgeSigned = normalizeValueEdge(rawHomeValueEdge) ?? 0;
+
+      const minEdge = pickThresholdFromUncertainty(homeS.played, awayS.played, 0.03);
+      const pickSide = Math.abs(homeValueEdgeSigned) < minEdge ? null : homeValueEdgeSigned > 0 ? "home" : "away";
+
+      const means = deriveMeansFromStats("nba", pHomeAnchored, homeS, awayS);
+
+      const marketBundle = vegasRow
+        ? buildMarketBundle({
+            league: "nba",
+            pHomeWin: pHomeAnchored,
+            meanMargin: means.meanMargin,
+            meanTotal: means.meanTotal,
+            vegasRow,
+            isTournamentContext: typeof isT !== 'undefined' ? isT : false,
+          })
+        : {
+            markets: {
+              moneyline: { home: null, away: null },
+              spread: { home: null, away: null },
+              total: { over: null, under: null, line: null },
+            },
+            recommended: null,
+          };
+
+      const recommended = marketBundle.recommended;
+      
+const allowModelOnly =
+  String(process.env.ALLOW_MODEL_ONLY_BACKFILL || "true").toLowerCase() !== "false";
+
+let pick = pickFromCandidate(recommended);
+let modelOnly = false;
+
+// Phase 1: if odds are unavailable (common on past dates for free Odds API plans),
+// fall back to a conservative model-only MONEYLINE pick so backfills can score.
+if (!pick?.pick && allowModelOnly && (!odds.ok || !vegasRow)) {
+  const mo = modelOnlyMoneylinePick(pHomeAnchored, "nba");
+  if (mo) {
+    pick = { pick: mo, tier: "LEAN" };
+    modelOnly = true;
+    modelOnlyCount++;
+  }
+}
+
+if (!pick.pick) noBetCount++;
+
+      const why = buildWhy({
+        marketPick: pick.pick,
+        notes: [
+          Number.isFinite(pHomeMarket) ? `Market anchoring alpha: ${anchorAlpha.toFixed(2)}` : "No market ML probability (unanchored).",
+          pickSide
+            ? `Directional lean (not a bet): ${pickSide.toUpperCase()} value edge ${Math.abs(homeValueEdgeSigned).toFixed(3)}`
+            : `Directional lean: PASS (edge<threshold ${minEdge.toFixed(3)})`,
+        ],
+        deltas: [
+          { label: "Home winProb (model)", value: pHomeModel, dp: 3 },
+          { label: "Home winProb (anchored)", value: pHomeAnchored, dp: 3 },
+          ...(Number.isFinite(pHomeMarket) ? [{ label: "Home winProb (market)", value: pHomeMarket, dp: 3 }] : []),
+        ],
+      });
+
+      const recommendedBet = recommended
+        ? {
+            marketType: recommended.marketType,
+            side: recommended.side,
+            line: recommended.line ?? null,
+            odds: recommended.odds ?? null,
+            tier: recommended.tier,
+            modelProb: recommended.modelProb ?? null,
+            impliedProb: recommended.impliedProb ?? null,
+            edge: recommended.edge,
+            evForStake100: recommended.evForStake100,
+            kellyHalf: recommended.kellyHalf,
+            stakePct:
+              recommended.kellyHalf == null ? null : clampNum(recommended.kellyHalf, 0, Number(process.env.KELLY_CAP || 0.25)),
+            modelOnly: false,
+          }
+        : modelOnly && pick?.pick
+          ? {
+              marketType: "moneyline",
+              side: pick.pick.side,
+              line: null,
+              odds: null,
+              tier: pick.tier || "LEAN",
+              // NBA uses anchored probability variable name (pHomeAnchored)
+              modelProb: (pick?.pick?.side === "home" ? pHomeAnchored : 1 - pHomeAnchored),
+              impliedProb: null,
+              edge: null,
+              evForStake100: null,
+              kellyHalf: null,
+              stakePct: null,
+              modelOnly: true,
+            }
+          : null;
+
+      games.push({
+        league: "nba",
+        gameId: g.gameId,
+        date: dateYYYYMMDD,
+        status: g.status,
+        eventStart: vegasRow?.eventStart ?? null,
+
+        home: g.home,
+        away: g.away,
+
+        score: {
+          home: Number.isFinite(g.home?.score) ? g.home.score : null,
+          away: Number.isFinite(g.away?.score) ? g.away.score : null,
+        },
+
+        model: {
+          version: `NBA premium-v22`,
+          windowDays,
+          pHomeModel,
+          pHomeAnchored,
+          pHomeMarket: Number.isFinite(pHomeMarket) ? pHomeMarket : null,
+          homeValueEdgeSigned,
+          minEdgeForDirectionalLean: minEdge,
+        },
+
+        markets: marketBundle.markets,
+        ...buildExplicitMarketNodesFromVegas(marketBundle.markets, vegasRow),
+        premiumCandidates: marketBundle.premiumCandidates || [],
+        recommendedBet,
+
+        market: {
+          ...buildCompatMarket(recommendedBet),
+          oddsComparison: buildOddsComparisonForCompatMarket(recommendedBet, vegasRow),
+          moneyline: {
+            homeOdds: marketBundle?.markets?.moneyline?.home?.odds ?? null,
+            awayOdds: marketBundle?.markets?.moneyline?.away?.odds ?? null,
+            homeWinProb: marketBundle?.markets?.moneyline?.home?.winProb ?? null,
+            awayWinProb: marketBundle?.markets?.moneyline?.away?.winProb ?? null,
+          },
+        },
+
+        pick: pickStringFromPickObj(pick),
+        pickObj: pick,
+
+        why,
+      });
+    }
+
+    return {
+      meta:
+ {
+        league: "nba",
+        date: dateYYYYMMDD,
+        windowDays,
+        model: `NBA premium-v22`,
+        mode: "regular",
+        noBetCount,
+        modelOnlyCount,
+        odds: {
+          ok: Boolean(odds.ok),
+          reason: odds.ok ? null : String(odds.reason || "unknown"),
+          events: Number.isFinite(odds?.meta?.events) ? odds.meta.events : null,
+          bookmaker: odds?.meta?.bookmaker || ODDS_BOOKMAKER,
+          url: odds?.meta?.url || null,
+          sampleKeys: Array.isArray(odds?.meta?.sampleKeys) ? odds.meta.sampleKeys : null,
+        },
+        warnings,
+        logo: countMissingLogos(games),
+        elapsedMs: Date.now() - t0,
+      },
+      games,
+    };
+  });
+}
+
+function toNhlTeamId(espnTeamId) {
+  return `nhl-${String(espnTeamId || "")}`;
+}
+function espnCompetitorScore(competitor) {
+  const direct = safeNum(competitor?.score);
+  if (Number.isFinite(direct)) return direct;
+
+  const ls = Array.isArray(competitor?.linescores) ? competitor.linescores : null;
+  if (ls && ls.length) {
+    let sum = 0;
+    let any = false;
+    for (const row of ls) {
+      const v = safeNum(row?.value ?? row?.displayValue ?? row?.score);
+      if (Number.isFinite(v)) {
+        sum += v;
+        any = true;
+      }
+    }
+    if (any) return sum;
+  }
+  return null;
+}
+function normalizeEspnNhlEventToGame(event) {
+  const comp = event?.competitions?.[0];
+  const competitors = comp?.competitors;
+  if (!Array.isArray(competitors)) return null;
+
+  const home = competitors.find((c) => c?.homeAway === "home") ?? null;
+  const away = competitors.find((c) => c?.homeAway === "away") ?? null;
+
+  const homeTeam = home?.team || null;
+  const awayTeam = away?.team || null;
+
+  const homeId = homeTeam?.id ? String(homeTeam.id) : null;
+  const awayId = awayTeam?.id ? String(awayTeam.id) : null;
+  if (!homeId || !awayId) return null;
+
+  const pickLogo = (team) => {
+    if (!team) return null;
+    const fromArr = Array.isArray(team.logos) ? team.logos[0]?.href : null;
+    const fromSingle = team.logo || null;
+    return sanitizeLogoUrl(fromArr || fromSingle || espnNhlLogoFromTeamId(team.id));
+  };
+
+  const rawState = event?.status?.type?.state || event?.status?.type?.name || "scheduled";
+  const status = normalizeStatusForScoring(rawState);
+
+  return {
+    id: String(event?.id ?? `${homeId}-${awayId}-${event?.date ?? ""}`),
+    date: event?.date ?? null,
+    status,
+    homeTeamId: homeId,
+    awayTeamId: awayId,
+    homeScore: espnCompetitorScore(home),
+    awayScore: espnCompetitorScore(away),
+    homeName: homeTeam?.displayName || homeTeam?.shortDisplayName || "",
+    awayName: awayTeam?.displayName || awayTeam?.shortDisplayName || "",
+    homeAbbr: homeTeam?.abbreviation || "",
+    awayAbbr: awayTeam?.abbreviation || "",
+    homeLogo: pickLogo(homeTeam),
+    awayLogo: pickLogo(awayTeam),
+  };
+}
+async function getNhlScoreboardByDate(dateYYYYMMDD) {
+  const ymd = toEspnYYYYMMDD(dateYYYYMMDD);
+  const url = `${ESPN_SITE_V2}/${ESPN_NHL_PATH}/scoreboard?dates=${encodeURIComponent(ymd)}`;
+  const json = await fetchJson(
+    url,
+    {},
+    { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 5, baseBackoffMs: 650, hostConcurrency: 3, timeoutMs: 25_000 }
+  );
+  const events = Array.isArray(json?.events) ? json.events : [];
+  return events.map(normalizeEspnNhlEventToGame).filter(Boolean);
+}
+async function getNhlHistory(endDateYYYYMMDD, historyDays) {
+  const days = [];
+  for (let i = historyDays; i >= 1; i--) days.push(addDaysUTC(endDateYYYYMMDD, -i));
+
+  const POOL = 3;
+  const out = [];
+  let idx = 0;
+
+  async function worker() {
+    while (idx < days.length) {
+      const myIdx = idx++;
+      const d = days[myIdx];
+      const dayRows = await getNhlScoreboardByDate(d);
+      out.push(...dayRows);
+      await sleep(35);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(POOL, days.length) }, () => worker()));
+  return out;
+}
+function buildNhlTeamStatsFromHistory(history, endDateYYYYMMDD, recentN = 10) {
+  const cutoff = Date.parse(`${endDateYYYYMMDD}T00:00:00Z`);
+  const byTeamGames = new Map();
+
+  function add(teamId, game) {
+    if (!byTeamGames.has(teamId)) byTeamGames.set(teamId, []);
+    byTeamGames.get(teamId).push(game);
+  }
+
+  for (const g of history) {
+    if (g.homeScore == null || g.awayScore == null) continue;
+    const t = g.date ? Date.parse(g.date) : null;
+    if (!t || t >= cutoff) continue;
+
+    add(g.homeTeamId, { date: g.date?.slice(0, 10) || "", my: g.homeScore, opp: g.awayScore });
+    add(g.awayTeamId, { date: g.date?.slice(0, 10) || "", my: g.awayScore, opp: g.homeScore });
+  }
+
+  const out = new Map();
+  for (const [id, games] of byTeamGames.entries()) {
+    games.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const played = games.length;
+    if (!played) {
+      out.set(id, { ok: false });
+      continue;
+    }
+
+    let wins = 0, pf = 0, pa = 0;
+    for (const gg of games) {
+      pf += gg.my;
+      pa += gg.opp;
+      if (gg.my > gg.opp) wins++;
+    }
+
+    const recent = games.slice(0, recentN);
+    let rWins = 0, rMargin = 0;
+    for (const gg of recent) {
+      if (gg.my > gg.opp) rWins++;
+      rMargin += gg.my - gg.opp;
+    }
+
+    out.set(id, {
+      ok: true,
+      played,
+      winPct: wins / played,
+      marginPerGame: (pf - pa) / played,
+      recentWinPct: recent.length ? rWins / recent.length : null,
+      recentMargin: recent.length ? rMargin / recent.length : null,
+      pointsForPerGame: pf / played,
+      pointsAgainstPerGame: pa / played,
+    });
+  }
+
+  return out;
+}
+function nhlEdge(home, away) {
+  if (!home?.ok || !away?.ok) return NaN;
+
+  const wWin = 0.48;
+  const wMargin = 0.32;
+  const wRecent = 0.20;
+
+  const winDiff = home.winPct - away.winPct;
+  const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 3.2, -1, 1);
+  const recentDiff =
+    (Number.isFinite(home.recentWinPct) ? home.recentWinPct : 0.5) -
+    (Number.isFinite(away.recentWinPct) ? away.recentWinPct : 0.5);
+
+  const homeAdv = 0.012;
+  return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
+}
+function nhlProbFromEdge(edge, edgeScale = 0.17) {
+  if (!Number.isFinite(edge)) return 0.5;
+  return clampNum(sigmoid(edge / edgeScale), 0.36, 0.74);
+}
+
+async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
+  const historyDays = clampNum(Number(windowDays) || 40, 14, 120);
+  const key = `PREDV18:nhl:${dateYYYYMMDD}:w${historyDays}`;
+
+  return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
+    const t0 = Date.now();
+
+    const slate = await getNhlScoreboardByDate(dateYYYYMMDD);
+    if (!slate.length) {
+      return {
+        meta: {
+          league: "nhl",
+          date: dateYYYYMMDD,
+          windowDays: historyDays,
+          model: "NHL premium-v21",
+          mode: "regular",
+          odds: { ok: false, reason: "no_games", events: null, bookmaker: ODDS_BOOKMAKER, url: null, sampleKeys: null },
+          warnings: [],
+          elapsedMs: Date.now() - t0,
+        },
+        games: [],
+      };
+    }
+
+    const odds = await fetchVegasForLeagueDate("nhl", dateYYYYMMDD);
+    const oddsMap = odds.ok ? odds.map : new Map();
+    const warnings = [];
+    if (!odds.ok) warnings.push(`Odds unavailable: ${String(odds.reason || "unknown")}`);
+
+    const history = await getNhlHistory(dateYYYYMMDD, historyDays);
+    const teamStats = buildNhlTeamStatsFromHistory(history, dateYYYYMMDD, 10);
+
+    const games = [];
+    let noBetCount = 0;
+    let modelOnlyCount = 0;
+
+    for (const g of slate) {
+      const homeS = teamStats.get(g.homeTeamId) || { ok: false };
+      const awayS = teamStats.get(g.awayTeamId) || { ok: false };
+
+      const edgeSigned = nhlEdge(homeS, awayS);
+      const pHome = nhlProbFromEdge(edgeSigned, 0.17);
+
+      const homeObj = {
+        id: toNhlTeamId(g.homeTeamId),
+        name: g.homeName || "",
+        abbr: g.homeAbbr || "",
+        logo: sanitizeLogoUrl(g.homeLogo || espnNhlLogoFromTeamId(g.homeTeamId)),
+        score: Number.isFinite(g.homeScore) ? g.homeScore : null,
+      };
+      const awayObj = {
+        id: toNhlTeamId(g.awayTeamId),
+        name: g.awayName || "",
+        abbr: g.awayAbbr || "",
+        logo: sanitizeLogoUrl(g.awayLogo || espnNhlLogoFromTeamId(g.awayTeamId)),
+        score: Number.isFinite(g.awayScore) ? g.awayScore : null,
+      };
+
+      const vegasRow = odds.ok ? lookupVegas(oddsMap, homeObj.name, awayObj.name) : null;
+      const means = deriveMeansFromStats("nhl", pHome, homeS, awayS);
+
+      const marketBundle = vegasRow
+        ? buildMarketBundle({ league: "nhl", pHomeWin: pHome, meanMargin: means.meanMargin, meanTotal: means.meanTotal, vegasRow })
+        : {
+            markets: {
+              moneyline: { home: null, away: null },
+              spread: { home: null, away: null },
+              total: { over: null, under: null, line: null },
+            },
+            recommended: null,
+          };
+
+      const recommended = marketBundle.recommended;
+      const allowModelOnly =
+  String(process.env.ALLOW_MODEL_ONLY_BACKFILL || "true").toLowerCase() !== "false";
+
+let pick = pickFromCandidate(recommended);
+let modelOnly = false;
+
+if (!pick?.pick && allowModelOnly && (!odds.ok || !vegasRow)) {
+  const mo = modelOnlyMoneylinePick(pHome, "nhl");
+  if (mo) {
+    pick = { pick: mo, tier: "LEAN" };
+    modelOnly = true;
+    modelOnlyCount++;
+  }
+}
+
+if (!pick.pick) noBetCount++;
+
+      const why = buildWhy({
+        marketPick: pick.pick,
+        notes: ["NHL model: ESPN history + stable calibration; markets require Odds API lines."],
+        deltas: [
+          { label: "Home winProb (model)", value: pHome, dp: 3 },
+          { label: "EdgeSigned (model)", value: edgeSigned, dp: 3 },
+        ],
+      });
+
+      const recommendedBet = recommended
+        ? {
+            marketType: recommended.marketType,
+            side: recommended.side,
+            line: recommended.line ?? null,
+            odds: recommended.odds ?? null,
+            tier: recommended.tier,
+            modelProb: recommended.modelProb ?? null,
+            impliedProb: recommended.impliedProb ?? null,
+            edge: recommended.edge,
+            evForStake100: recommended.evForStake100,
+            kellyHalf: recommended.kellyHalf,
+          }
+        : null;
+
+      games.push({
+        league: "nhl",
+        gameId: `nhl-${g.id}`,
+        date: dateYYYYMMDD,
+        status: g.status,
+        eventStart: vegasRow?.eventStart ?? null,
+
+        home: homeObj,
+        away: awayObj,
+
+        score: { home: homeObj.score, away: awayObj.score },
+
+        model: {
+          version: "NHL premium-v21",
+          windowDays: historyDays,
+          pHomeModel: pHome,
+          homeEdgeSigned: edgeSigned,
+        },
+
+        markets: marketBundle.markets,
+        premiumCandidates: marketBundle.premiumCandidates || [],
+        recommendedBet,
+
+        market: {
+          ...buildCompatMarket(recommendedBet),
+          oddsComparison: buildOddsComparisonForCompatMarket(recommendedBet, vegasRow),
+          moneyline: {
+            homeOdds: marketBundle?.markets?.moneyline?.home?.odds ?? null,
+            awayOdds: marketBundle?.markets?.moneyline?.away?.odds ?? null,
+            homeWinProb: marketBundle?.markets?.moneyline?.home?.winProb ?? null,
+            awayWinProb: marketBundle?.markets?.moneyline?.away?.winProb ?? null,
+          },
+        },
+
+        pick: pickStringFromPickObj(pick),
+        pickObj: pick,
+        why,
+      });
+    }
+
+    return {
+      meta:
+ {
+        league: "nhl",
+        date: dateYYYYMMDD,
+        windowDays: historyDays,
+        historyGamesFetched: history.length,
+        model: "NHL premium-v21",
+        mode: "regular",
+        noBetCount,
+        odds: {
+          ok: Boolean(odds.ok),
+          reason: odds.ok ? null : String(odds.reason || "unknown"),
+          events: Number.isFinite(odds?.meta?.events) ? odds.meta.events : null,
+          bookmaker: odds?.meta?.bookmaker || ODDS_BOOKMAKER,
+          url: odds?.meta?.url || null,
+          sampleKeys: Array.isArray(odds?.meta?.sampleKeys) ? odds.meta.sampleKeys : null,
+        },
+        warnings,
+        logo: countMissingLogos(games),
+        elapsedMs: Date.now() - t0,
+      },
+      games,
+    };
+  });
+}
+
+function toNcaamTeamId(espnTeamId) {
+  return `ncaam-${String(espnTeamId || "")}`;
+}
+function normalizeEspnEventToGame(event) {
+  const comp = event?.competitions?.[0];
+  const competitors = comp?.competitors;
+  if (!Array.isArray(competitors)) return null;
+
+  const home = competitors.find((c) => c?.homeAway === "home") ?? null;
+  const away = competitors.find((c) => c?.homeAway === "away") ?? null;
+
+  const homeTeam = home?.team || null;
+  const awayTeam = away?.team || null;
+
+  const homeId = homeTeam?.id ? String(homeTeam.id) : null;
+  const awayId = awayTeam?.id ? String(awayTeam.id) : null;
+  if (!homeId || !awayId) return null;
+
+  const pickLogo = (team) => {
+    if (!team) return null;
+    const fromArr = Array.isArray(team.logos) ? team.logos[0]?.href : null;
+    const fromSingle = team.logo || null;
+    return sanitizeLogoUrl(fromArr || fromSingle || espnNcaamLogoFromTeamId(team.id));
+  };
+
+  const rawState = event?.status?.type?.state || event?.status?.type?.name || "scheduled";
+  const status = normalizeStatusForScoring(rawState);
+
+  return {
+    id: String(event?.id ?? `${homeId}-${awayId}-${event?.date ?? ""}`),
+    date: event?.date ?? null,
+    status,
+    homeTeamId: homeId,
+    awayTeamId: awayId,
+    homeScore: espnCompetitorScore(home),
+    awayScore: espnCompetitorScore(away),
+    homeName: homeTeam?.displayName || homeTeam?.shortDisplayName || "",
+    awayName: awayTeam?.displayName || awayTeam?.shortDisplayName || "",
+    homeAbbr: homeTeam?.abbreviation || "",
+    awayAbbr: awayTeam?.abbreviation || "",
+    homeLogo: pickLogo(homeTeam),
+    awayLogo: pickLogo(awayTeam),
+    neutralSite: Boolean(comp?.neutralSite),
+  };
+}
+async function getNcaamScoreboardByDate(dateYYYYMMDD) {
+  const ymd = toEspnYYYYMMDD(dateYYYYMMDD);
+  const url = `${ESPN_SITE_V2}/${ESPN_NCAAM_PATH}/scoreboard?dates=${encodeURIComponent(ymd)}`;
+  const json = await fetchJson(
+    url,
+    {},
+    { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 5, baseBackoffMs: 650, hostConcurrency: 3, timeoutMs: 25_000 }
+  );
+  const events = Array.isArray(json?.events) ? json.events : [];
+  return events.map(normalizeEspnEventToGame).filter(Boolean);
+}
+async function getNcaamHistory(endDateYYYYMMDD, historyDays) {
+  const days = [];
+  for (let i = historyDays; i >= 1; i--) days.push(addDaysUTC(endDateYYYYMMDD, -i));
+
+  const POOL = 3;
+  const out = [];
+  let idx = 0;
+
+  async function worker() {
+    while (idx < days.length) {
+      const myIdx = idx++;
+      const d = days[myIdx];
+      const dayRows = await getNcaamScoreboardByDate(d);
+      out.push(...dayRows);
+      await sleep(35);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(POOL, days.length) }, () => worker()));
+  return out.filter((g) => g.homeTeamId && g.awayTeamId);
+}
+function buildNcaamTeamStatsFromHistory(history, endDateYYYYMMDD, recentN = 10) {
+  const cutoff = Date.parse(`${endDateYYYYMMDD}T00:00:00Z`);
+  const byTeamGames = new Map();
+
+  function add(teamId, game) {
+    if (!byTeamGames.has(teamId)) byTeamGames.set(teamId, []);
+    byTeamGames.get(teamId).push(game);
+  }
+
+  for (const g of history) {
+    if (g.homeScore == null || g.awayScore == null) continue;
+    const t = g.date ? Date.parse(g.date) : null;
+    if (!t || t >= cutoff) continue;
+
+    add(g.homeTeamId, { date: g.date?.slice(0, 10) || "", my: g.homeScore, opp: g.awayScore });
+    add(g.awayTeamId, { date: g.date?.slice(0, 10) || "", my: g.awayScore, opp: g.homeScore });
+  }
+
+  const out = new Map();
+  for (const [id, games] of byTeamGames.entries()) {
+    games.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const played = games.length;
+    if (!played) {
+      out.set(id, { ok: false });
+      continue;
+    }
+
+    let wins = 0, pf = 0, pa = 0;
+    for (const gg of games) {
+      pf += gg.my;
+      pa += gg.opp;
+      if (gg.my > gg.opp) wins++;
+    }
+
+    const recent = games.slice(0, recentN);
+    let rWins = 0, rMargin = 0;
+    for (const gg of recent) {
+      if (gg.my > gg.opp) rWins++;
+      rMargin += gg.my - gg.opp;
+    }
+
+    out.set(id, {
+      ok: true,
+      played,
+      winPct: wins / played,
+      marginPerGame: (pf - pa) / played,
+      recentWinPct: recent.length ? rWins / recent.length : null,
+      recentMargin: recent.length ? rMargin / recent.length : null,
+      pointsForPerGame: pf / played,
+      pointsAgainstPerGame: pa / played,
+    });
+  }
+
+  return out;
+}
+function ncaamEdge(home, away, neutralSite, tournamentMode) {
+  if (!home?.ok || !away?.ok) return NaN;
+
+  const wWin = tournamentMode ? 0.46 : 0.50;
+  const wMargin = tournamentMode ? 0.34 : 0.30;
+  const wRecent = 0.20;
+
+  const winDiff = home.winPct - away.winPct;
+  const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 14, -1, 1);
+  const recentDiff =
+    (Number.isFinite(home.recentWinPct) ? home.recentWinPct : 0.5) -
+    (Number.isFinite(away.recentWinPct) ? away.recentWinPct : 0.5);
+
+  const homeAdv = neutralSite || tournamentMode ? 0 : 0.018;
+  return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
+}
+function ncaamProbFromEdge(edge, edgeScale = 0.23) {
+  if (!Number.isFinite(edge)) return 0.5;
+  return clampNum(sigmoid(edge / edgeScale), 0.34, 0.78);
+}
+
+function getTournamentPhase(dateYYYYMMDD, isTournamentMode) {
+  if (!isTournamentMode) return "regular";
+  const d = String(dateYYYYMMDD || "").slice(0, 10);
+  if (!d) return "conference";
+  return d >= "2026-03-17" ? "ncaa" : "conference";
+}
+
+async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode, modeLabel } = {}) {
+  const historyDays = clampNum(Number(windowDays) || 45, 14, 90);
+  const isT = Boolean(tournamentMode);
+  const tournamentPhase = getTournamentPhase(dateYYYYMMDD, isT);
+  const key = `PREDV18:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
+
+  return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
+    const t0 = Date.now();
+
+    const slate = await getNcaamScoreboardByDate(dateYYYYMMDD);
+    if (!slate.length) {
+      return {
+        meta: {
+          league: "ncaam",
+          date: dateYYYYMMDD,
+          windowDays: historyDays,
+          model: "NCAAM premium-v21",
+          mode: modeLabel || (isT ? "tournament" : "regular"),
+      tournament_phase: tournamentPhase,
+    tournamentPhase,
+        tournamentPhase,
+          tournament_phase: tournamentPhase,
+          odds: { ok: false, reason: "no_games", events: null, bookmaker: ODDS_BOOKMAKER, url: null, sampleKeys: null },
+          warnings: [],
+          elapsedMs: Date.now() - t0,
+        },
+        games: [],
+      };
+    }
+
+    const odds = await fetchVegasForLeagueDate("ncaam", dateYYYYMMDD);
+    const oddsMap = odds.ok ? odds.map : new Map();
+    const warnings = [];
+    if (!odds.ok) warnings.push(`Odds unavailable: ${String(odds.reason || "unknown")}`);
+
+    const history = await getNcaamHistory(dateYYYYMMDD, historyDays);
+    const teamStats = buildNcaamTeamStatsFromHistory(history, dateYYYYMMDD, 10);
+
+    const games = [];
+    let noBetCount = 0;
+    let modelOnlyCount = 0;
+
+    for (const g of slate) {
+      const homeS = teamStats.get(g.homeTeamId) || { ok: false };
+      const awayS = teamStats.get(g.awayTeamId) || { ok: false };
+
+      const neutral = Boolean(g.neutralSite) || isT;
+      const edgeSigned = ncaamEdge(homeS, awayS, neutral, isT);
+      const pHome = ncaamProbFromEdge(edgeSigned, 0.23);
+
+      const homeObj = {
+        id: toNcaamTeamId(g.homeTeamId),
+        name: g.homeName || "",
+        abbr: g.homeAbbr || "",
+        logo: sanitizeLogoUrl(g.homeLogo || espnNcaamLogoFromTeamId(g.homeTeamId)),
+        score: Number.isFinite(g.homeScore) ? g.homeScore : null,
+      };
+      const awayObj = {
+        id: toNcaamTeamId(g.awayTeamId),
+        name: g.awayName || "",
+        abbr: g.awayAbbr || "",
+        logo: sanitizeLogoUrl(g.awayLogo || espnNcaamLogoFromTeamId(g.awayTeamId)),
+        score: Number.isFinite(g.awayScore) ? g.awayScore : null,
+      };
+
+      const vegasRow = odds.ok ? lookupVegas(oddsMap, homeObj.name, awayObj.name) : null;
+      const means = deriveMeansFromStats("ncaam", pHome, homeS, awayS);
+
+      const marketBundle = vegasRow
+        ? buildMarketBundle({ league: "ncaam", pHomeWin: pHome, meanMargin: means.meanMargin, meanTotal: means.meanTotal, vegasRow })
+        : {
+            markets: {
+              moneyline: { home: null, away: null },
+              spread: { home: null, away: null },
+              total: { over: null, under: null, line: null },
+            },
+            recommended: null,
+          };
+
+      const recommended = marketBundle.recommended;
+      const allowModelOnly =
+  String(process.env.ALLOW_MODEL_ONLY_BACKFILL || "true").toLowerCase() !== "false";
+
+let pick = pickFromCandidate(recommended);
+let modelOnly = false;
+
+if (!pick?.pick && allowModelOnly && (!odds.ok || !vegasRow)) {
+  const mo = modelOnlyMoneylinePick(pHome, "ncaam");
+  if (mo) {
+    pick = { pick: mo, tier: "LEAN" };
+    modelOnly = true;
+    modelOnlyCount++;
+  }
+}
+
+if (!pick.pick) noBetCount++;
+
+      const why = buildWhy({
+        marketPick: pick.pick,
+        notes: [neutral ? "Neutral site assumed (tournament/neutral)." : "Home-court applied."],
+        deltas: [
+          { label: "Home winProb (model)", value: pHome, dp: 3 },
+          { label: "EdgeSigned (model)", value: edgeSigned, dp: 3 },
+        ],
+      });
+
+      const recommendedBet = recommended
+        ? {
+            marketType: recommended.marketType,
+            side: recommended.side,
+            line: recommended.line ?? null,
+            odds: recommended.odds ?? null,
+            tier: recommended.tier,
+            modelProb: recommended.modelProb ?? null,
+            impliedProb: recommended.impliedProb ?? null,
+            edge: recommended.edge,
+            evForStake100: recommended.evForStake100,
+            kellyHalf: recommended.kellyHalf,
+          }
+        : null;
+
+      games.push({
+        league: "ncaam",
+        gameId: `ncaam-${g.id}`,
+        date: dateYYYYMMDD,
+        status: g.status,
+        eventStart: vegasRow?.eventStart ?? null,
+
+        home: homeObj,
+        away: awayObj,
+
+        score: { home: homeObj.score, away: awayObj.score },
+
+        model: {
+          version: "NCAAM premium-v21",
+          windowDays: historyDays,
+          mode: modeLabel || (isT ? "tournament" : "regular"),
+          tournamentPhase,
+          tournament_phase: tournamentPhase,
+          neutralSite: neutral,
+          pHomeModel: pHome,
+          homeEdgeSigned: edgeSigned,
+        },
+
+        markets: marketBundle.markets,
+        premiumCandidates: marketBundle.premiumCandidates || [],
+        recommendedBet,
+
+        market: {
+          ...buildCompatMarket(recommendedBet),
+          oddsComparison: buildOddsComparisonForCompatMarket(recommendedBet, vegasRow),
+          moneyline: {
+            homeOdds: marketBundle?.markets?.moneyline?.home?.odds ?? null,
+            awayOdds: marketBundle?.markets?.moneyline?.away?.odds ?? null,
+            homeWinProb: marketBundle?.markets?.moneyline?.home?.winProb ?? null,
+            awayWinProb: marketBundle?.markets?.moneyline?.away?.winProb ?? null,
+          },
+        },
+
+        pick: pickStringFromPickObj(pick),
+        pickObj: pick,
+        why,
+      });
+    }
+
+    return {
+      meta:
+ {
+        league: "ncaam",
+        date: dateYYYYMMDD,
+        windowDays: historyDays,
+        historyGamesFetched: history.length,
+        model: "NCAAM premium-v21",
+        mode: modeLabel || (isT ? "tournament" : "regular"),
+      tournament_phase: tournamentPhase,
+    tournamentPhase,
+        tournamentPhase,
+        noBetCount,
+        odds: {
+          ok: Boolean(odds.ok),
+          reason: odds.ok ? null : String(odds.reason || "unknown"),
+          events: Number.isFinite(odds?.meta?.events) ? odds.meta.events : null,
+          bookmaker: odds?.meta?.bookmaker || ODDS_BOOKMAKER,
+          url: odds?.meta?.url || null,
+          sampleKeys: Array.isArray(odds?.meta?.sampleKeys) ? odds.meta.sampleKeys : null,
+        },
+        warnings,
+        logo: countMissingLogos(games),
+        elapsedMs: Date.now() - t0,
+      },
+      games,
+    };
+  });
+}
+
+
+/* =========================================================
+   Phase 2 — Odds Snapshot Persistence (Premium)
+   Goal: Store today’s recommendedBet + odds/line at prediction time
+   so cron can grade ROI later WITHOUT requiring paid historical odds.
+   Table: odds_snapshots (see README in bundle for SQL)
+   Safe no-op if Supabase env vars not present.
+   ========================================================= */
+
+async function persistOddsSnapshotsForResponse(resp) {
+  try {
+    const persist = String(process.env.ODDS_SNAPSHOT_PERSIST || "true").toLowerCase() !== "false";
+    if (!persist) return;
+    if (!resp?.ok) return;
+
+    const meta = resp.meta || {};
+    const league = meta.league || null;
+    const date = meta.date || null;
+    if (!league || !date) return;
+
+    // Only persist when we actually have a sportsbook-anchored bet (not model-only)
+    const rows = (resp.games || [])
+      .map((g) => {
+        const bet = g?.recommendedBet ?? null;
+        if (!bet) return null;
+        if (bet?.flags?.modelOnly) return null;
+
+        const marketType = bet.marketType || null;
+        const side = bet.side || null;
+        if (!marketType || !side) return null;
+
+        return {
+          league,
+          date,
+          game_id: g?.gameId || g?.id || null,
+          home_abbr: g?.home?.abbr || null,
+          away_abbr: g?.away?.abbr || null,
+          market_type: marketType,
+          side,
+          line: bet?.line ?? null,
+          odds_american: (bet?.oddsAmerican ?? bet?.odds ?? null),
+          model_prob: bet?.modelProb ?? null,
+          implied_prob: bet?.impliedProb ?? null,
+          edge: bet?.edge ?? null,
+          ev_100: bet?.evForStake100 ?? null,
+          kelly_half: bet?.kellyHalf ?? null,
+          tier: bet?.tier ?? null,
+          is_model_only: false,
+          snap_at: new Date().toISOString(),
+          bookmaker: meta?.odds?.bookmaker || process.env.ODDS_BOOKMAKER || null,
+        };
+      })
+      .filter(Boolean);
+
+    if (!rows.length) return;
+
+    const supaUrl = process.env.SUPABASE_URL || "";
+    const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || "";
+    if (!supaUrl || !supaKey) return;
+
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(supaUrl, supaKey, { auth: { persistSession: false } });
+
+    // Unique constraint recommended: (league, date, game_id, market_type)
+    const { error } = await supabase.from("odds_snapshots").upsert(rows, {
+      onConflict: "league,date,game_id,market_type",
+    });
+
+    if (error) {
+      // Intentionally non-fatal — predictions endpoint must stay up
+      // console.warn("[odds_snapshots] upsert failed:", error?.message || error);
+    }
+  } catch (_err) {
+    // no-op
+  }
+}
+
+function okWrap(league, date, out) {
+  const meta = out?.meta || {};
+  const odds = meta?.odds || {};
+  return {
+    ok: true,
+    league,
+    date,
+    count: Array.isArray(out?.games) ? out.games.length : 0,
+    meta: {
+      ...meta,
+      model: meta.model || null,
+      mode: meta.mode || null,
+      vegasOk: Boolean(odds.ok),
+      vegasReason: odds.ok ? null : String(odds.reason || meta?.odds?.reason || "unknown"),
+      vegasEvents: Number.isFinite(odds.events) ? odds.events : null,
+      vegasSampleKeys: Array.isArray(odds.sampleKeys) ? odds.sampleKeys : null,
+          modelOnlyCount: (meta.modelOnlyCount != null)
+        ? meta.modelOnlyCount
+        : ((out?.games || []).reduce((acc, g) => acc + (g?.recommendedBet?.flags?.modelOnly ? 1 : 0), 0)),
+    },
+    games: out?.games || [],
+  };
+}
+
+function errWrap({ league, date, windowDays, model, mode, error }) {
+  return {
+    ok: false,
+    league,
+    date,
+    count: 0,
+    meta: {
+      league,
+      date,
+      windowDays: windowDays ?? null,
+      model: model || null,
+      mode: mode || null,
+      error: String(error || "unknown_error"),
+      elapsedMs: 0,
+      vegasOk: false,
+      vegasReason: String(error || "unknown_error"),
+      vegasEvents: null,
+      vegasSampleKeys: null,
+    },
+    games: [],
+  };
+}
+
+router.get("/ping", (_req, res) => {
+  res.json({ ok: true, route: "predict", version: "predict-premium-v21-phase2-snapshots" });
+});
+
+router.get("/predictions", async (req, res) => {
+  const league = String(req.query.league || "nba").toLowerCase();
+  const date = readDateFromReq(req);
+  const { tournament, mode } = readModeFromReq(req);
+
+  try {
+    if (league === "nba") {
+      const windowDays = readWindowFromReq(req, 14, 3, 30);
+      const mv = readModelFromReq(req, "v2");
+      const out = await buildNbaPredictions(date, windowDays, { modelVersion: mv });
+      {
+      const wrapped = okWrap("nba", date, out);
+
+      await writeSlatePicksToLedger({
+        date,
+        league: "nba",
+        games: wrapped.games,
+        modelVersion: wrapped.meta?.model
+      });
+
+      await persistOddsSnapshotsForResponse(wrapped);
+      return res.json(wrapped);
+    }
+}
+
+    if (league === "nhl") {
+      const windowDays = readWindowFromReq(req, 40, 14, 120);
+      const out = await buildNhlPredictions(date, windowDays);
+      {
+      const wrapped = okWrap("nhl", date, out);
+
+      await writeSlatePicksToLedger({
+        date,
+        league: "nhl",
+        games: wrapped.games,
+        modelVersion: wrapped.meta?.model
+      });
+
+      await persistOddsSnapshotsForResponse(wrapped);
+      return res.json(wrapped);
+    }
+}
+
+    if (league === "ncaam") {
+      const windowDays = readWindowFromReq(req, 45, 14, 90);
+      const out = await buildNcaamPredictions(date, windowDays, { tournamentMode: tournament, modeLabel: mode });
+      {
+      const wrapped = okWrap("ncaam", date, out);
+
+      await writeSlatePicksToLedger({
+        date,
+        league: "ncaam",
+        games: wrapped.games,
+        modelVersion: wrapped.meta?.model
+      });
+
+      await persistOddsSnapshotsForResponse(wrapped);
+      return res.json(wrapped);
+    }
+}
+
+    return res.status(400).json({ ok: false, error: "Unsupported league. Use league=nba|nhl|ncaam", got: league });
+  } catch (e) {
+    return res.json(errWrap({ league, date, windowDays: null, model: "premium-v20", mode, error: e?.message || e }));
+  }
+});
+
+export { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions };
+export default router;
+
+
+router.get("/top-bets", async (req, res) => {
+  try {
+
+    const date = req.query.date || new Date().toISOString().slice(0,10)
+    const league = req.query.league || "nba"
+
+    const r = await fetch(`http://127.0.0.1:3001/api/predictions?league=${league}&date=${date}`)
+    const data = await r.json()
+
+    const games = (data.games || [])
+      .filter(g => g?.market?.recommendedMarket)
+      .map(g => ({
+        matchup: `${g.away?.abbr} @ ${g.home?.abbr}`,
+        market: g.market.recommendedMarket,
+        pick: g.market.pick,
+        line: g.market.marketLine,
+        odds: g.market.marketOdds,
+        prob: g.market.winProb,
+        edge: g.market.edgeVsMarket,
+        ev: g.market.evForStake100,
+        kelly: g.market.kellyHalf
+      }))
+
+    const ranked = games
+      .filter(g => g.ev && g.prob)
+      .sort((a,b) => b.ev - a.ev)
+
+    const top = ranked.slice(0,3)
+
+    res.json({
+      ok: true,
+      date,
+      league,
+      topBets: top
+    })
+
+  } catch(e) {
+    res.status(500).json({ ok:false, error:String(e) })
+  }
+})

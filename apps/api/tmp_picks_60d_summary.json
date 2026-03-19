@@ -1,0 +1,80 @@
+{
+  "window": {
+    "start": "2026-01-18",
+    "end": "2026-03-18"
+  },
+  "overall": {
+    "all": {
+      "rows": 778,
+      "scored": 362,
+      "wins": 162,
+      "losses": 200,
+      "pushes": 0,
+      "acc": 0.44751381215469616
+    },
+    "topPicks": {
+      "rows": 142,
+      "scored": 137,
+      "wins": 71,
+      "losses": 66,
+      "pushes": 0,
+      "acc": 0.5182481751824818
+    }
+  },
+  "byLeague": {
+    "nba": {
+      "all": {
+        "rows": 265,
+        "scored": 188,
+        "wins": 74,
+        "losses": 114,
+        "pushes": 0,
+        "acc": 0.39361702127659576
+      },
+      "topPicks": {
+        "rows": 91,
+        "scored": 87,
+        "wins": 47,
+        "losses": 40,
+        "pushes": 0,
+        "acc": 0.5402298850574713
+      }
+    },
+    "nhl": {
+      "all": {
+        "rows": 174,
+        "scored": 69,
+        "wins": 32,
+        "losses": 37,
+        "pushes": 0,
+        "acc": 0.463768115942029
+      },
+      "topPicks": {
+        "rows": 32,
+        "scored": 31,
+        "wins": 18,
+        "losses": 13,
+        "pushes": 0,
+        "acc": 0.5806451612903226
+      }
+    },
+    "ncaam": {
+      "all": {
+        "rows": 339,
+        "scored": 105,
+        "wins": 56,
+        "losses": 49,
+        "pushes": 0,
+        "acc": 0.5333333333333333
+      },
+      "topPicks": {
+        "rows": 19,
+        "scored": 19,
+        "wins": 6,
+        "losses": 13,
+        "pushes": 0,
+        "acc": 0.3157894736842105
+      }
+    }
+  }
+}

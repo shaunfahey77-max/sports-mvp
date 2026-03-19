@@ -30,11 +30,6 @@ function minuteBucket(iso) {
   return d.toISOString();
 }
 
-function normSide(x) {
-  const s = String(x || "").trim().toLowerCase();
-  return s || "none";
-}
-
 function makeSnapshotKey(row) {
   return [
     row.snapshot_date,
@@ -42,7 +37,6 @@ function makeSnapshotKey(row) {
     String(row.mode || "regular").trim().toLowerCase(),
     row.game_key,
     normMarket(row.market),
-    normSide(row.side ?? row.pick),
     String(row.book || "unknown").trim().toLowerCase(),
     minuteBucket(row.captured_at),
   ].join("|");
@@ -109,7 +103,7 @@ export async function upsertMarketSnapshotsBatch(rows, { chunkSize = 500 } = {})
 export async function getLatestClosingSnapshotMap({ date, league, mode = null }) {
   let query = supabase
     .from("market_snapshots")
-    .select("snapshot_date,league,mode,game_key,market,market_type,line,odds,book,event_start,captured_at,meta")
+    .select("snapshot_date,league,mode,game_key,market,market_type,pick,side,line,odds,book,event_start,captured_at,meta")
     .eq("snapshot_date", date)
     .eq("league", normLeague(league))
     .order("captured_at", { ascending: false });
@@ -124,10 +118,15 @@ export async function getLatestClosingSnapshotMap({ date, league, mode = null })
   const rows = Array.isArray(data) ? data : [];
   const map = new Map();
 
+  function makeKey(row) {
+    const market = normMarket(row.market);
+    const side = String(row.side ?? row.pick ?? "").trim().toLowerCase();
+    return `${row.game_key}__${market}__${side}`;
+  }
+
   // First pass: prefer latest snapshot that is at/before event start when event_start exists.
   for (const row of rows) {
-    const sideKey = normSide(row.side ?? row.pick);
-    const key = `${row.game_key}__${normMarket(row.market)}__${sideKey}`;
+    const key = makeKey(row);
     if (map.has(key)) continue;
 
     const capMs = toMillis(row.captured_at);
@@ -143,8 +142,7 @@ export async function getLatestClosingSnapshotMap({ date, league, mode = null })
 
   // Second pass fallback: latest available snapshot even if post-start.
   for (const row of rows) {
-    const sideKey = normSide(row.side ?? row.pick);
-    const key = `${row.game_key}__${normMarket(row.market)}__${sideKey}`;
+    const key = makeKey(row);
     if (map.has(key)) continue;
 
     map.set(key, {

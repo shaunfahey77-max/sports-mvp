@@ -1,0 +1,932 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function pctFromUnit(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+function fmtEv(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${Math.round(n)}%`;
+}
+
+function oddsText(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
+function tierBonus(tier) {
+  const t = String(tier || "").toUpperCase();
+  if (t === "ELITE") return 10;
+  if (t === "STRONG") return 6;
+  if (t === "EDGE") return 3;
+  return 0;
+}
+
+function edgeScoreFromBet(bet) {
+  if (!bet) return 0;
+
+  const evNorm = (clamp(num(bet?.evForStake100) || 0, 0, 80) / 80) * 100;
+  const confidenceNorm = clamp((num(bet?.modelProb) || 0) * 100, 0, 100);
+  const edgeNorm = (clamp((num(bet?.edge) || 0) * 100, 0, 20) / 20) * 100;
+  const kellyNorm = (clamp((num(bet?.kellyHalf) || 0) * 100, 0, 5) / 5) * 100;
+
+  const score =
+    evNorm * 0.4 +
+    confidenceNorm * 0.25 +
+    edgeNorm * 0.2 +
+    kellyNorm * 0.1 +
+    tierBonus(bet?.tier);
+
+  return Math.round(clamp(score, 0, 99));
+}
+
+function marketText(bet) {
+  if (!bet) return "—";
+  const mt = String(bet.marketType || "").toLowerCase();
+  const side = String(bet.side || "").toLowerCase();
+  const line = num(bet.line);
+
+  if (mt === "spread") {
+    const sideText = side === "away" ? "Away" : side === "home" ? "Home" : side;
+    return `${sideText} ${line == null ? "" : line > 0 ? `+${line}` : `${line}`}`.trim();
+  }
+  if (mt === "total") {
+    const sideText = side === "under" ? "Under" : side === "over" ? "Over" : side;
+    return `${sideText} ${line == null ? "" : line}`.trim();
+  }
+  if (mt === "moneyline") return side ? `${side.toUpperCase()} ML` : "Moneyline";
+
+  return "—";
+}
+
+function leagueColor(league) {
+  if (league === "NBA") return "#60a5fa";
+  if (league === "NCAAM") return "#f59e0b";
+  if (league === "NHL") return "#34d399";
+  return "#cbd5e1";
+}
+
+function tierColors(tier) {
+  const t = String(tier || "").toUpperCase();
+  if (t === "ELITE") {
+    return {
+      background: "rgba(16,185,129,0.12)",
+      border: "1px solid rgba(16,185,129,0.28)",
+      color: "#86efac",
+    };
+  }
+  if (t === "STRONG") {
+    return {
+      background: "rgba(59,130,246,0.12)",
+      border: "1px solid rgba(59,130,246,0.28)",
+      color: "#93c5fd",
+    };
+  }
+  if (t === "EDGE") {
+    return {
+      background: "rgba(245,158,11,0.12)",
+      border: "1px solid rgba(245,158,11,0.28)",
+      color: "#fcd34d",
+    };
+  }
+  return {
+    background: "rgba(148,163,184,0.12)",
+    border: "1px solid rgba(148,163,184,0.22)",
+    color: "#cbd5e1",
+  };
+}
+
+export default function Landing() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [kpis, setKpis] = useState(null);
+  const [previewPicks, setPreviewPicks] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const [kpiRes, nbaRes, ncaamRes, nhlRes] = await Promise.all([
+          fetch("/api/performance/kpis"),
+          fetch("/api/predictions?league=nba"),
+          fetch("/api/predictions?league=ncaam"),
+          fetch("/api/predictions?league=nhl"),
+        ]);
+
+        const [kpiJson, nbaJson, ncaamJson, nhlJson] = await Promise.all([
+          kpiRes.json(),
+          nbaRes.json(),
+          ncaamRes.json(),
+          nhlRes.json(),
+        ]);
+
+        if (!cancelled) {
+          setKpis(kpiJson?.data || null);
+
+          const normalize = (league, games) =>
+            (games || [])
+              .filter((g) => g?.recommendedBet)
+              .map((g) => ({
+                league,
+                gameId: g.gameId,
+                matchup: `${g.away?.abbr || "AWAY"} @ ${g.home?.abbr || "HOME"}`,
+                awayLogo: g.away?.logo || "",
+                homeLogo: g.home?.logo || "",
+                bet: g.recommendedBet,
+              }));
+
+          const all = [
+            ...normalize("NBA", nbaJson?.games),
+            ...normalize("NCAAM", ncaamJson?.games),
+            ...normalize("NHL", nhlJson?.games),
+          ].sort((a, b) => edgeScoreFromBet(b.bet) - edgeScoreFromBet(a.bet));
+
+          setPreviewPicks(all.slice(0, 3));
+        }
+      } catch {
+        if (!cancelled) setError("Failed to load public landing page data.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const stats = useMemo(() => {
+    return {
+      picks: kpis?.picks ?? 0,
+      wins: kpis?.wins ?? 0,
+      scored: kpis?.scored ?? 0,
+      clv: kpis?.avg_clv_line ?? null,
+      impliedClv: kpis?.avg_clv_implied ?? null,
+      accuracy: kpis?.acc ?? null,
+    };
+  }, [kpis]);
+
+  const styles = {
+    page: {
+      minHeight: "100vh",
+      background:
+        "radial-gradient(circle at top left, rgba(30,111,219,0.22), transparent 28%), radial-gradient(circle at top right, rgba(139,92,246,0.18), transparent 26%), linear-gradient(180deg, #050d1b 0%, #040913 100%)",
+      color: "#e5e7eb",
+    },
+    shell: {
+      maxWidth: "1240px",
+      margin: "0 auto",
+      padding: "22px 20px 60px",
+    },
+    nav: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "18px",
+      padding: "10px 0 22px",
+    },
+    brand: {
+      display: "flex",
+      alignItems: "center",
+      gap: "14px",
+    },
+    brandLogo: {
+      width: "44px",
+      height: "44px",
+      objectFit: "contain",
+      filter: "drop-shadow(0 8px 18px rgba(0,0,0,0.35))",
+    },
+    brandTextWrap: {
+      display: "grid",
+      gap: "2px",
+    },
+    brandTitle: {
+      fontSize: "28px",
+      lineHeight: 1,
+      fontWeight: 900,
+      color: "#f8fafc",
+      margin: 0,
+    },
+    brandSub: {
+      margin: 0,
+      color: "#94a3b8",
+      fontSize: "12px",
+      letterSpacing: "0.16em",
+      textTransform: "uppercase",
+      fontWeight: 700,
+    },
+    navLinks: {
+      display: "flex",
+      gap: "10px",
+      flexWrap: "wrap",
+    },
+    navBtn: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      textDecoration: "none",
+      padding: "12px 16px",
+      borderRadius: "14px",
+      background: "rgba(15,23,42,0.88)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      color: "#f8fafc",
+      fontWeight: 700,
+    },
+    navBtnPrimary: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      textDecoration: "none",
+      padding: "12px 18px",
+      borderRadius: "14px",
+      background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
+      border: "1px solid rgba(59,130,246,0.36)",
+      color: "#f8fafc",
+      fontWeight: 800,
+      boxShadow: "0 12px 28px rgba(37,99,235,0.28)",
+    },
+    card: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "28px",
+      boxShadow: "0 24px 60px rgba(0,0,0,0.28)",
+      backdropFilter: "blur(10px)",
+    },
+    hero: {
+      display: "block",
+      padding: "26px",
+      overflow: "hidden",
+      position: "relative",
+    },
+    heroStack: {
+      display: "grid",
+      gap: "24px",
+      justifyItems: "center",
+      alignContent: "start",
+    },
+    heroMediaRow: {
+      width: "100%",
+      display: "grid",
+      gridTemplateColumns: "1.08fr 1fr",
+      gap: "22px",
+      alignItems: "stretch",
+    },
+    logoHeroWrapSide: {
+      width: "100%",
+      minHeight: 360,
+      borderRadius: 28,
+      background: "linear-gradient(135deg, rgba(30,111,219,0.25), rgba(242,183,5,0.22))",
+      border: "1px solid rgba(148,163,184,0.18)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      overflow: "hidden",
+      padding: "8px 12px",
+      boxSizing: "border-box",
+      boxShadow: "0 24px 72px rgba(0,0,0,0.42), 0 0 96px rgba(59,130,246,0.14), inset 0 0 0 1px rgba(255,255,255,0.05)",
+    },
+    logoHeroSide: {
+      width: "150%",
+      height: "150%",
+      objectFit: "contain",
+      display: "block",
+      transform: "scale(1.34)",
+    },
+    imageHeroSide: {
+      width: "100%",
+      minHeight: 360,
+      height: "100%",
+      objectFit: "cover",
+      borderRadius: "24px",
+      border: "1px solid rgba(148,163,184,0.14)",
+      boxShadow: "0 18px 38px rgba(0,0,0,0.28)",
+      display: "block",
+    },
+    heroTextBlock: {
+      maxWidth: 920,
+      width: "100%",
+      textAlign: "center",
+      display: "grid",
+      gap: "14px",
+      justifyItems: "center",
+    },
+    heroActionsCentered: {
+      display: "flex",
+      gap: "12px",
+      flexWrap: "wrap",
+      justifyContent: "center",
+      marginTop: "4px",
+    },
+    heroKicker: {
+      color: "#bfdbfe",
+      fontSize: "14px",
+      fontWeight: 700,
+      lineHeight: 1.6,
+      textAlign: "center",
+      maxWidth: "820px",
+    },
+    heroTrustRow: {
+      display: "flex",
+      gap: "10px",
+      flexWrap: "wrap",
+      justifyContent: "center",
+      marginTop: "2px",
+    },
+    heroTrustPill: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "11px 16px",
+      borderRadius: "999px",
+      background: "linear-gradient(180deg, rgba(20,28,48,0.96), rgba(12,18,32,0.96))",
+      border: "1px solid rgba(96,165,250,0.14)",
+      color: "#e2e8f0",
+      fontSize: "12px",
+      fontWeight: 800,
+      letterSpacing: "0.04em",
+      boxShadow: "0 10px 24px rgba(0,0,0,0.22)",
+    },
+
+    eyebrow: {
+      color: "#93c5fd",
+      fontSize: "12px",
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "0.18em",
+    },
+    heroTitle: {
+      margin: 0,
+      fontSize: "58px",
+      lineHeight: 0.98,
+      fontWeight: 900,
+      color: "#f8fafc",
+      maxWidth: "760px",
+      textAlign: "center",
+    },
+    heroText: {
+      margin: 0,
+      color: "#cbd5e1",
+      fontSize: "18px",
+      lineHeight: 1.7,
+      maxWidth: "760px",
+      textAlign: "center",
+    },
+    heroBullets: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: "12px",
+      marginTop: "8px",
+      width: "100%",
+    },
+    bulletCard: {
+      background: "rgba(15,23,42,0.88)",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: "18px",
+      padding: "14px 16px",
+    },
+    bulletTitle: {
+      fontSize: "13px",
+      color: "#f8fafc",
+      fontWeight: 800,
+      marginBottom: "8px",
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+    },
+    bulletText: {
+      color: "#94a3b8",
+      fontSize: "14px",
+      lineHeight: 1.6,
+      margin: 0,
+    },
+    heroRight: {
+      display: "grid",
+      gap: "14px",
+      alignContent: "start",
+    },
+    imageHero: {
+      width: "100%",
+      height: "100%",
+      minHeight: "420px",
+      objectFit: "cover",
+      borderRadius: "24px",
+      border: "1px solid rgba(148,163,184,0.14)",
+      boxShadow: "0 18px 38px rgba(0,0,0,0.28)",
+    },
+    section: {
+      marginTop: "22px",
+      padding: "24px",
+    },
+    sectionTitle: {
+      margin: 0,
+      fontSize: "14px",
+      color: "#93c5fd",
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "0.16em",
+    },
+    sectionHeadline: {
+      margin: "10px 0 0",
+      fontSize: "36px",
+      fontWeight: 900,
+      color: "#f8fafc",
+    },
+    sectionText: {
+      margin: "10px 0 0",
+      color: "#94a3b8",
+      fontSize: "15px",
+      lineHeight: 1.7,
+      maxWidth: "860px",
+    },
+    grid3: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: "14px",
+      marginTop: "18px",
+    },
+    grid4: {
+      display: "grid",
+      gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+      gap: "14px",
+      marginTop: "18px",
+    },
+    infoCard: {
+      background: "rgba(15,23,42,0.9)",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: "24px",
+      padding: "20px",
+    },
+    infoTitle: {
+      margin: 0,
+      fontSize: "18px",
+      fontWeight: 800,
+      color: "#f8fafc",
+    },
+    infoText: {
+      margin: "8px 0 0",
+      color: "#94a3b8",
+      fontSize: "14px",
+      lineHeight: 1.6,
+    },
+    statValue: {
+      fontSize: "36px",
+      fontWeight: 900,
+      color: "#f8fafc",
+      lineHeight: 1,
+      marginTop: "6px",
+    },
+    statLabel: {
+      color: "#94a3b8",
+      fontSize: "12px",
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+      fontWeight: 800,
+    },
+    previewGrid: {
+      display: "grid",
+      gap: "14px",
+      marginTop: "18px",
+    },
+    pickCard: {
+      display: "grid",
+      gridTemplateColumns: "1.25fr 0.75fr",
+      gap: "14px",
+      background: "linear-gradient(180deg, rgba(17,24,39,0.94), rgba(10,15,28,0.96))",
+      border: "1px solid rgba(96,165,250,0.10)",
+      borderRadius: "24px",
+      padding: "20px",
+    },
+    pickLeft: {
+      display: "grid",
+      gap: "8px",
+    },
+    pickLeague: {
+      fontSize: "12px",
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "0.12em",
+    },
+    matchup: {
+      fontSize: "26px",
+      fontWeight: 900,
+      color: "#f8fafc",
+    },
+    pickLine: {
+      color: "#cbd5e1",
+      fontSize: "15px",
+      fontWeight: 600,
+    },
+    badgeRow: {
+      display: "flex",
+      gap: "8px",
+      flexWrap: "wrap",
+      marginTop: "4px",
+    },
+    badge: {
+      display: "inline-flex",
+      alignItems: "center",
+      borderRadius: "999px",
+      padding: "6px 10px",
+      fontSize: "11px",
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+    },
+    pickRight: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: "10px",
+      alignContent: "start",
+    },
+    miniStat: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: "16px",
+      padding: "12px",
+    },
+    miniLabel: {
+      color: "#94a3b8",
+      fontSize: "11px",
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+      fontWeight: 700,
+      marginBottom: "6px",
+    },
+    miniValue: {
+      fontSize: "22px",
+      fontWeight: 800,
+      color: "#f8fafc",
+    },
+    imageStrip: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: "14px",
+      marginTop: "18px",
+    },
+    stripImage: {
+      width: "100%",
+      height: "240px",
+      objectFit: "cover",
+      borderRadius: "20px",
+      border: "1px solid rgba(148,163,184,0.12)",
+      boxShadow: "0 16px 34px rgba(0,0,0,0.22)",
+    },
+    priceCard: {
+      marginTop: "18px",
+      display: "grid",
+      gridTemplateColumns: "1fr auto",
+      gap: "18px",
+      alignItems: "center",
+      background: "linear-gradient(135deg, rgba(15,23,42,0.98), rgba(14,55,96,0.92))",
+      border: "1px solid rgba(96,165,250,0.18)",
+      borderRadius: "24px",
+      padding: "24px",
+    },
+    priceValue: {
+      fontSize: "52px",
+      fontWeight: 900,
+      color: "#f8fafc",
+      lineHeight: 1,
+    },
+    finePrint: {
+      marginTop: "8px",
+      color: "#94a3b8",
+      fontSize: "14px",
+      lineHeight: 1.6,
+    },
+    footer: {
+      color: "#64748b",
+      fontSize: "13px",
+      textAlign: "center",
+      padding: "26px 0 10px",
+    },
+  };
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.shell}>
+        <nav style={styles.nav}>
+          <div style={styles.brand}>
+            <img src="/assets/sports-mvp-logo.png" alt="Sports MVP logo" style={styles.brandLogo} />
+            <div style={styles.brandTextWrap}>
+              <p style={styles.brandTitle}>Sports MVP</p>
+              <p style={styles.brandSub}>NBA · NHL · NCAAM</p>
+            </div>
+          </div>
+
+          <div style={styles.navLinks}>
+            <a href="#how-it-works" style={styles.navBtn}>How It Works</a>
+            <a href="#proof" style={styles.navBtn}>Proof</a>
+            <a href="#pricing" style={styles.navBtn}>Pricing</a>
+            <Link to="/app" style={styles.navBtnPrimary}>Enter App</Link>
+          </div>
+        </nav>
+
+        <section style={{ ...styles.card, ...styles.hero }}>
+          <div style={styles.heroStack}>
+            <div style={styles.heroMediaRow}>
+              <div style={styles.logoHeroWrapSide}>
+                <img
+                  src="/assets/sports-mvp-hero.png"
+                  alt="Sports MVP"
+                  style={styles.logoHeroSide}
+                />
+              </div>
+
+              <img
+                src="/landing/las-vegas.jpg"
+                alt="Las Vegas sports betting visual"
+                style={styles.imageHeroSide}
+              />
+            </div>
+
+            <div style={styles.heroTextBlock}>
+              <div style={styles.eyebrow}>Professional Betting Intelligence</div>
+              <div style={styles.heroKicker}>Sports MVP is not a picks service. It is a betting intelligence platform.</div>
+              <h1 style={styles.heroTitle}>Bet with a sharper edge.</h1>
+              <p style={styles.heroText}>
+                Find positive-EV betting opportunities across moneyline, spread, and totals in NBA,
+                NHL, and NCAAM using <strong>Edge Score</strong> — a proprietary ranking framework
+                blending expected value, model confidence, market edge, Kelly sizing, and
+                performance validation.
+              </p>
+
+              <div style={styles.heroActionsCentered}>
+                <Link to="/app" style={styles.navBtnPrimary}>Start Using Sports MVP</Link>
+                <Link to="/predict" style={styles.navBtn}>See Today’s Picks</Link>
+                <Link to="/performance" style={styles.navBtn}>View Performance</Link>
+              </div>
+
+              <div style={styles.heroTrustRow}>
+                <div style={styles.heroTrustPill}>93 Picks Tracked</div>
+                <div style={styles.heroTrustPill}>33 Wins</div>
+                <div style={styles.heroTrustPill}>+9.34 Avg CLV</div>
+                <div style={styles.heroTrustPill}>NBA • NHL • NCAAM</div>
+              </div>
+            </div>
+
+            <div style={styles.heroBullets}>
+              <div style={styles.bulletCard}>
+                <div style={styles.bulletTitle}>Model Intelligence</div>
+                <p style={styles.bulletText}>
+                  Scores moneyline, spread, and totals across NBA, NCAAM, and NHL.
+                </p>
+              </div>
+              <div style={styles.bulletCard}>
+                <div style={styles.bulletTitle}>Edge Score Ranking</div>
+                <p style={styles.bulletText}>
+                  Ranks betting opportunities using EV, confidence, edge, Kelly, and tier.
+                </p>
+              </div>
+              <div style={styles.bulletCard}>
+                <div style={styles.bulletTitle}>Bankroll Discipline</div>
+                <p style={styles.bulletText}>
+                  Converts model quality into practical bet sizing guidance.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="how-it-works" style={{ ...styles.card, ...styles.section }}>
+          <div style={styles.sectionTitle}>How Sports MVP Works</div>
+          <h2 style={styles.sectionHeadline}>A modern betting workflow, built for disciplined players.</h2>
+          <p style={styles.sectionText}>
+            Sports MVP is not a generic picks service. It is a decision-support platform built to
+            help bettors identify stronger opportunities, understand why they rank highly, and
+            translate model quality into smarter bankroll execution.
+          </p>
+
+          <div style={styles.grid3}>
+            <div style={styles.infoCard}>
+              <h3 style={styles.infoTitle}>1. Score every major market</h3>
+              <p style={styles.infoText}>
+                The premium engine evaluates moneyline, spread, and total opportunities instead of
+                forcing users into one restricted market type.
+              </p>
+            </div>
+            <div style={styles.infoCard}>
+              <h3 style={styles.infoTitle}>2. Rank with Edge Score</h3>
+              <p style={styles.infoText}>
+                Every premium pick is ranked with a proprietary scoring layer designed to surface
+                the strongest betting opportunities first.
+              </p>
+            </div>
+            <div style={styles.infoCard}>
+              <h3 style={styles.infoTitle}>3. Execute with bankroll discipline</h3>
+              <p style={styles.infoText}>
+                Kelly-based signals and bet sizing guidance help translate model conviction into
+                smarter wagering decisions.
+              </p>
+            </div>
+          </div>
+
+          <div style={styles.imageStrip}>
+            <img src="/landing/sportsbook.jpg" alt="Sportsbook venue" style={styles.stripImage} />
+            <img src="/landing/nba.jpg" alt="NBA sports image" style={styles.stripImage} />
+            <img src="/landing/nhl.jpg" alt="NHL sports image" style={styles.stripImage} />
+          </div>
+        </section>
+
+        <section id="proof" style={{ ...styles.card, ...styles.section }}>
+          <div style={styles.sectionTitle}>Top Edge Bets Today</div>
+          <h2 style={styles.sectionHeadline}>Live model-ranked opportunities from the premium scoring engine.</h2>
+          <p style={styles.sectionText}>
+            Sports MVP surfaces live ranked opportunities directly from the premium model feed. This section shows
+            how the engine is prioritizing real bets right now instead of hiding behind vague marketing claims.
+          </p>
+
+          <div style={styles.grid4}>
+            <div style={styles.infoCard}>
+              <div style={styles.statLabel}>Tracked Picks</div>
+              <div style={styles.statValue}>{loading ? "—" : stats.picks}</div>
+            </div>
+            <div style={styles.infoCard}>
+              <div style={styles.statLabel}>Wins</div>
+              <div style={{ ...styles.statValue, color: "#86efac" }}>{loading ? "—" : stats.wins}</div>
+            </div>
+            <div style={styles.infoCard}>
+              <div style={styles.statLabel}>Accuracy</div>
+              <div style={styles.statValue}>{loading ? "—" : pctFromUnit(stats.accuracy, 1)}</div>
+            </div>
+            <div style={styles.infoCard}>
+              <div style={styles.statLabel}>Avg CLV</div>
+              <div style={styles.statValue}>{loading ? "—" : (num(stats.clv) == null ? "—" : stats.clv.toFixed(2))}</div>
+            </div>
+          </div>
+
+          <div className="preview-picks" style={styles.previewGrid}>
+            {error ? (
+              <div style={styles.infoCard}>{error}</div>
+            ) : previewPicks.map((row) => {
+              const score = edgeScoreFromBet(row.bet);
+              return (
+                <div key={`${row.league}-${row.gameId}`} style={styles.pickCard}>
+                  <div style={styles.pickLeft}>
+                    <div style={{ ...styles.pickLeague, color: leagueColor(row.league) }}>{row.league}</div>
+                    <div style={styles.matchup}>{row.matchup}</div>
+                    <div style={styles.pickLine}>
+                      {marketText(row.bet)} • Odds {oddsText(row.bet?.odds)}
+                    </div>
+                    <div style={styles.badgeRow}>
+                      <span style={{ ...styles.badge, ...tierColors(row.bet?.tier) }}>
+                        {row.bet?.tier || "—"}
+                      </span>
+                      <span
+                        style={{
+                          ...styles.badge,
+                          background: "rgba(59,130,246,0.12)",
+                          border: "1px solid rgba(59,130,246,0.28)",
+                          color: "#bfdbfe",
+                        }}
+                      >
+                        Edge Score {score}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={styles.pickRight}>
+                    <div style={styles.miniStat}>
+                      <div style={styles.miniLabel}>Edge Score</div>
+                      <div style={{ ...styles.miniValue, color: "#bfdbfe" }}>{score}</div>
+                    </div>
+                    <div style={styles.miniStat}>
+                      <div style={styles.miniLabel}>EV</div>
+                      <div style={{ ...styles.miniValue, color: "#93c5fd" }}>{fmtEv(row.bet?.evForStake100)}</div>
+                    </div>
+                    <div style={styles.miniStat}>
+                      <div style={styles.miniLabel}>Confidence</div>
+                      <div style={styles.miniValue}>{pctFromUnit(row.bet?.modelProb, 1)}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section style={{ ...styles.card, ...styles.section }}>
+          <div style={styles.sectionTitle}>Why Sports MVP Wins</div>
+          <h2 style={styles.sectionHeadline}>Built for disciplined bettors who want an edge.</h2>
+          <p style={styles.sectionText}>
+            Most betting products stop at “pick of the day.” Sports MVP goes further by combining
+            professional-grade ranking logic, performance transparency, CLV analytics, and bankroll tracking.
+          </p>
+
+          <div style={styles.grid3}>
+            <div style={styles.infoCard}>
+              <h3 style={styles.infoTitle}>Transparent analytics</h3>
+              <p style={styles.infoText}>
+                Users can review pick performance, ledger history, bankroll context, and closing-line signals.
+              </p>
+            </div>
+            <div style={styles.infoCard}>
+              <h3 style={styles.infoTitle}>Stronger daily utility</h3>
+              <p style={styles.infoText}>
+                Ranked picks, sizing guidance, and performance proof make the platform useful every day.
+              </p>
+            </div>
+            <div style={styles.infoCard}>
+              <h3 style={styles.infoTitle}>Real premium differentiation</h3>
+              <p style={styles.infoText}>
+                Edge Score gives Sports MVP a distinct product story that is more credible than typical picks brands.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="pricing" style={{ ...styles.card, ...styles.section }}>
+          <div style={styles.sectionTitle}>Simple Pricing</div>
+          <h2 style={styles.sectionHeadline}>A premium betting intelligence platform, priced like software.</h2>
+          <p style={styles.sectionText}>
+            The premium subscription layer can be added after the public site is finalized. This section is ready
+            to support a future Stripe flow without changing the public marketing structure.
+          </p>
+
+          <div style={styles.priceCard}>
+            <div>
+              <div style={{ fontSize: "14px", color: "#93c5fd", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.16em" }}>
+                Sports MVP Premium
+              </div>
+              <div style={{ marginTop: "10px", color: "#f8fafc", fontSize: "22px", fontWeight: 800 }}>
+                Edge-ranked picks, bankroll guidance, performance proof, and premium dashboards.
+              </div>
+              <div style={styles.finePrint}>
+                Includes premium homepage, full pick board, performance analytics, My Bets tracking,
+                Edge Score ranking, and bankroll intelligence.
+              </div>
+            </div>
+
+            <div style={{ textAlign: "right" }}>
+              <div style={styles.priceValue}>$19</div>
+              <div style={{ color: "#cbd5e1", fontSize: "18px", marginTop: "6px", fontWeight: 700 }}>
+                / month
+              </div>
+              <div style={{ marginTop: "16px" }}>
+                <Link to="/app" style={styles.navBtnPrimary}>Preview Premium App</Link>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        <section style={{ ...styles.card, ...styles.section }}>
+          <div style={styles.sectionTitle}>Stay Ahead of the Market</div>
+          <h2 style={styles.sectionHeadline}>Get Sports MVP updates and model insights.</h2>
+          <p style={styles.sectionText}>
+            Join the Sports MVP mailing list to receive product updates, model insights,
+            and major feature releases as the platform evolves.
+          </p>
+
+          <div style={{marginTop:"20px",display:"flex",gap:"10px",flexWrap:"wrap"}}>
+            <input
+              type="email"
+              placeholder="Enter your email"
+              style={{
+                padding:"14px 16px",
+                borderRadius:"12px",
+                border:"1px solid rgba(148,163,184,0.2)",
+                background:"rgba(15,23,42,0.9)",
+                color:"#e5e7eb",
+                minWidth:"260px"
+              }}
+            />
+            <button style={{
+                padding:"14px 20px",
+                borderRadius:"12px",
+                border:"none",
+                background:"linear-gradient(135deg,#2563eb,#1d4ed8)",
+                color:"#fff",
+                fontWeight:700,
+                cursor:"pointer"
+            }}>
+              Join Updates
+            </button>
+          </div>
+        </section>
+
+        <div style={styles.footer}>
+          Sports MVP — premium sports betting intelligence for NBA, NHL, and NCAAM.
+        </div>
+      </div>
+    </div>
+  );
+}

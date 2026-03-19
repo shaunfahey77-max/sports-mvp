@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions } from "../routes/predict.js";
 import { upsertMarketSnapshotsBatch } from "../db/marketSnapshots.js";
+import { supabase } from "../db/dailyLedger.js";
 
 function yyyymmddUTC(d) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
@@ -20,19 +21,25 @@ function getArg(name, fallback = null) {
 }
 
 function normMarket(x) {
-  const m = String(x || "moneyline").trim().toLowerCase();
-  if (!m) return "moneyline";
+  const m = String(x || "").trim().toLowerCase();
   if (m === "ml" || m === "money" || m === "h2h") return "moneyline";
   if (m === "spread" || m === "spreads") return "spread";
   if (m === "total" || m === "totals" || m === "ou") return "total";
-  return m;
+  return m || "moneyline";
+}
+
+function normPick(x) {
+  return String(x || "").trim().toLowerCase();
 }
 
 function ensureGameKey(v) {
   const s = String(v || "").trim();
-  if (!s) return null;
-  if (s === "undefined" || s === "null") return null;
+  if (!s || s === "undefined" || s === "null") return null;
   return s;
+}
+
+function normBookKey(x) {
+  return String(x || "").trim().toLowerCase().replace(/\s+/g, "_");
 }
 
 function getGameKeyForLedger(g, date) {
@@ -48,6 +55,8 @@ function getGameKeyForLedger(g, date) {
 
 function getEventStart(g) {
   return (
+    g?.eventStart ||
+    g?.event_start ||
     g?.startTime ||
     g?.start_time ||
     g?.commenceTime ||
@@ -56,6 +65,120 @@ function getEventStart(g) {
     g?.dateTime ||
     null
   );
+}
+
+function toMillis(v) {
+  const t = Date.parse(v || "");
+  return Number.isFinite(t) ? t : null;
+}
+
+function sameNumber(a, b) {
+  const na = Number(a);
+  const nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+}
+
+function getMarketNodeForStoredMarket(g, market) {
+  const wanted = normMarket(market);
+
+  const recommendedNode = g?.market ?? null;
+  const recommendedMarket = normMarket(
+    recommendedNode?.recommendedMarket ||
+    recommendedNode?.market ||
+    recommendedNode?.marketType ||
+    recommendedNode?.type ||
+    null
+  );
+
+  const candidates = [
+    g?.markets?.[wanted],
+    g?.marketBreakdown?.[wanted],
+    g?.oddsComparisonByMarket?.[wanted],
+    wanted === "moneyline" ? g?.moneyline : null,
+    wanted === "spread" ? g?.spread : null,
+    wanted === "total" ? g?.total : null,
+    wanted === "moneyline" ? g?.moneylineMarket : null,
+    wanted === "spread" ? g?.spreadMarket : null,
+    wanted === "total" ? g?.totalMarket : null,
+  ].filter(Boolean);
+
+  for (const node of candidates) {
+    const nodeMarket = normMarket(
+      node?.recommendedMarket ||
+      node?.market ||
+      node?.marketType ||
+      node?.type ||
+      wanted
+    );
+
+    if (nodeMarket === wanted && node?.oddsComparison) {
+      return node;
+    }
+  }
+
+  if (recommendedNode?.oddsComparison && recommendedMarket === wanted) {
+    return recommendedNode;
+  }
+
+  return null;
+}
+
+function filterBooksForStoredPick(books, market, pick, publishLine, publishOdds, eventStart) {
+  const candidates = Array.isArray(books) ? books.filter(Boolean) : [];
+  if (!candidates.length) return [];
+
+  const eventStartMs = toMillis(eventStart);
+  const targetLine = Number(publishLine);
+  const targetOdds = Number(publishOdds);
+
+  const enriched = candidates
+    .map((b) => {
+      const line = Number(b?.line);
+      const odds = Number(b?.odds);
+      const updatedMs = toMillis(b?.lastUpdate);
+      const hasLine = Number.isFinite(line);
+      const hasOdds = Number.isFinite(odds);
+      const beforeStart =
+        eventStartMs == null || updatedMs == null ? true : updatedMs <= eventStartMs;
+
+      return {
+        raw: b,
+        line,
+        odds,
+        updatedMs,
+        hasLine,
+        hasOdds,
+        beforeStart,
+      };
+    })
+    .filter((x) => x.hasOdds && x.beforeStart);
+
+  if (!enriched.length) return [];
+
+  if (market === "moneyline") {
+    if (Number.isFinite(targetOdds)) {
+      const exactOdds = enriched.filter((x) => x.odds === targetOdds);
+      if (exactOdds.length) return exactOdds.map((x) => x.raw);
+    }
+    return enriched.map((x) => x.raw);
+  }
+
+  const withLine = enriched.filter((x) => x.hasLine);
+  if (!withLine.length) return [];
+
+  const sameLine = Number.isFinite(targetLine)
+    ? withLine.filter((x) => x.line === targetLine)
+    : [];
+
+  if (sameLine.length) {
+    if (Number.isFinite(targetOdds)) {
+      const exactOdds = sameLine.filter((x) => x.odds === targetOdds);
+      if (exactOdds.length) return exactOdds.map((x) => x.raw);
+    }
+    return sameLine.map((x) => x.raw);
+  }
+
+  return withLine.map((x) => x.raw);
 }
 
 async function buildPredictionsInternal(league, date) {
@@ -85,81 +208,98 @@ async function main() {
     const games = Array.isArray(out?.games) ? out.games : [];
     const rows = [];
 
+    const gameMap = new Map();
     for (const g of games) {
-      const m = g?.market ?? {};
-      const bet = g?.recommendedBet ?? null;
-      const compat = g?.market ?? {};
-
       const game_key = ensureGameKey(getGameKeyForLedger(g, date));
-      if (!game_key) continue;
+      if (game_key) gameMap.set(game_key, g);
+    }
 
-      const market = normMarket(
-        bet?.marketType ??
-        compat?.marketType ??
-        compat?.recommendedMarket ??
-        m?.marketType ??
-        m?.market ??
-        m?.type ??
-        g?.marketType ??
-        "moneyline"
+    const { data: storedPicks, error: storedPicksError } = await supabase
+      .from("picks_daily")
+      .select("date,league,mode,game_key,market,pick,publish_book,publish_line,publish_odds,market_line,market_odds")
+      .eq("date", date)
+      .eq("league", league);
+
+    if (storedPicksError) {
+      throw new Error(`stored picks fetch failed: ${storedPicksError.message}`);
+    }
+
+    for (const pickRow of storedPicks || []) {
+      const g = gameMap.get(pickRow.game_key);
+      if (!g) continue;
+
+      const market = normMarket(pickRow.market);
+      const pick = normPick(pickRow.pick);
+      if (!market || !pick || pick === "pass") continue;
+
+      const marketNode = getMarketNodeForStoredMarket(g, market);
+      if (!marketNode?.oddsComparison) continue;
+
+      const oddsComparison = marketNode.oddsComparison;
+      const books = Array.isArray(oddsComparison?.books) ? oddsComparison.books : [];
+      const eventStart = getEventStart(g);
+
+      const matchedBooks = filterBooksForStoredPick(
+        books,
+        market,
+        pick,
+        pickRow.publish_line ?? pickRow.market_line,
+        pickRow.publish_odds ?? pickRow.market_odds,
+        eventStart
       );
 
-      const pick =
-        bet?.side ??
-        compat?.pick ??
-        m?.pick ??
-        g?.pick ??
-        "PASS";
+      for (const bookRow of matchedBooks) {
+        const book = bookRow?.book ?? bookRow?.bookKey ?? null;
+        const bookKey = bookRow?.bookKey ?? null;
+        const line = bookRow?.line ?? null;
+        const odds = bookRow?.odds ?? null;
+        const realCapturedAt = bookRow?.lastUpdate ?? null;
 
-      const odds =
-        bet?.odds ??
-        compat?.marketOdds ??
-        m?.marketOdds ??
-        m?.odds ??
-        g?.odds ??
-        null;
+        const hasRealHistoricalSource =
+          book != null &&
+          realCapturedAt != null &&
+          odds != null &&
+          (market === "moneyline" || line != null);
 
-      const line =
-        bet?.line ??
-        compat?.marketLine ??
-        m?.marketLine ??
-        m?.line ??
-        g?.line ??
-        null;
+        if (!hasRealHistoricalSource) continue;
 
-      const side =
-        bet?.side ??
-        compat?.marketSide ??
-        m?.marketSide ??
-        null;
+        const snapshot_key = [
+          date,
+          league,
+          pickRow.game_key,
+          market,
+          pick,
+          normBookKey(bookKey || book),
+          realCapturedAt
+        ].join("|");
 
-      const book =
-        bet?.book ??
-        compat?.book ??
-        m?.book ??
-        g?.book ??
-        null;
-
-      const mode =
-        g?.mode ??
-        g?.modeLabel ??
-        "regular";
-
-      rows.push({
-        snapshot_date: date,
-        league,
-        mode,
-        game_key,
-        market,
-        market_type: market,
-        pick,
-        side,
-        line,
-        odds,
-        book,
-        event_start: getEventStart(g),
-        captured_at,
-      });
+        rows.push({
+          snapshot_key,
+          snapshot_date: date,
+          league,
+          mode: pickRow.mode ?? g?.mode ?? g?.modeLabel ?? "regular",
+          game_key: pickRow.game_key,
+          market,
+          market_type: market,
+          pick,
+          side: pick,
+          line,
+          odds,
+          book,
+          event_start: eventStart,
+          captured_at: realCapturedAt,
+          meta: {
+            source: "captureMarketSnapshots",
+            bookKey,
+            preferredBook: oddsComparison?.preferredBook ?? null,
+            bestBook: oddsComparison?.bestBook ?? null,
+            bestBookKey: oddsComparison?.bestBookKey ?? null,
+            publishBook: pickRow.publish_book ?? null,
+            publishLine: pickRow.publish_line ?? pickRow.market_line ?? null,
+            publishOdds: pickRow.publish_odds ?? pickRow.market_odds ?? null,
+          },
+        });
+      }
     }
 
     const written = await upsertMarketSnapshotsBatch(rows, { chunkSize: 500 });

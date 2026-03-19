@@ -74,6 +74,34 @@ function calcProfit(result, stake, toWin) {
   return null;
 }
 
+function impliedProbFromOdds(odds) {
+  const o = num(odds);
+  if (o == null || o === 0) return null;
+  if (o > 0) return 100 / (o + 100);
+  return Math.abs(o) / (Math.abs(o) + 100);
+}
+
+function calcClvLine(publishLine, closeLine) {
+  const p = num(publishLine);
+  const c = num(closeLine);
+  if (p == null || c == null) return null;
+  return p - c;
+}
+
+function calcClvOdds(publishOdds, closeOdds) {
+  const p = num(publishOdds);
+  const c = num(closeOdds);
+  if (p == null || c == null) return null;
+  return c - p;
+}
+
+function calcClvImplied(publishOdds, closeOdds) {
+  const p = impliedProbFromOdds(publishOdds);
+  const c = impliedProbFromOdds(closeOdds);
+  if (p == null || c == null) return null;
+  return c - p;
+}
+
 function getUserKey(req) {
   return text(req.headers["x-user-key"], DEFAULT_USER_KEY);
 }
@@ -238,6 +266,14 @@ router.post("/bets", async (req, res) => {
 
     const betType = normalizeBetType(payload.bet_type);
 
+    if (payload.publish_line == null && payload.line != null && betType === "straight") {
+      payload.publish_line = payload.line;
+    }
+
+    if (payload.publish_odds == null && payload.odds != null) {
+      payload.publish_odds = payload.odds;
+    }
+
     const required = ["date", "league"];
     for (const key of required) {
       if (!payload[key]) {
@@ -328,9 +364,6 @@ router.patch("/bets/:id", async (req, res) => {
     if (body.publish_odds !== undefined) updatePayload.publish_odds = num(body.publish_odds);
     if (body.close_line !== undefined) updatePayload.close_line = num(body.close_line);
     if (body.close_odds !== undefined) updatePayload.close_odds = num(body.close_odds);
-    if (body.clv_line_delta !== undefined) updatePayload.clv_line_delta = num(body.clv_line_delta);
-    if (body.clv_odds_delta !== undefined) updatePayload.clv_odds_delta = num(body.clv_odds_delta);
-    if (body.clv_implied_delta !== undefined) updatePayload.clv_implied_delta = num(body.clv_implied_delta);
     if (body.close_reason !== undefined) updatePayload.close_reason = text(body.close_reason, null);
 
     if (body.result !== undefined) updatePayload.result = normalizeResult(body.result);
@@ -340,12 +373,32 @@ router.patch("/bets/:id", async (req, res) => {
       return res.status(400).json({ ok: false, error: "No valid fields provided" });
     }
 
+    if (!("publish_line" in updatePayload) && num(existing?.publish_line) == null && "line" in updatePayload && normalizeBetType(existing?.bet_type) === "straight") {
+      updatePayload.publish_line = num(updatePayload.line);
+    }
+
+    if (!("publish_odds" in updatePayload) && num(existing?.publish_odds) == null && "odds" in updatePayload) {
+      updatePayload.publish_odds = num(updatePayload.odds);
+    }
+
     const nextStake = ("stake" in updatePayload) ? updatePayload.stake : existing.stake;
     const nextOdds = ("odds" in updatePayload) ? updatePayload.odds : existing.odds;
     const nextResult = ("result" in updatePayload) ? updatePayload.result : existing.result;
 
+    const nextPublishLine =
+      "publish_line" in updatePayload ? updatePayload.publish_line : existing.publish_line;
+    const nextCloseLine =
+      "close_line" in updatePayload ? updatePayload.close_line : existing.close_line;
+    const nextPublishOdds =
+      "publish_odds" in updatePayload ? updatePayload.publish_odds : existing.publish_odds;
+    const nextCloseOdds =
+      "close_odds" in updatePayload ? updatePayload.close_odds : existing.close_odds;
+
     updatePayload.to_win = calcToWin(nextStake, nextOdds);
     updatePayload.profit = calcProfit(nextResult, nextStake, updatePayload.to_win);
+    updatePayload.clv_line_delta = calcClvLine(nextPublishLine, nextCloseLine);
+    updatePayload.clv_odds_delta = calcClvOdds(nextPublishOdds, nextCloseOdds);
+    updatePayload.clv_implied_delta = calcClvImplied(nextPublishOdds, nextCloseOdds);
     updatePayload.updated_at = new Date().toISOString();
 
     const { data, error } = await supabaseAdmin

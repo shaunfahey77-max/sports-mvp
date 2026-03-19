@@ -1,0 +1,1024 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import sportsMvpLogo from "../assets/sports-mvp-logo.png";
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pct(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${n.toFixed(digits)}%`;
+}
+
+function pctFromUnit(v, digits = 1) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
+function signedNum(v, digits = 2) {
+  const n = num(v);
+  if (n == null) return "—";
+  const abs = Math.abs(n).toFixed(digits);
+  return `${n > 0 ? "+" : n < 0 ? "-" : ""}${abs}`;
+}
+
+function oddsText(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return n > 0 ? `+${n}` : `${n}`;
+}
+
+function fmtEv(v) {
+  const n = num(v);
+  if (n == null) return "—";
+  return `${Math.round(n)}%`;
+}
+
+function marketText(bet) {
+  if (!bet) return "—";
+  const mt = String(bet.marketType || "").toLowerCase();
+  const side = String(bet.side || "").toLowerCase();
+  const line = num(bet.line);
+
+  if (mt === "spread") {
+    const sideText = side === "away" ? "Away" : side === "home" ? "Home" : side;
+    return `${sideText} ${line == null ? "" : line > 0 ? `+${line}` : `${line}`}`.trim();
+  }
+
+  if (mt === "total") {
+    const sideText = side === "under" ? "Under" : side === "over" ? "Over" : side;
+    return `${sideText} ${line == null ? "" : line}`.trim();
+  }
+
+  if (mt === "moneyline") return side ? `${side.toUpperCase()} ML` : "Moneyline";
+
+  return "—";
+}
+
+function tierColors(tier) {
+  const t = String(tier || "").toUpperCase();
+  if (t === "ELITE") {
+    return {
+      background: "rgba(16,185,129,0.12)",
+      border: "1px solid rgba(16,185,129,0.28)",
+      color: "#86efac",
+    };
+  }
+  if (t === "STRONG") {
+    return {
+      background: "rgba(59,130,246,0.12)",
+      border: "1px solid rgba(59,130,246,0.28)",
+      color: "#93c5fd",
+    };
+  }
+  if (t === "EDGE") {
+    return {
+      background: "rgba(245,158,11,0.12)",
+      border: "1px solid rgba(245,158,11,0.28)",
+      color: "#fcd34d",
+    };
+  }
+  return {
+    background: "rgba(148,163,184,0.12)",
+    border: "1px solid rgba(148,163,184,0.22)",
+    color: "#cbd5e1",
+  };
+}
+
+function leagueColor(league) {
+  if (league === "NBA") return "#60a5fa";
+  if (league === "NCAAM") return "#f59e0b";
+  if (league === "NHL") return "#34d399";
+  return "#cbd5e1";
+}
+
+function policyRows() {
+  return [
+    { league: "NBA", market: "Spreads only", note: "Premium validated market" },
+    { league: "NCAAM", market: "Totals only", note: "Premium validated market" },
+    { league: "NHL", market: "Spreads only", note: "Premium validated market" },
+  ];
+}
+
+function metricHelpText(key) {
+  const map = {
+    picks: "The number of premium recommendations currently shown on the homepage.",
+    wins: "Scored wins from the recent performance window returned by the KPI service.",
+    accuracy:
+      "Win rate on scored picks only. Passes and ungraded plays do not count as wins or losses.",
+    clv:
+      "Closing line value. Positive CLV means the model generally beat the market by getting a better number before close.",
+    impliedClv:
+      "A percentage-style CLV view based on implied probability instead of raw line movement.",
+    edge:
+      "Model edge versus market. Positive edge means the model probability is higher than the implied probability from the odds.",
+    ev:
+      "Expected value estimate for the recommended wager. Higher EV means stronger projected long-term value, not guaranteed short-term outcome.",
+    kelly:
+      "Half-Kelly sizing signal from the model. This is a bankroll guidance input, not a required bet size.",
+    confidence:
+      "Model win probability for the recommended side or total. Higher confidence does not remove variance.",
+    tier:
+      "Tier rank assigned by the model. ELITE is strongest, then STRONG, then EDGE.",
+    marketPolicy:
+      "Shows which market type each league is currently validated for on the premium homepage.",
+    recentPerformance:
+      "Recent scored results used to give context on how validated picks are performing.",
+    pickOfDay:
+      "The highest-ranked available premium play on the homepage using the model scoring blend.",
+    topPicks:
+      "The three best validated premium plays on the board based on model ranking.",
+    navigate:
+      "Quick links to deeper league pages, parlays, and full performance reporting.",
+  };
+
+  return map[key] || "";
+}
+
+function InfoTip({ text }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <span
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+        marginLeft: "6px",
+      }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        aria-label={text}
+        title={text}
+        style={{
+          width: "18px",
+          height: "18px",
+          borderRadius: "999px",
+          border: "1px solid rgba(148,163,184,0.25)",
+          background: "rgba(15,23,42,0.92)",
+          color: "#93c5fd",
+          fontSize: "11px",
+          fontWeight: 800,
+          lineHeight: 1,
+          cursor: "help",
+          padding: 0,
+        }}
+      >
+        i
+      </button>
+
+      {open ? (
+        <span
+          role="tooltip"
+          style={{
+            position: "absolute",
+            top: "26px",
+            left: 0,
+            zIndex: 20,
+            width: "240px",
+            padding: "10px 12px",
+            borderRadius: "12px",
+            background: "rgba(2,6,23,0.98)",
+            border: "1px solid rgba(96,165,250,0.24)",
+            boxShadow: "0 18px 40px rgba(0,0,0,0.35)",
+            color: "#dbeafe",
+            fontSize: "12px",
+            lineHeight: 1.5,
+            fontWeight: 500,
+            textTransform: "none",
+            letterSpacing: "normal",
+          }}
+        >
+          {text}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function LabelWithTip({ label, tip, style }) {
+  return (
+    <div style={style}>
+      <span>{label}</span>
+      <InfoTip text={tip} />
+    </div>
+  );
+}
+
+function SectionSummary({ summary, howToUse }) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: "10px",
+        marginTop: "8px",
+      }}
+    >
+      <p
+        style={{
+          margin: 0,
+          color: "#cbd5e1",
+          fontSize: "14px",
+          lineHeight: 1.7,
+          maxWidth: "760px",
+        }}
+      >
+        {summary}
+      </p>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: "8px",
+          padding: "12px 14px",
+          borderRadius: "14px",
+          background: "rgba(15,23,42,0.72)",
+          border: "1px solid rgba(96,165,250,0.14)",
+          color: "#bfdbfe",
+          fontSize: "13px",
+          lineHeight: 1.6,
+        }}
+      >
+        <span style={{ fontSize: "14px" }}>ⓘ</span>
+        <span>
+          <strong>How to use this section:</strong> {howToUse}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export default function Home() {
+  const [loading, setLoading] = useState(true);
+  const [perfLoading, setPerfLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [perfError, setPerfError] = useState("");
+  const [picks, setPicks] = useState([]);
+  const [performance, setPerformance] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPredictions() {
+      setLoading(true);
+      setError("");
+      try {
+        const [nbaRes, ncaamRes, nhlRes] = await Promise.all([
+          fetch("http://127.0.0.1:3001/api/predictions?league=nba"),
+          fetch("http://127.0.0.1:3001/api/predictions?league=ncaam"),
+          fetch("http://127.0.0.1:3001/api/predictions?league=nhl"),
+        ]);
+
+        const [nbaJson, ncaamJson, nhlJson] = await Promise.all([
+          nbaRes.json(),
+          ncaamRes.json(),
+          nhlRes.json(),
+        ]);
+
+        const normalize = (league, games) =>
+          (games || [])
+            .filter((g) => g?.recommendedBet)
+            .map((g) => ({
+              league,
+              gameId: g.gameId,
+              matchup: `${g.away?.abbr || "AWAY"} @ ${g.home?.abbr || "HOME"}`,
+              awayAbbr: g.away?.abbr || "AWAY",
+              homeAbbr: g.home?.abbr || "HOME",
+              awayLogo: g.away?.logo || "",
+              homeLogo: g.home?.logo || "",
+              bet: g.recommendedBet,
+            }));
+
+        const all = [
+          ...normalize("NBA", nbaJson?.games),
+          ...normalize("NCAAM", ncaamJson?.games),
+          ...normalize("NHL", nhlJson?.games),
+        ].sort((a, b) => {
+          const tierBonus = (tier) => {
+            const t = String(tier || "").toUpperCase();
+            if (t === "ELITE") return 12;
+            if (t === "STRONG") return 6;
+            if (t === "EDGE") return 2;
+            return 0;
+          };
+
+          const score = (row) =>
+            ((num(row?.bet?.evForStake100) || 0) * 0.55) +
+            (((num(row?.bet?.modelProb) || 0) * 100) * 0.35) +
+            tierBonus(row?.bet?.tier);
+
+          return score(b) - score(a);
+        });
+
+        if (!cancelled) setPicks(all.slice(0, 3));
+      } catch {
+        if (!cancelled) setError("Failed to load premium picks.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    async function loadPerformance() {
+      setPerfLoading(true);
+      setPerfError("");
+      try {
+        const res = await fetch("http://127.0.0.1:3001/api/performance/kpis");
+        const json = await res.json();
+        if (!cancelled) setPerformance(json);
+      } catch {
+        if (!cancelled) setPerfError("Failed to load recent performance.");
+      } finally {
+        if (!cancelled) setPerfLoading(false);
+      }
+    }
+
+    loadPredictions();
+    loadPerformance();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const featured = picks[0] || null;
+
+  const perfSummary = useMemo(() => {
+    if (!performance?.data) return null;
+
+    const p = performance.data;
+
+    return {
+      picks: p.picks || 0,
+      wins: p.wins || 0,
+      losses: p.losses || 0,
+      scored: p.scored || 0,
+      winRate: p.acc || null,
+      avgClv: p.avg_clv_line ?? null,
+      avgImpliedClv: p.avg_clv_implied ?? null,
+    };
+  }, [performance]);
+
+  const styles = {
+    page: {
+      minHeight: "100vh",
+      background:
+        "radial-gradient(circle at top left, rgba(30,111,219,0.20), transparent 26%), radial-gradient(circle at top right, rgba(139,92,246,0.16), transparent 24%), linear-gradient(180deg, #071224 0%, #040b18 100%)",
+      color: "#e5e7eb",
+      padding: "28px 20px 40px",
+    },
+    shell: { maxWidth: "1180px", margin: "0 auto" },
+    hero: {
+      display: "grid",
+      gridTemplateColumns: "1.35fr 0.95fr",
+      gap: "20px",
+      marginBottom: "22px",
+    },
+    panel: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "24px",
+      boxShadow: "0 24px 60px rgba(0,0,0,0.28)",
+      backdropFilter: "blur(10px)",
+    },
+    heroMain: { padding: "24px" },
+    heroMeta: {
+      padding: "20px",
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "14px",
+      alignContent: "start",
+    },
+    sectionTitle: {
+      fontSize: "13px",
+      letterSpacing: "0.14em",
+      textTransform: "uppercase",
+      color: "#93c5fd",
+      marginBottom: "10px",
+      fontWeight: 700,
+    },
+    headline: { display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" },
+    logo: {
+      width: "72px",
+      height: "72px",
+      objectFit: "contain",
+      filter: "drop-shadow(0 8px 18px rgba(0,0,0,0.35))",
+      flexShrink: 0,
+    },
+    h1: { fontSize: "42px", lineHeight: 1.02, margin: 0, fontWeight: 800, color: "#f8fafc" },
+    subtitle: {
+      margin: "8px 0 0",
+      color: "#cbd5e1",
+      fontSize: "16px",
+      lineHeight: 1.6,
+      maxWidth: "640px",
+    },
+    heroGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+      gap: "14px",
+      marginTop: "20px",
+    },
+    statCard: {
+      background: "rgba(15,23,42,0.92)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "18px",
+      padding: "16px",
+      minHeight: "112px",
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "space-between",
+    },
+    statLabel: {
+      fontSize: "11px",
+      textTransform: "uppercase",
+      letterSpacing: "0.12em",
+      color: "#94a3b8",
+      marginBottom: "8px",
+      fontWeight: 700,
+      display: "flex",
+      alignItems: "center",
+      flexWrap: "wrap",
+    },
+    statValue: { fontSize: "30px", fontWeight: 800, color: "#f8fafc", lineHeight: 1 },
+    statSubtext: {
+      marginTop: "8px",
+      color: "#94a3b8",
+      fontSize: "12px",
+      lineHeight: 1.45,
+    },
+    featuredTitle: { margin: "0 0 12px", fontSize: "22px", fontWeight: 800, color: "#f8fafc" },
+    featuredCard: {
+      background: "linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(7,12,24,0.95) 100%)",
+      border: "1px solid rgba(96,165,250,0.18)",
+      borderRadius: "20px",
+      padding: "18px",
+    },
+    matchup: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "14px",
+      marginBottom: "14px",
+    },
+    teamSide: { display: "flex", alignItems: "center", gap: "10px", minWidth: 0 },
+    teamLogo: {
+      width: "34px",
+      height: "34px",
+      objectFit: "contain",
+      borderRadius: "999px",
+      background: "rgba(15,23,42,0.65)",
+      padding: "3px",
+      border: "1px solid rgba(148,163,184,0.14)",
+      flexShrink: 0,
+    },
+    teamText: { fontSize: "15px", fontWeight: 700, color: "#f8fafc" },
+    featuredMetricGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: "10px",
+      marginTop: "14px",
+    },
+    miniStat: {
+      background: "rgba(15,23,42,0.8)",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: "14px",
+      padding: "12px",
+    },
+    miniLabel: {
+      fontSize: "11px",
+      color: "#94a3b8",
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+      marginBottom: "6px",
+      fontWeight: 700,
+      display: "flex",
+      alignItems: "center",
+      flexWrap: "wrap",
+    },
+    miniValue: { fontSize: "18px", fontWeight: 800, color: "#f8fafc" },
+    badge: {
+      display: "inline-flex",
+      alignItems: "center",
+      borderRadius: "999px",
+      padding: "6px 10px",
+      fontSize: "11px",
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+    },
+    bodyGrid: { display: "grid", gridTemplateColumns: "1.55fr 0.95fr", gap: "20px" },
+    sectionPanel: { padding: "22px" },
+    picksGrid: { display: "grid", gap: "14px" },
+    pickCard: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "20px",
+      padding: "18px",
+      boxShadow: "0 16px 34px rgba(0,0,0,0.18)",
+    },
+    pickTop: {
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: "12px",
+      marginBottom: "14px",
+    },
+    pickLeague: {
+      fontSize: "11px",
+      textTransform: "uppercase",
+      letterSpacing: "0.12em",
+      fontWeight: 800,
+    },
+    pickLine: { color: "#cbd5e1", fontSize: "15px", marginTop: "6px", fontWeight: 600 },
+    metricsRow: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: "10px",
+      marginBottom: "12px",
+    },
+    confidenceWrap: { marginTop: "6px" },
+    confidenceLabelRow: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: "8px",
+      fontSize: "12px",
+      color: "#94a3b8",
+      fontWeight: 700,
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+    },
+    confidenceLeft: {
+      display: "flex",
+      alignItems: "center",
+      textTransform: "uppercase",
+      letterSpacing: "0.08em",
+    },
+    barTrack: {
+      width: "100%",
+      height: "10px",
+      background: "rgba(30,41,59,0.95)",
+      borderRadius: "999px",
+      overflow: "hidden",
+      border: "1px solid rgba(148,163,184,0.12)",
+    },
+    rightColStack: { display: "grid", gap: "20px" },
+    policyCard: {
+      background: "rgba(9,15,28,0.82)",
+      border: "1px solid rgba(148,163,184,0.14)",
+      borderRadius: "18px",
+      padding: "16px",
+    },
+    navGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" },
+    navBtn: {
+      display: "block",
+      textDecoration: "none",
+      borderRadius: "16px",
+      padding: "14px 16px",
+      fontWeight: 700,
+      color: "#f8fafc",
+      background: "rgba(15,23,42,0.9)",
+      border: "1px solid rgba(148,163,184,0.12)",
+    },
+    muted: { color: "#94a3b8", fontSize: "14px", lineHeight: 1.6 },
+    empty: {
+      background: "rgba(15,23,42,0.72)",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: "18px",
+      padding: "16px",
+      color: "#94a3b8",
+      fontSize: "14px",
+    },
+    helperBox: {
+      marginTop: "14px",
+      padding: "14px 16px",
+      borderRadius: "16px",
+      background: "rgba(15,23,42,0.72)",
+      border: "1px solid rgba(148,163,184,0.12)",
+    },
+    helperTitle: {
+      margin: 0,
+      color: "#f8fafc",
+      fontSize: "13px",
+      fontWeight: 800,
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+    },
+    helperText: {
+      margin: "8px 0 0",
+      color: "#cbd5e1",
+      fontSize: "13px",
+      lineHeight: 1.6,
+    },
+  };
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.shell}>
+        <section style={styles.hero}>
+          <div style={{ ...styles.panel, ...styles.heroMain }}>
+            <div style={styles.sectionTitle}>Premium Dashboard</div>
+
+            <div style={styles.headline}>
+              <img src={sportsMvpLogo} alt="Sports MVP alternate logo" style={styles.logo} />
+              <div>
+                <h1 style={styles.h1}>Sports MVP</h1>
+                <p style={styles.subtitle}>
+                  Premium betting intelligence powered by validated markets, live edge scoring,
+                  confidence-ranked picks, and disciplined no-bet protection.
+                </p>
+              </div>
+            </div>
+
+            <SectionSummary
+              summary="This homepage is the premium command center. It highlights the strongest validated plays, gives a quick read on recent scoring context, and explains the core model signals that matter most before you place a bet."
+              howToUse="Start with the Pick of the Day and Top Picks sections, then use the KPI cards to understand whether the model is beating the market through CLV, not just short-term variance."
+            />
+
+            <div style={styles.heroGrid}>
+              <div style={styles.statCard}>
+                <LabelWithTip label="Today’s Picks" tip={metricHelpText("picks")} style={styles.statLabel} />
+                <div style={styles.statValue}>{picks.length}</div>
+                <div style={styles.statSubtext}>Homepage premium plays currently surfaced.</div>
+              </div>
+
+              <div style={styles.statCard}>
+                <LabelWithTip label="7-Day Wins" tip={metricHelpText("wins")} style={styles.statLabel} />
+                <div style={styles.statValue}>{perfLoading ? "—" : perfSummary?.wins}</div>
+                <div style={styles.statSubtext}>Recent scored wins from the KPI feed.</div>
+              </div>
+
+              <div style={styles.statCard}>
+                <LabelWithTip label="Scored Picks" tip={metricHelpText("scored")} style={styles.statLabel} />
+                <div style={styles.statValue}>
+                  {perfLoading
+                    ? "—"
+                    : perfSummary?.scored}
+                </div>
+                <div style={styles.statSubtext}>Total graded picks contributing to recent performance context.</div>
+              </div>
+
+              <div style={styles.statCard}>
+                <LabelWithTip label="Avg CLV" tip={metricHelpText("clv")} style={styles.statLabel} />
+                <div style={styles.statValue}>
+                  {perfLoading ? "—" : signedNum(perfSummary?.avgClv, 2)}
+                </div>
+                <div style={styles.statSubtext}>Positive is better. This is your sharpest credibility signal.</div>
+              </div>
+
+              <div style={styles.statCard}>
+                <LabelWithTip label="Imp CLV" tip={metricHelpText("impliedClv")} style={styles.statLabel} />
+                <div style={styles.statValue}>
+                  {perfLoading ? "—" : pctFromUnit(perfSummary?.avgImpliedClv, 2)}
+                </div>
+                <div style={styles.statSubtext}>Implied-probability view of line value capture.</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ ...styles.panel, ...styles.heroMeta }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={styles.sectionTitle}>Pick of the Day</div>
+              <SectionSummary
+                summary="The single highest-ranked premium play currently available on the homepage."
+                howToUse="Treat this as the model’s clearest current statement. Review the edge, EV, Kelly, and confidence together rather than relying on any one number alone."
+              />
+            </div>
+
+            {!featured ? (
+              <div style={{ ...styles.empty, gridColumn: "1 / -1" }}>
+                {loading ? "Loading featured pick..." : error || "No validated pick available."}
+              </div>
+            ) : (
+              <div style={{ ...styles.featuredCard, gridColumn: "1 / -1" }}>
+                <div style={styles.matchup}>
+                  <div style={styles.teamSide}>
+                    <img src={featured.awayLogo} alt={featured.awayAbbr} style={styles.teamLogo} />
+                    <div style={styles.teamText}>{featured.awayAbbr}</div>
+                  </div>
+                  <div style={{ color: "#94a3b8", fontWeight: 700, fontSize: "13px", letterSpacing: "0.08em" }}>
+                    AT
+                  </div>
+                  <div style={styles.teamSide}>
+                    <div style={styles.teamText}>{featured.homeAbbr}</div>
+                    <img src={featured.homeLogo} alt={featured.homeAbbr} style={styles.teamLogo} />
+                  </div>
+                </div>
+
+                <h3 style={styles.featuredTitle}>{marketText(featured.bet)}</h3>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                  <div style={{ ...styles.badge, ...tierColors(featured.bet?.tier) }}>
+                    {featured.bet?.tier || "—"}
+                  </div>
+                  <InfoTip text={metricHelpText("pickOfDay")} />
+                </div>
+
+                <div style={styles.featuredMetricGrid}>
+                  <div style={styles.miniStat}>
+                    <LabelWithTip label="Edge" tip={metricHelpText("edge")} style={styles.miniLabel} />
+                    <div style={{ ...styles.miniValue, color: "#86efac" }}>
+                      {featured.bet?.edge == null ? "—" : pct((Number(featured.bet.edge) || 0) * 100, 1)}
+                    </div>
+                  </div>
+                  <div style={styles.miniStat}>
+                    <LabelWithTip label="EV" tip={metricHelpText("ev")} style={styles.miniLabel} />
+                    <div style={{ ...styles.miniValue, color: "#93c5fd" }}>{fmtEv(featured.bet?.evForStake100)}</div>
+                  </div>
+                  <div style={styles.miniStat}>
+                    <LabelWithTip label="Kelly" tip={metricHelpText("kelly")} style={styles.miniLabel} />
+                    <div style={{ ...styles.miniValue, color: "#fcd34d" }}>
+                      {featured.bet?.kellyHalf == null ? "—" : pct((Number(featured.bet.kellyHalf) || 0) * 100, 1)}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={styles.confidenceWrap}>
+                  <div style={styles.confidenceLabelRow}>
+                    <div style={styles.confidenceLeft}>
+                      <span>Confidence</span>
+                      <InfoTip text={metricHelpText("confidence")} />
+                    </div>
+                    <span>{pctFromUnit(featured.bet?.modelProb, 1)}</span>
+                  </div>
+                  <div style={styles.barTrack}>
+                    <div
+                      style={{
+                        width: `${Math.max(0, Math.min(100, (Number(featured.bet?.modelProb) || 0) * 100))}%`,
+                        height: "100%",
+                        background: "linear-gradient(90deg, #2563eb 0%, #22c55e 100%)",
+                        borderRadius: "999px",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div style={styles.helperBox}>
+                  <p style={styles.helperTitle}>How to read this card</p>
+                  <p style={styles.helperText}>
+                    Edge tells you whether the model sees value versus the market. EV estimates long-term expected value.
+                    Kelly helps size the bet more conservatively. Confidence is the model probability, not a guarantee.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <div style={styles.bodyGrid}>
+          <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "end",
+                justifyContent: "space-between",
+                gap: "16px",
+                marginBottom: "18px",
+              }}
+            >
+              <div>
+                <div style={styles.sectionTitle}>Validated Picks Board</div>
+                <h2 style={{ margin: 0, fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>
+                  🔥 Today's Top Picks
+                </h2>
+
+                <SectionSummary
+                  summary="Highest-value premium opportunities across active markets. These are ranked using the current homepage scoring blend that prioritizes EV, model confidence, and tier."
+                  howToUse="Use this board to compare the best available plays side by side. If two picks look close, favor the stronger tier and the cleaner edge-to-confidence combination."
+                />
+              </div>
+
+              <Link
+                to="/predict"
+                style={{
+                  ...styles.navBtn,
+                  background: "#2563eb",
+                  border: "1px solid rgba(59,130,246,0.36)",
+                }}
+              >
+                View All Picks
+              </Link>
+            </div>
+
+            {loading ? (
+              <div style={styles.empty}>Loading premium picks...</div>
+            ) : error ? (
+              <div style={{ ...styles.empty, color: "#fda4af" }}>{error}</div>
+            ) : picks.length === 0 ? (
+              <div style={styles.empty}>No validated premium picks available right now.</div>
+            ) : (
+              <div style={styles.picksGrid}>
+                {picks.map((row, i) => {
+                  const rankLabel =
+                    i === 0 ? "#1 BEST PICK" :
+                    i === 1 ? "#2 STRONG VALUE" :
+                    "#3 HIGH EDGE";
+
+                  return (
+                    <article key={`${row.league}-${row.gameId}`} style={styles.pickCard}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          letterSpacing: "0.12em",
+                          textTransform: "uppercase",
+                          color: "#94a3b8",
+                          marginBottom: 6,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {rankLabel}
+                      </div>
+
+                      <div style={styles.pickTop}>
+                        <div>
+                          <div style={{ ...styles.pickLeague, color: leagueColor(row.league) }}>{row.league}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+                            {row.awayLogo ? (
+                              <img src={row.awayLogo} alt="" style={{ width: 26, height: 26, objectFit: "contain" }} />
+                            ) : null}
+
+                            <div style={{ fontSize: 22, fontWeight: 800, color: "#f8fafc" }}>{row.matchup}</div>
+
+                            {row.homeLogo ? (
+                              <img src={row.homeLogo} alt="" style={{ width: 26, height: 26, objectFit: "contain" }} />
+                            ) : null}
+                          </div>
+
+                          <div style={styles.pickLine}>
+                            {marketText(row.bet)} • Odds {oddsText(row.bet?.odds)}{" "}
+                            {row.bet?.line != null ? `• Line ${row.bet.line}` : ""}
+                          </div>
+                        </div>
+
+                        <span style={{ ...styles.badge, ...tierColors(row.bet?.tier) }}>
+                          {row.bet?.tier || "—"}
+                        </span>
+                      </div>
+
+                      <div style={styles.metricsRow}>
+                        <div style={styles.miniStat}>
+                          <LabelWithTip label="Edge" tip={metricHelpText("edge")} style={styles.miniLabel} />
+                          <div style={{ ...styles.miniValue, color: "#86efac" }}>
+                            {row.bet?.edge == null ? "—" : pct((Number(row.bet.edge) || 0) * 100, 1)}
+                          </div>
+                        </div>
+
+                        <div style={styles.miniStat}>
+                          <LabelWithTip label="EV" tip={metricHelpText("ev")} style={styles.miniLabel} />
+                          <div style={{ ...styles.miniValue, color: "#93c5fd" }}>{fmtEv(row.bet?.evForStake100)}</div>
+                        </div>
+
+                        <div style={styles.miniStat}>
+                          <LabelWithTip label="Kelly" tip={metricHelpText("kelly")} style={styles.miniLabel} />
+                          <div style={{ ...styles.miniValue, color: "#fcd34d" }}>
+                            {row.bet?.kellyHalf == null ? "—" : pct((Number(row.bet.kellyHalf) || 0) * 100, 1)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={styles.confidenceWrap}>
+                        <div style={styles.confidenceLabelRow}>
+                          <div style={styles.confidenceLeft}>
+                            <span>Confidence</span>
+                            <InfoTip text={metricHelpText("confidence")} />
+                          </div>
+                          <span>{pctFromUnit(row.bet?.modelProb, 1)}</span>
+                        </div>
+                        <div style={styles.barTrack}>
+                          <div
+                            style={{
+                              width: `${Math.max(0, Math.min(100, (Number(row.bet?.modelProb) || 0) * 100))}%`,
+                              height: "100%",
+                              background: "linear-gradient(90deg, #2563eb 0%, #22c55e 100%)",
+                              borderRadius: "999px",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <aside style={styles.rightColStack}>
+            <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+              <div style={styles.sectionTitle}>Active Market Policy</div>
+              <h2 style={{ margin: "0 0 14px", fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>
+                Market Policy
+              </h2>
+
+              <SectionSummary
+                summary="Shows which market type is currently validated for each league on the premium homepage."
+                howToUse="Use this as a guardrail. If a league is showing spreads only or totals only, that is the validated premium market you should trust first for that sport."
+              />
+
+              <div style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
+                {policyRows().map((row) => (
+                  <div key={row.league} style={styles.policyCard}>
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 800,
+                        letterSpacing: "0.10em",
+                        textTransform: "uppercase",
+                        color: leagueColor(row.league),
+                      }}
+                    >
+                      {row.league}
+                    </div>
+                    <div style={{ marginTop: "6px", fontSize: "18px", fontWeight: 700, color: "#f8fafc" }}>
+                      {row.market}
+                    </div>
+                    <div style={{ marginTop: "4px", fontSize: "13px", color: "#94a3b8" }}>{row.note}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+              <div style={styles.sectionTitle}>Recent Scoring</div>
+              <h2 style={{ margin: "0 0 14px", fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>
+                Recent Performance
+              </h2>
+
+              <SectionSummary
+                summary="Recent scored results from the performance KPI endpoint to give users quick model context."
+                howToUse="Use this to understand whether the model is in a good recent scoring stretch, but pair it with CLV. A model can be sharp and still run cold over a small sample."
+              />
+
+              {perfLoading ? (
+                <div style={styles.empty}>Loading recent performance...</div>
+              ) : perfError ? (
+                <div style={{ ...styles.empty, color: "#fda4af" }}>{perfError}</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px", marginTop: "14px" }}>
+                  <div style={styles.policyCard}>
+                    <LabelWithTip label="Total Picks" tip={metricHelpText("picks")} style={styles.miniLabel} />
+                    <div style={styles.statValue}>{perfSummary?.picks}</div>
+                  </div>
+
+                  <div style={styles.policyCard}>
+                    <div style={styles.miniLabel}>Scored</div>
+                    <div style={styles.statValue}>{perfSummary?.scored}</div>
+                  </div>
+
+                  <div style={styles.policyCard}>
+                    <LabelWithTip label="Wins" tip={metricHelpText("wins")} style={styles.miniLabel} />
+                    <div style={{ ...styles.statValue, color: "#86efac" }}>{perfSummary?.wins}</div>
+                  </div>
+
+                  <div style={styles.policyCard}>
+                    <div style={styles.miniLabel}>Losses</div>
+                    <div style={{ ...styles.statValue, color: "#fda4af" }}>{perfSummary?.losses}</div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section style={{ ...styles.panel, ...styles.sectionPanel }}>
+              <div style={styles.sectionTitle}>Application Hub</div>
+              <h2 style={{ margin: "0 0 14px", fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>
+                Navigate
+              </h2>
+
+              <SectionSummary
+                summary="Fast access to the full prediction board, league views, parlays, and performance reporting."
+                howToUse="Use All Picks when you want the full board, league pages when you want narrower focus, and Performance when you want to validate whether the model is actually earning trust."
+              />
+
+              <div style={styles.navGrid}>
+                <Link
+                  to="/predict"
+                  style={{
+                    ...styles.navBtn,
+                    background: "#2563eb",
+                    border: "1px solid rgba(59,130,246,0.36)",
+                  }}
+                >
+                  All Picks
+                </Link>
+                <Link to="/predict-nba" style={styles.navBtn}>NBA</Link>
+                <Link to="/ncaab-predictions" style={styles.navBtn}>NCAAM</Link>
+                <Link to="/predict-nhl" style={styles.navBtn}>NHL</Link>
+                <Link to="/parlays" style={styles.navBtn}>Parlays</Link>
+                <Link to="/performance" style={styles.navBtn}>Performance</Link>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </div>
+  );
+}

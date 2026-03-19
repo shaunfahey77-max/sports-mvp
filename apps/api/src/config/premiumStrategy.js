@@ -1,7 +1,7 @@
 export const MARKET_GATING = {
-  nba:   { moneyline: true, spread: true, total: true },
-  ncaam: { moneyline: true, spread: true, total: true },
-  nhl:   { moneyline: true, spread: true, total: true },
+  nba:   { moneyline: true,  spread: true,  total: true  },
+  ncaam: { moneyline: false, spread: false, total: true  },
+  nhl:   { moneyline: true,  spread: true,  total: true  },
 };
 
 export const THRESHOLDS = {
@@ -9,6 +9,71 @@ export const THRESHOLDS = {
   minKellyHalf: 0.02,
   minEdge: 0.04,
   allowedTiers: ["STRONG", "ELITE"],
+};
+
+export const MARKET_RULES = {
+  nba: {
+    moneyline: {
+      minEvForStake100: 12,
+      minKellyHalf: 0.025,
+      minEdge: 0.07,
+      minOdds: -175,
+      maxOdds: 180,
+      allowedTiers: ["STRONG", "ELITE"],
+    },
+    spread: {
+      minEvForStake100: 8,
+      minKellyHalf: 0.02,
+      minEdge: 0.05,
+      minOdds: -140,
+      maxOdds: 180,
+      allowedTiers: ["STRONG", "ELITE"],
+    },
+    total: {
+      minEvForStake100: 8,
+      minKellyHalf: 0.02,
+      minEdge: 0.05,
+      minOdds: -140,
+      maxOdds: 140,
+      allowedTiers: ["STRONG", "ELITE"],
+    },
+  },
+  nhl: {
+    moneyline: {
+      minEvForStake100: 8,
+      minKellyHalf: 0.02,
+      minEdge: 0.055,
+      minOdds: -175,
+      maxOdds: 180,
+      allowedTiers: ["STRONG", "ELITE"],
+    },
+    spread: {
+      minEvForStake100: 6,
+      minKellyHalf: 0.015,
+      minEdge: 0.02,
+      minOdds: -260,
+      maxOdds: 220,
+      allowedTiers: ["STRONG", "ELITE"],
+    },
+    total: {
+      minEvForStake100: 7,
+      minKellyHalf: 0.02,
+      minEdge: 0.04,
+      minOdds: -160,
+      maxOdds: 140,
+      allowedTiers: ["STRONG", "ELITE"],
+    },
+  },
+  ncaam: {
+    total: {
+      minEvForStake100: 10,
+      minKellyHalf: 0.025,
+      minEdge: 0.08,
+      minOdds: -140,
+      maxOdds: 120,
+      allowedTiers: ["STRONG", "ELITE"],
+    },
+  },
 };
 
 export const HISTORICAL_MARKET_ROI = {

@@ -1,5 +1,6 @@
 import {
   MARKET_GATING,
+  MARKET_RULES,
   THRESHOLDS,
   HISTORICAL_MARKET_ROI,
   RANKING_WEIGHTS,
@@ -23,55 +24,97 @@ function marketAllowed(league, marketType) {
   return !!MARKET_GATING?.[league]?.[marketType];
 }
 
-function tierAllowed(tier) {
-  return THRESHOLDS.allowedTiers.includes(String(tier || "PASS").toUpperCase());
+function marketRule(league, marketType) {
+  return MARKET_RULES?.[league]?.[marketType] || null;
 }
 
-function passesThresholds(candidate) {
+function allowedTiersFor(league, marketType) {
+  return marketRule(league, marketType)?.allowedTiers || THRESHOLDS.allowedTiers;
+}
+
+function tierAllowed(league, marketType, tier) {
+  return allowedTiersFor(league, marketType).includes(String(tier || "PASS").toUpperCase());
+}
+
+function oddsWithinRange(league, marketType, odds) {
+  const rule = marketRule(league, marketType);
+  const o = num(odds);
+  if (o == null) return false;
+
+  const minOdds = num(rule?.minOdds);
+  const maxOdds = num(rule?.maxOdds);
+
+  if (minOdds != null && o < minOdds) return false;
+  if (maxOdds != null && o > maxOdds) return false;
+  return true;
+}
+
+function passesThresholds(league, candidate) {
+  const marketType = String(candidate?.marketType || "").toLowerCase();
   const ev = num(candidate?.evForStake100);
   const kelly = num(candidate?.kellyHalf);
   const edge = num(candidate?.edge);
   const modelProb = normalizeProb(candidate?.modelProb);
   const odds = num(candidate?.odds);
   const tier = String(candidate?.tier || "PASS").toUpperCase();
+  const rule = marketRule(league, marketType);
 
-  if (!tierAllowed(tier)) return false;
+  const minEvForStake100 = num(rule?.minEvForStake100) ?? THRESHOLDS.minEvForStake100;
+  const minKellyHalf = num(rule?.minKellyHalf) ?? THRESHOLDS.minKellyHalf;
+  const minEdge = num(rule?.minEdge) ?? THRESHOLDS.minEdge;
+
+  if (!marketAllowed(league, marketType)) return false;
+  if (!tierAllowed(league, marketType, tier)) return false;
   if (odds == null || odds === 0) return false;
-  if (ev == null || ev < THRESHOLDS.minEvForStake100) return false;
-  if (kelly == null || kelly < THRESHOLDS.minKellyHalf) return false;
-  if (edge == null || edge < THRESHOLDS.minEdge) return false;
+  if (!oddsWithinRange(league, marketType, odds)) return false;
+  if (ev == null || ev < minEvForStake100) return false;
+  if (kelly == null || kelly < minKellyHalf) return false;
+  if (edge == null || edge < minEdge) return false;
   if (modelProb <= 0 || modelProb >= 1) return false;
 
   return true;
 }
 
 function marketRoiScore(league, marketType) {
-  return num(HISTORICAL_MARKET_ROI?.[league]?.[marketType]) ?? -1;
+  return num(HISTORICAL_MARKET_ROI?.[league]?.[marketType]) ?? 0;
 }
 
+/**
+ * 🔥 KEY CHANGE:
+ * - EV dominates
+ * - small penalty for juiced lines
+ * - ROI no longer dominates selection
+ */
 function weightedScore(league, candidate) {
   const ev = num(candidate?.evForStake100) ?? -9999;
   const kelly = num(candidate?.kellyHalf) ?? 0;
+  const edge = num(candidate?.edge) ?? 0;
+  const odds = num(candidate?.odds) ?? 0;
   const modelProb = normalizeProb(candidate?.modelProb);
-  const marketRoi = marketRoiScore(league, candidate?.marketType);
+
+  const juicePenalty = odds < -180 ? Math.abs(odds + 180) * 0.05 : 0;
+  const probPenalty = modelProb > 0.75 ? (modelProb - 0.75) * 100 : 0;
 
   return (
-    ev * RANKING_WEIGHTS.ev +
-    kelly * 100 * RANKING_WEIGHTS.kelly +
-    modelProb * 100 * RANKING_WEIGHTS.modelProb +
-    marketRoi * 100 * RANKING_WEIGHTS.marketRoi
+    edge * 100 * 0.45 +
+    ev * 0.35 +
+    kelly * 100 * 0.20 -
+    juicePenalty -
+    probPenalty
   );
 }
 
 export function applyPremiumSelection(league, candidates = []) {
-  const gated = candidates.filter((c) => marketAllowed(league, c?.marketType));
-  const filtered = gated.filter((c) => passesThresholds(c));
+  const gated = candidates.filter((c) =>
+    marketAllowed(league, String(c?.marketType || "").toLowerCase())
+  );
+
+  const filtered = gated.filter((c) => passesThresholds(league, c));
 
   const ranked = filtered
     .map((c) => ({
       ...c,
       premiumScore: weightedScore(league, c),
-      marketHistoricalRoi: marketRoiScore(league, c?.marketType),
       tierRank: TIER_RANK[String(c?.tier || "PASS").toUpperCase()] ?? 0,
     }))
     .sort((a, b) => {

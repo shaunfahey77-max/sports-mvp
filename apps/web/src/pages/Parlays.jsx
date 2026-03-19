@@ -263,11 +263,66 @@ export default function Parlays() {
       marginBottom: 20,
       background: "linear-gradient(180deg, rgba(9,15,28,0.92) 0%, rgba(7,12,24,0.96) 100%)",
     },
+    heroIntroGrid: {
+      display: "grid",
+      gridTemplateColumns: "minmax(320px, 1.05fr) minmax(320px, 1fr)",
+      gap: 22,
+      alignItems: "start",
+      marginBottom: 18,
+    },
     topGrid: {
       display: "grid",
       gridTemplateColumns: "320px 1fr",
       gap: 18,
       alignItems: "start",
+    },
+    methodGrid: {
+      display: "grid",
+      gridTemplateColumns: "1.15fr 1fr",
+      gap: 16,
+      marginTop: 18,
+    },
+    methodCard: {
+      background: "linear-gradient(180deg, rgba(15,23,42,0.96), rgba(10,15,28,0.98))",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: 20,
+      padding: 18,
+      boxShadow: "0 16px 34px rgba(0,0,0,0.18)",
+      minHeight: "100%",
+    },
+    whyGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: 14,
+      marginTop: 18,
+      marginBottom: 18,
+    },
+    whyCard: {
+      background: "linear-gradient(180deg, rgba(15,23,42,0.96), rgba(10,15,28,0.98))",
+      border: "1px solid rgba(148,163,184,0.12)",
+      borderRadius: 20,
+      padding: 18,
+      boxShadow: "0 16px 34px rgba(0,0,0,0.18)",
+      minHeight: "100%",
+    },
+    chipRow: {
+      display: "flex",
+      gap: 8,
+      flexWrap: "wrap",
+      marginTop: 12,
+    },
+    chip: {
+      display: "inline-flex",
+      alignItems: "center",
+      borderRadius: 999,
+      padding: "6px 10px",
+      fontSize: 11,
+      fontWeight: 800,
+      color: "#93c5fd",
+      background: "rgba(30,41,59,0.82)",
+      border: "1px solid rgba(59,130,246,0.18)",
+      letterSpacing: "0.04em",
+      textTransform: "uppercase",
     },
     formCard: { ...tileStyle(), padding: 16 },
     label: {
@@ -297,6 +352,9 @@ export default function Parlays() {
     statTile: {
       ...tileStyle(),
       minHeight: 90,
+      background: "linear-gradient(180deg, rgba(15,23,42,0.96), rgba(10,15,28,0.98))",
+      border: "1px solid rgba(59,130,246,0.18)",
+      boxShadow: "0 18px 40px rgba(0,0,0,0.24), 0 0 0 1px rgba(59,130,246,0.05)",
     },
     metricLabel: {
       fontSize: 11,
@@ -387,6 +445,42 @@ export default function Parlays() {
       marginTop: 14,
       padding: 16,
     },
+    subscriberGrid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+      gap: 14,
+      marginTop: 18,
+      marginBottom: 18,
+    },
+    subscriberCard: {
+      background: "linear-gradient(180deg, rgba(15,23,42,0.96), rgba(10,15,28,0.98))",
+      border: "1px solid rgba(59,130,246,0.18)",
+      borderRadius: 20,
+      padding: 18,
+      boxShadow: "0 18px 40px rgba(0,0,0,0.24), 0 0 0 1px rgba(59,130,246,0.05)",
+      minHeight: "100%",
+    },
+    subscriberList: {
+      display: "grid",
+      gap: 10,
+      marginTop: 12,
+    },
+    subscriberItem: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      color: "#cbd5e1",
+      fontSize: 14,
+      lineHeight: 1.5,
+    },
+    subscriberDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 999,
+      background: "#60a5fa",
+      boxShadow: "0 0 12px rgba(96,165,250,0.55)",
+      flex: "0 0 auto",
+    },
   };
 
   return (
@@ -394,10 +488,90 @@ export default function Parlays() {
       <div style={styles.shell}>
         <section style={styles.hero}>
           <div style={styles.overline}>Premium Parlay Lab</div>
-          <h1 style={styles.h2}>Parlays</h1>
-          <p style={{ color: "#94a3b8", marginTop: 8, marginBottom: 0 }}>
-            Premium same-slate parlay intelligence using validated picks, combo EV, Kelly sizing, and a two-leg heatmap.
-          </p>
+
+          <div style={styles.heroIntroGrid}>
+            <div>
+              <img
+                src="/landing/hero-logo.png"
+                alt="Sports MVP premium parlay logo"
+                style={{
+                  width: "100%",
+                  maxWidth: 620,
+                  height: "auto",
+                  display: "block",
+                  marginTop: 4,
+                  marginBottom: 6,
+                }}
+              />
+
+              <p style={{ color: "#94a3b8", marginTop: 14, marginBottom: 0, lineHeight: 1.7 }}>
+                The Sports MVP Parlay Lab transforms validated model picks into structured same-slate combo opportunities
+                using expected value, compounded win probability, Kelly sizing logic, and premium filtering.
+              </p>
+            </div>
+
+            <div>
+              <h1 style={{ margin: 0, fontSize: 32, lineHeight: 1.02, fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.04em", maxWidth: 520 }}>
+                Build smarter parlays with model-ranked combo intelligence.
+              </h1>
+
+              <p style={{ color: "#cbd5e1", marginTop: 12, marginBottom: 0, fontSize: 17, lineHeight: 1.65 }}>
+                Evaluate same-slate parlay combinations across NBA, NHL, and NCAAM using our proprietary pick engine,
+                parlay EV math, payout modeling, and bankroll-aware Kelly guidance.
+              </p>
+
+              <p style={{ color: "#94a3b8", marginTop: 12, marginBottom: 0, lineHeight: 1.7 }}>
+                This page is designed to help subscribers compare the best available combo, the safest build,
+                the highest EV combination, and the strongest two-leg relationships from the current premium candidate pool.
+              </p>
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: 2,
+              padding: "10px 14px",
+              borderRadius: 16,
+              background: "rgba(15,23,42,0.76)",
+              border: "1px solid rgba(59,130,246,0.16)",
+              color: "#cbd5e1",
+              fontSize: 13,
+              lineHeight: 1.6,
+            }}
+          >
+            <strong style={{ color: "#e2e8f0" }}>How to use this page:</strong> set your league, date, legs, and result count,
+            review the best available and safest combos, then compare combo EV, model probability, payout, and Kelly stake
+            before deciding whether the parlay fits your bankroll discipline.
+          </div>
+
+          <div style={styles.methodGrid}>
+            <div style={{ ...styles.methodCard, border: "1px solid rgba(59,130,246,0.18)" }}>
+              <div style={styles.overline}>How It Works</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>Premium parlay workflow</div>
+              <div style={{ color: "#cbd5e1", lineHeight: 1.75, fontSize: 14 }}>
+                The engine starts with validated Sports MVP picks, converts each leg into a priced combo candidate,
+                calculates parlay probability and EV, then surfaces the best combinations for same-slate construction.
+              </div>
+              <div style={styles.chipRow}>
+                <span style={styles.chip}>Validated Picks</span>
+                <span style={styles.chip}>Combo EV</span>
+                <span style={styles.chip}>Model Probability</span>
+                <span style={styles.chip}>Kelly Sizing</span>
+              </div>
+            </div>
+
+            <div style={{ ...styles.methodCard, border: "1px solid rgba(16,185,129,0.18)" }}>
+              <div style={styles.overline}>Parlay Engine</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>What this engine is doing</div>
+              <div style={{ color: "#cbd5e1", lineHeight: 1.75, fontSize: 14 }}>
+                Sports MVP compares candidate legs, compounds their market odds and model win probabilities, estimates expected value,
+                and highlights the strongest combo structures through top-combo ranking, payout analysis, and a two-leg EV heatmap.
+              </div>
+              <div style={{ marginTop: 14, color: "#86efac", fontSize: 13, fontWeight: 700 }}>
+                Best combo + safest combo + payout modeling + two-leg heatmap
+              </div>
+            </div>
+          </div>
 
           <div style={styles.topGrid}>
             <div style={styles.formCard}>
@@ -458,6 +632,85 @@ export default function Parlays() {
 
               <div style={{ marginTop: 14, color: "#94a3b8", fontSize: 13 }}>
                 {loading ? "Loading parlay calculations..." : error || `Candidate legs: ${candidateLegs.length} • ${legs}-leg combos: ${selectedCombos.length} • Two-leg heatmap combos: ${twoLegCombos.length}`}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section style={{ ...styles.sectionPanel, marginBottom: 20 }}>
+          <div style={styles.overline}>Why this parlay engine is different</div>
+          <h2 style={styles.h2}>Premium combo intelligence, not generic parlay picks</h2>
+          <p style={{ color: "#94a3b8", marginTop: 8, marginBottom: 0, maxWidth: 820, lineHeight: 1.7 }}>
+            This layer explains why the Sports MVP parlay workflow is more valuable than a simple same-game parlay generator.
+            The engine is built to justify subscription value through disciplined combo construction.
+          </p>
+
+          <div style={styles.whyGrid}>
+            <div style={{ ...styles.whyCard, border: "1px solid rgba(59,130,246,0.18)" }}>
+              <div style={styles.overline}>Market Anchored Modeling</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>Market Anchored Modeling</div>
+              <div style={{ color: "#cbd5e1", lineHeight: 1.75, fontSize: 14 }}>
+                Candidate legs begin with validated Sports MVP picks that have already been ranked against live market prices,
+                helping the parlay engine start from higher-quality opportunities instead of raw slate noise.
+              </div>
+            </div>
+
+            <div style={{ ...styles.whyCard, border: "1px solid rgba(16,185,129,0.18)" }}>
+              <div style={styles.overline}>Probability Engine</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>Probability Engine</div>
+              <div style={{ color: "#cbd5e1", lineHeight: 1.75, fontSize: 14 }}>
+                The engine compounds model win probability with sportsbook pricing to estimate expected value, identify stronger combo structures,
+                and separate the safest builds from the highest upside opportunities.
+              </div>
+            </div>
+
+            <div style={{ ...styles.whyCard, border: "1px solid rgba(245,158,11,0.18)" }}>
+              <div style={styles.overline}>Bankroll Discipline</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>Bankroll Discipline</div>
+              <div style={{ color: "#cbd5e1", lineHeight: 1.75, fontSize: 14 }}>
+                Kelly-based combo sizing, payout modeling, and structured EV review help users treat parlays as disciplined bankroll decisions
+                instead of emotion-driven lottery tickets.
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section style={{ ...styles.sectionPanel, marginBottom: 20 }}>
+          <div style={styles.overline}>Subscriber Features</div>
+          <h2 style={styles.h2}>What subscribers get</h2>
+          <p style={{ color: "#94a3b8", marginTop: 8, marginBottom: 0, maxWidth: 860, lineHeight: 1.7 }}>
+            This section translates the parlay lab into subscriber value. It explains why Sports MVP is more than a picks page
+            and why the platform deserves subscription-level trust.
+          </p>
+
+          <div style={styles.subscriberGrid}>
+            <div style={styles.subscriberCard}>
+              <div style={styles.overline}>Core Intelligence</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>Model + market tools</div>
+              <div style={styles.subscriberList}>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />Top Picks Intelligence</div>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />CLV Tracking</div>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />Market Edge Detection</div>
+              </div>
+            </div>
+
+            <div style={styles.subscriberCard}>
+              <div style={styles.overline}>Parlay Workflow</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>Combo construction tools</div>
+              <div style={styles.subscriberList}>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />Parlay EV Engine</div>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />Bankroll Sizing Tools</div>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />Payout Modeling</div>
+              </div>
+            </div>
+
+            <div style={styles.subscriberCard}>
+              <div style={styles.overline}>Platform Access</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc", marginBottom: 10 }}>Broader subscriber suite</div>
+              <div style={styles.subscriberList}>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />Tournament Mode</div>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />Performance Dashboard</div>
+                <div style={styles.subscriberItem}><span style={styles.subscriberDot} />My Bets Tracking</div>
               </div>
             </div>
           </div>

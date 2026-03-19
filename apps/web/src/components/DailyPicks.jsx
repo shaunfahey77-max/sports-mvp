@@ -118,6 +118,10 @@ function americanOdds(n) {
   return x > 0 ? `+${x}` : String(x);
 }
 
+function clvBullet() {
+  return null;
+}
+
 export default function DailyPicks({
   date = todayUTCYYYYMMDD(),
   nbaModel = "v2",
@@ -193,9 +197,10 @@ export default function DailyPicks({
             conf: Number.isFinite(Number(g?.market?.edgeVsMarket)) ? Math.min(0.99, Math.max(0.01, 0.5 + Number(g?.market?.edgeVsMarket))) : NaN,
 
             headline: g?.why?.headline || "",
-            bullets: Array.isArray(g?.why?.bullets) ? g.why.bullets.slice(0, 3) : [],
+            bullets: (Array.isArray(g?.why?.bullets) ? g.why.bullets : [])
+              .filter(Boolean)
+              .slice(0, 3),
 
-            
             market: g?.market || null,
             recommendedBet: g?.recommendedBet || null,
             modelRaw: g?.model || null,
@@ -264,6 +269,7 @@ model: meta?.model || "",
   const nbaTop = useMemo(() => items.filter((x) => x.league === "nba"), [items]);
   const ncaamTop = useMemo(() => items.filter((x) => x.league === "ncaam"), [items]);
   const nhlTop = useMemo(() => items.filter((x) => x.league === "nhl"), [items]);
+  const topPickItems = useMemo(() => items.filter((x) => x?.market?.topPick === true), [items]);
 
   const visible = useMemo(() => {
     if (activeLeague === "nba") return nbaTop;
@@ -277,8 +283,8 @@ model: meta?.model || "",
       <div className="page-title-row" style={{ marginBottom: 10 }}>
         <div>
 
-          {items.length > 0 ? (() => {
-  const x = items[0];
+          {(topPickItems.length > 0 ? topPickItems : items).length > 0 ? (() => {
+  const x = (topPickItems.length > 0 ? topPickItems : items)[0];
   const matchup = x?.matchup || "Matchup";
   const pick = String(x?.market?.pick || "").toUpperCase();
   const line = x?.market?.marketLine;
@@ -307,9 +313,9 @@ model: meta?.model || "",
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
 
           <div>
-            <div style={{fontSize:18,fontWeight:800}}>🔥 Pick of the Day</div>
+            <div style={{fontSize:18,fontWeight:800}}>🔥 Top Pick of the Day</div>
             <div className="subtle">
-              Strongest overall model edge available on today's board.
+              Highest-priority premium pick available on today's board.
             </div>
           </div>
 
@@ -383,7 +389,7 @@ model: meta?.model || "",
   );
 })() : null}
 
-          <BestBetsStrip items={items} />
+          <BestBetsStrip items={topPickItems.length > 0 ? topPickItems : items} />
 
           {topBets.length > 0 ? (
             <div className="card" style={{ marginBottom: 14 }}>
