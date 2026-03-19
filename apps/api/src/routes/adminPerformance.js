@@ -1,7 +1,7 @@
 import express from "express";
 import { supabaseAdmin } from "../lib/supabaseAdmin.js";
 import { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions } from "./predict.js";
-import { updatePickResultsBatch } from "../db/dailyLedger.js";
+import { updatePickResultsBatch, upsertPerformanceDaily } from "../db/dailyLedger.js";
 import { getPickClosesForDate } from "../db/pickCloses.js";
 
 const router = express.Router();
@@ -237,6 +237,117 @@ function summarizeLedgerRows(games, rows) {
   return { games: gamesCount, picks, pass, completed, wins, losses, scored, acc };
 }
 
+
+function americanProfitPerUnit(odds) {
+  const o = toFiniteNumber(odds);
+  if (o == null || o === 0) return null;
+  if (o > 0) return o / 100;
+  return 100 / Math.abs(o);
+}
+
+function ensureBucket(obj, key) {
+  if (!obj[key]) {
+    obj[key] = {
+      picks: 0,
+      wins: 0,
+      losses: 0,
+      pushes: 0,
+      scored: 0,
+      profit: 0,
+      roi: null,
+      winRate: null,
+    };
+  }
+  return obj[key];
+}
+
+function buildPerformanceReport(rows) {
+  const counts = {
+    picks: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    pass: 0,
+    graded: 0,
+  };
+
+  const byMarket = {};
+  const byTier = {};
+  let profitUnits = 0;
+  let profitCounted = 0;
+
+  for (const r of rows || []) {
+    const result = String(r?.result || "").toUpperCase();
+    const marketKey = String(r?.market || "moneyline").toLowerCase();
+    const tierKey = String(r?.meta?.tier || "UNKNOWN").toUpperCase();
+
+    const marketRow = ensureBucket(byMarket, marketKey);
+    const tierRow = ensureBucket(byTier, tierKey);
+
+    if (result === "PASS") {
+      counts.pass += 1;
+      continue;
+    }
+
+    if (result === "WIN" || result === "LOSS" || result === "PUSH") {
+      counts.picks += 1;
+      counts.graded += 1;
+      marketRow.picks += 1;
+      tierRow.picks += 1;
+      marketRow.scored += 1;
+      tierRow.scored += 1;
+    }
+
+    let profit = null;
+    const odds = toFiniteNumber(r?.odds ?? r?.market_odds ?? r?.publish_odds);
+
+    if (result === "WIN") {
+      counts.wins += 1;
+      marketRow.wins += 1;
+      tierRow.wins += 1;
+      const ppu = americanProfitPerUnit(odds);
+      profit = ppu != null ? ppu : 0;
+    } else if (result === "LOSS") {
+      counts.losses += 1;
+      marketRow.losses += 1;
+      tierRow.losses += 1;
+      profit = -1;
+    } else if (result === "PUSH") {
+      counts.pushes += 1;
+      marketRow.pushes += 1;
+      tierRow.pushes += 1;
+      profit = 0;
+    }
+
+    if (profit != null) {
+      profitUnits += profit;
+      profitCounted += 1;
+      marketRow.profit += profit;
+      tierRow.profit += profit;
+    }
+  }
+
+  for (const row of Object.values(byMarket)) {
+    row.winRate = row.scored ? row.wins / row.scored : null;
+    row.roi = row.scored ? row.profit / row.scored : null;
+  }
+
+  for (const row of Object.values(byTier)) {
+    row.winRate = row.scored ? row.wins / row.scored : null;
+    row.roi = row.scored ? row.profit / row.scored : null;
+  }
+
+  const winRate = counts.graded ? counts.wins / counts.graded : null;
+  const roi = profitCounted ? profitUnits / profitCounted : null;
+
+  return {
+    counts,
+    metrics: { winRate, roi, profitUnits, profitCounted },
+    byMarket,
+    byTier,
+  };
+}
+
 // POST /api/admin/performance/run?date=YYYY-MM-DD&leagues=nba,nhl,ncaam
 router.post("/admin/performance/run", requireAdmin, async (req, res) => {
   try {
@@ -401,7 +512,7 @@ router.post("/admin/performance/run", requireAdmin, async (req, res) => {
 
       const { data: ledgerRows, error: ledgerRowsError } = await supabaseAdmin
         .from("picks_daily")
-        .select("pick,result")
+        .select("pick,result,market,odds,market_odds,publish_odds,meta")
         .eq("date", date)
         .eq("league", league);
 
@@ -410,25 +521,34 @@ router.post("/admin/performance/run", requireAdmin, async (req, res) => {
       }
 
       scored = summarizeLedgerRows(games, ledgerRows || []);
+      const report = buildPerformanceReport(ledgerRows || []);
 
-      const row = {
+      await upsertPerformanceDaily({
         league,
         date,
-        ...scored,
-        created_at: nowIso,
-        updated_at: nowIso,
-      };
-
-      const { error } = await supabaseAdmin
-        .from("performance_daily")
-        .upsert(row, { onConflict: "league,date" });
-
-      if (error) throw new Error(`${league} upsert failed: ${error.message}`);
+        games: scored.games,
+        completed: scored.completed,
+        picks: scored.picks,
+        wins: scored.wins,
+        losses: scored.losses,
+        pushes: report?.counts?.pushes ?? 0,
+        pass: scored.pass,
+        scored: scored.scored,
+        acc: scored.acc,
+        win_rate: report?.metrics?.winRate ?? scored.acc ?? null,
+        roi: report?.metrics?.roi ?? null,
+        by_market: report?.byMarket ?? null,
+        by_tier: report?.byTier ?? null,
+        error: null,
+        notes: null,
+      });
 
       results.push({
         league,
         date,
         ...scored,
+        pushes: report?.counts?.pushes ?? 0,
+        roi: report?.metrics?.roi ?? null,
         ledgerResultsUpdated: resultRows.length,
       });
     }

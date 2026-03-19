@@ -76,6 +76,7 @@ export async function upsertPerformanceDaily(row) {
     by_conf: safeJson(row.by_conf ?? null),
     by_edge: safeJson(row.by_edge ?? null),
     by_market: safeJson(row.by_market ?? null),
+    by_tier: safeJson(row.by_tier ?? null),
 
     model_version: row.model_version ?? null,
     vegas_ok: row.vegas_ok ?? null,
