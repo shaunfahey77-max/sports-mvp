@@ -394,7 +394,7 @@ async function fetchPerformanceWindow(days = 14, leagues = ["nba", "nhl", "ncaam
         clv_implied_count: picks?.clv_implied_count ?? 0,
         clv_coverage: picks?.clv_coverage ?? null,
         implied_clv_coverage: picks?.implied_clv_coverage ?? null,
-      });
+      }).filter(Boolean);
     }
     cur = addDaysUTC(cur, 1);
   }
@@ -436,20 +436,7 @@ router.get("/performance", async (req, res) => {
         const picks = picksByKey.get(`${league}:${date}`) || null;
 
         if (!perf && !picks) {
-          missingCount++;
-          return {
-            date,
-            games: 0,
-            picks: 0,
-            pass: 0,
-            completed: 0,
-            wins: 0,
-            losses: 0,
-            scored: 0,
-            acc: null,
-            error: "missing_db_row",
-            updated_at: null,
-          };
+          return null;
         }
 
         const wins = picks?.wins ?? 0;
