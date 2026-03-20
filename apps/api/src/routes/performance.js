@@ -71,14 +71,26 @@ function persistedTopPickFlag(row) {
 }
 
 function isTopPickRow(row) {
+  const league = String(row?.league || "").toLowerCase();
+  const market = String(row?.market || "").toLowerCase();
   const tier = topPickTier(row);
   const wp = topPickWinProb(row);
 
-  return (
-    tier === "ELITE" &&
-    wp != null &&
-    wp >= 0.71
-  );
+  if (tier !== "ELITE" || wp == null) return false;
+
+  if (league === "ncaam") {
+    return market === "total" && wp >= 0.71;
+  }
+
+  if (league === "nba") {
+    return market === "total" && wp >= 0.74;
+  }
+
+  if (league === "nhl") {
+    return false;
+  }
+
+  return false;
 }
 
 function yyyymmddUTC(d) {

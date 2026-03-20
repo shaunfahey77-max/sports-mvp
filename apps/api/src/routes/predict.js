@@ -1405,24 +1405,35 @@ function topPickMeta(league, recommendedBet) {
     };
   }
 
+  const lg = String(league || "").toLowerCase();
+  const marketType = String(recommendedBet.marketType || "").toLowerCase();
+  const tier = String(recommendedBet.tier || "").toUpperCase();
+
   const wp =
     Number.isFinite(recommendedBet.calWinProb) ? Number(recommendedBet.calWinProb) :
     (Number.isFinite(recommendedBet.modelProb) ? Number(recommendedBet.modelProb) :
     (Number.isFinite(recommendedBet.winProb) ? Number(recommendedBet.winProb) : null));
 
-  const tier = String(recommendedBet.tier || "").toUpperCase();
+  let topPick = false;
+  let topPickReason = null;
 
-  const topPick =
-    tier === "ELITE" &&
-    wp != null &&
-    wp > 0.71;
+  if (tier === "ELITE" && wp != null) {
+    if (lg === "ncaam") {
+      topPick = marketType === "total" && wp >= 0.71;
+      if (topPick) topPickReason = "Premium scorer: NCAAM ELITE totals only, winProb >= 0.71";
+    } else if (lg === "nba") {
+      topPick = marketType === "total" && wp >= 0.74;
+      if (topPick) topPickReason = "Premium scorer: NBA ELITE totals only, winProb >= 0.74";
+    } else if (lg === "nhl") {
+      topPick = false;
+      topPickReason = null;
+    }
+  }
 
   return {
     topPick,
     topPickBucket: topPick ? "top-picks" : "all-picks",
-    topPickReason: topPick
-      ? "Premium scorer: ELITE only, winProb > 0.71"
-      : null,
+    topPickReason,
     topPickWinProb: wp,
   };
 }
