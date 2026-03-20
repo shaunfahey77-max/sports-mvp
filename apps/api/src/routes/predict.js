@@ -1304,8 +1304,8 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
   }
  else
       if (league === "nba") {
-        minEdge = 0.06;
-        minEv = 5;
+        minEdge = 0.08;
+        minEv = 8;
         minKellyHalf = 0.02;
       } else {
         minEdge = 0.04;
@@ -1412,8 +1412,10 @@ function topPickMeta(league, recommendedBet) {
 
   if (wp != null) {
     if (lg === "nba") {
-      topPick = (marketType === "moneyline" || marketType === "total") && wp >= 0.58;
-      if (topPick) topPickReason = "NBA premium: moneyline/total and winProb >= 0.58";
+      topPick =
+        (marketType === "spread" && wp >= 0.60) ||
+        (marketType === "moneyline" && wp >= 0.62);
+      if (topPick) topPickReason = "NBA premium: spread >= 0.60 winProb or moneyline >= 0.62";
     } else if (lg === "nhl") {
       topPick = marketType === "moneyline" && wp >= 0.60;
       if (topPick) topPickReason = "NHL premium: moneyline and winProb >= 0.60";
