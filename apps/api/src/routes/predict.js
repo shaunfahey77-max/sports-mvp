@@ -1285,6 +1285,11 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
       
   if (league === "ncaam") {
     const wp = num(winProb);
+
+    // NHL calibration (reduce overconfidence)
+    if (lg === "nhl" && wp != null) {
+      wp = 0.5 + (wp - 0.5) * 0.55;
+    }
     const edge = num(edgeVsMarket);
 
     // Moneyline (stable base)
@@ -1391,7 +1396,6 @@ function deriveMeansFromStats(league, pHome, homeStats, awayStats) {
 }
 
 function topPickMeta(league, recommendedBet) {
-  const lg = String(league || "").toLowerCase();
   if (!recommendedBet) {
     return {
       topPick: false,
@@ -1401,45 +1405,24 @@ function topPickMeta(league, recommendedBet) {
     };
   }
 
-  const marketType = String(recommendedBet.marketType || "").toLowerCase();
   const wp =
     Number.isFinite(recommendedBet.calWinProb) ? Number(recommendedBet.calWinProb) :
     (Number.isFinite(recommendedBet.modelProb) ? Number(recommendedBet.modelProb) :
     (Number.isFinite(recommendedBet.winProb) ? Number(recommendedBet.winProb) : null));
 
-  let topPick = false;
-  let topPickReason = null;
+  const tier = String(recommendedBet.tier || "").toUpperCase();
 
-  if (wp != null) {
-    if (lg === "nba") {
-      topPick =
-        marketType === "moneyline" &&
-        String(recommendedBet.tier || "").toUpperCase() === "ELITE" &&
-        wp >= 0.62;
-      if (topPick) topPickReason = "NBA premium: ELITE moneyline only, winProb >= 0.62";
-    } else if (lg === "nhl") {
-      topPick = marketType === "moneyline" && wp >= 0.60;
-      if (topPick) topPickReason = "NHL premium: moneyline and winProb >= 0.60";
-    } else if (lg === "ncaam") {
-      const edgeVal =
-        Number.isFinite(recommendedBet.edgeVsMarket) ? Number(recommendedBet.edgeVsMarket) :
-        (Number.isFinite(recommendedBet.edge) ? Number(recommendedBet.edge) : null);
-
-      topPick =
-        marketType === "total" &&
-        String(recommendedBet.tier || "").toUpperCase() === "ELITE" &&
-        wp >= 0.60 &&
-        edgeVal != null &&
-        edgeVal >= 0.10;
-
-      if (topPick) topPickReason = "NCAAM premium: ELITE totals only, winProb >= 0.60, edge >= 0.10";
-    }
-  }
+  const topPick =
+    tier === "ELITE" &&
+    wp != null &&
+    wp > 0.71;
 
   return {
     topPick,
     topPickBucket: topPick ? "top-picks" : "all-picks",
-    topPickReason,
+    topPickReason: topPick
+      ? "Premium scorer: ELITE only, winProb > 0.71"
+      : null,
     topPickWinProb: wp,
   };
 }

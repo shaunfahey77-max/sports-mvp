@@ -71,53 +71,14 @@ function persistedTopPickFlag(row) {
 }
 
 function isTopPickRow(row) {
-  const persisted = persistedTopPickFlag(row);
-  const league = String(row?.league || "").toLowerCase();
-  const market = String(row?.market || "").toLowerCase();
   const tier = topPickTier(row);
   const wp = topPickWinProb(row);
-  const edge = num(row?.edge);
-  const line = num(row?.publish_line ?? row?.market_line ?? row?.line);
-  const pick = String(row?.pick || row?.market_side || "").toLowerCase();
 
-  if (persisted != null) {
-    if (league !== "ncaam") return persisted;
-
-    return persisted &&
-      tier === "ELITE" &&
-      market === "total" &&
-      wp != null &&
-      wp >= 0.60 &&
-      edge != null &&
-      edge >= 0.10;
-  }
-
-  if (league === "nba") {
-    return tier === "ELITE" &&
-      wp != null &&
-      wp >= 0.62 &&
-      market === "moneyline";
-  }
-
-  if (league === "nhl") {
-    return tier === "ELITE" &&
-      wp != null &&
-      wp >= 0.62 &&
-      market === "moneyline";
-  }
-
-  if (league === "ncaam") {
-    return (
-      market === "total" &&
-      tier === "ELITE" &&
-      wp != null &&
-      wp >= 0.62 &&
-      edge != null &&
-      edge >= 0.12
-    );
-  }
-
-  return false;
+  return (
+    tier === "ELITE" &&
+    wp != null &&
+    wp >= 0.71
+  );
 }
 
 function yyyymmddUTC(d) {
