@@ -93,16 +93,16 @@ function isTopPickRow(row) {
   }
 
   if (league === "nba") {
-    return (tier === "STRONG" || tier === "ELITE") &&
+    return tier === "ELITE" &&
       wp != null &&
-      wp >= 0.58 &&
-      (market === "moneyline" || market === "total");
+      wp >= 0.62 &&
+      market === "moneyline";
   }
 
   if (league === "nhl") {
-    return (tier === "STRONG" || tier === "ELITE") &&
+    return tier === "ELITE" &&
       wp != null &&
-      wp >= 0.60 &&
+      wp >= 0.62 &&
       market === "moneyline";
   }
 
@@ -111,9 +111,9 @@ function isTopPickRow(row) {
       market === "total" &&
       tier === "ELITE" &&
       wp != null &&
-      wp >= 0.60 &&
+      wp >= 0.62 &&
       edge != null &&
-      edge >= 0.10
+      edge >= 0.12
     );
   }
 
@@ -394,7 +394,7 @@ async function fetchPerformanceWindow(days = 14, leagues = ["nba", "nhl", "ncaam
         clv_implied_count: picks?.clv_implied_count ?? 0,
         clv_coverage: picks?.clv_coverage ?? null,
         implied_clv_coverage: picks?.implied_clv_coverage ?? null,
-      }).filter(Boolean);
+      });
     }
     cur = addDaysUTC(cur, 1);
   }

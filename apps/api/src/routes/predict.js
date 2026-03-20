@@ -1413,9 +1413,10 @@ function topPickMeta(league, recommendedBet) {
   if (wp != null) {
     if (lg === "nba") {
       topPick =
-        (marketType === "spread" && wp >= 0.60) ||
-        (marketType === "moneyline" && wp >= 0.62);
-      if (topPick) topPickReason = "NBA premium: spread >= 0.60 winProb or moneyline >= 0.62";
+        marketType === "moneyline" &&
+        String(recommendedBet.tier || "").toUpperCase() === "ELITE" &&
+        wp >= 0.62;
+      if (topPick) topPickReason = "NBA premium: ELITE moneyline only, winProb >= 0.62";
     } else if (lg === "nhl") {
       topPick = marketType === "moneyline" && wp >= 0.60;
       if (topPick) topPickReason = "NHL premium: moneyline and winProb >= 0.60";
