@@ -373,6 +373,7 @@ export default function Home() {
               awayLogo: g.away?.logo || "",
               homeLogo: g.home?.logo || "",
               bet: g.recommendedBet,
+              why: g.why || null,
             }));
 
         const all = [
@@ -1001,6 +1002,21 @@ export default function Home() {
                           />
                         </div>
                       </div>
+
+                      {row.why?.bullets?.length ? (
+                        <div style={{ marginTop: 12 }}>
+                          <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
+                            Why this play
+                          </div>
+                          <ul style={{ margin: 0, paddingLeft: 16 }}>
+                            {row.why.bullets.slice(0, 3).map((b, i) => (
+                              <li key={i} style={{ fontSize: 12, color: "#cbd5f5", marginBottom: 4 }}>
+                                {b}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
                     </article>
                   );
                 })}

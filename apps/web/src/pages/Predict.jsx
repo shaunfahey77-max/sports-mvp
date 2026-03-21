@@ -154,7 +154,7 @@ function clvSignalMeta(v) {
   }
   if (n > 0) {
     return {
-      label: "Positive closing-line capture",
+      label: "Strong market signal",
       color: "#86efac",
       border: "1px solid rgba(16,185,129,0.22)",
       bg: "rgba(16,185,129,0.12)",
@@ -162,14 +162,14 @@ function clvSignalMeta(v) {
   }
   if (n < 0) {
     return {
-      label: "Negative closing-line capture",
+      label: "Weak market signal",
       color: "#fda4af",
       border: "1px solid rgba(244,63,94,0.22)",
       bg: "rgba(244,63,94,0.12)",
     };
   }
   return {
-    label: "Flat closing-line capture",
+    label: "Neutral market signal",
     color: "#fde68a",
     border: "1px solid rgba(245,158,11,0.22)",
     bg: "rgba(245,158,11,0.12)",
@@ -197,6 +197,25 @@ function edgeMeterTone(score) {
     glow: "0 0 18px rgba(245,158,11,0.30)",
     label: "#fcd34d",
   };
+}
+
+
+
+function marketSignal(row) {
+  const best = row?.market?.oddsComparison?.bestOdds;
+  const current = row?.bet?.odds;
+
+  if (best == null || current == null) return null;
+
+  if (best > current) {
+    return { label: "Market Advantage", color: "#86efac", bg: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.35)" };
+  }
+
+  if (best === current) {
+    return { label: "Fair Price", color: "#fde68a", bg: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.35)" };
+  }
+
+  return { label: "Market Against", color: "#fca5a5", bg: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)" };
 }
 
 export default function Predict() {
@@ -241,6 +260,7 @@ export default function Predict() {
               homeLogo: g.home?.logo || "",
               bet: g.recommendedBet,
               market: g.market || {},
+              why: g.why || null,
             }));
 
         const all = [
@@ -251,7 +271,20 @@ export default function Predict() {
 
         if (!cancelled) {
           setRows(all);
-          setModelPerf(modelPerfJson?.data || null);
+          const mp = modelPerfJson?.data || null;
+          setModelPerf(
+            mp
+              ? {
+                  ...mp,
+                  roi7d: mp.roi7d ?? mp.roi ?? null,
+                  roi30d: mp.roi30d ?? mp.roi ?? null,
+                  roiSeason: mp.roiSeason ?? mp.roi ?? null,
+                  unitsWonSeason: mp.unitsWonSeason ?? mp.units ?? null,
+                  avgClvLine: mp.avgClvLine ?? mp.avgClv ?? null,
+                  avgClvImplied: mp.avgClvImplied ?? mp.avgImpClv ?? null,
+                }
+              : null
+          );
         }
       } catch {
         if (!cancelled) setError("Failed to load premium picks.");
@@ -736,6 +769,18 @@ export default function Predict() {
                       </span>
                       <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 999, padding: "6px 10px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.28)", color: "#bfdbfe" }}>
                         Edge Score {score}
+                      {marketSignal(row) && (
+                        <div style={{
+                          marginTop: 6,
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          ...marketSignal(row)
+                        }}>
+                          {marketSignal(row).label}
+                        </div>
+                      )}
                       </span>
                     </div>
                   </div>
@@ -802,6 +847,29 @@ export default function Predict() {
                       <div style={{ fontSize: 24, fontWeight: 800, color: "#f8fafc" }}>{pctFromUnit(row.bet?.modelProb, 1)}</div>
                     </div>
                   </div>
+                  {(row.why?.headline || (Array.isArray(row.why?.bullets) && row.why.bullets.length)) && (
+                    <div style={{ marginTop: 14, background: "rgba(15,23,42,0.92)", border: "1px solid rgba(148,163,184,0.12)", borderRadius: 16, padding: 12 }}>
+                      <div style={{ fontSize: 11, color: "#94a3b8", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>
+                        Why this play
+                      </div>
+
+                      {row.why?.headline && (
+                        <div style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 700, marginBottom: 6 }}>
+                          {row.why.headline}
+                        </div>
+                      )}
+
+                      {Array.isArray(row.why?.bullets) && (
+                        <ul style={{ margin: 0, paddingLeft: 18, color: "#cbd5e1", fontSize: 13, lineHeight: 1.55 }}>
+                          {row.why.bullets.slice(0, 4).map((b, i) => (
+                            <li key={`${row.id}-why-${i}`} style={{ marginBottom: 4 }}>
+                              {b}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </article>
               );
             })}

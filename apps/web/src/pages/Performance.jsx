@@ -171,7 +171,7 @@ export default function Performance() {
 
       try {
         const [kpisRes, leagueRes, recentRes, bankrollRes, ledgerRes] = await Promise.all([
-          fetch(`${API_BASE}/api/performance/kpis`),
+          fetch(`${API_BASE}/api/performance/kpis?leagues=nba,nhl,ncaam&days=14`),
           fetch(`${API_BASE}/api/performance/league`),
           fetch(`${API_BASE}/api/performance/recent`),
           fetch(`${API_BASE}/api/bets/summary`),
