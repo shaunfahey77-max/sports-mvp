@@ -2278,7 +2278,8 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
             recommended: null,
           };
 
-      const recommended = marketBundle.recommended;
+      let recommended = marketBundle.recommended;
+
       const allowModelOnly =
   String(process.env.ALLOW_MODEL_ONLY_BACKFILL || "true").toLowerCase() !== "false";
 
@@ -2555,7 +2556,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
   const historyDays = clampNum(Number(windowDays) || 45, 14, 90);
   const isT = Boolean(tournamentMode);
   const tournamentPhase = getTournamentPhase(dateYYYYMMDD, isT);
-  const key = `PREDV18:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
+  const key = `PREDV19:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2630,7 +2631,53 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
             recommended: null,
           };
 
-      const recommended = marketBundle.recommended;
+      let recommended = marketBundle.recommended;
+
+      /* NCAAM fallback: allow strong directional ML when no market candidate survives */
+      if (!recommended) {
+        const homeMl = marketBundle?.markets?.moneyline?.home ?? null;
+        const awayMl = marketBundle?.markets?.moneyline?.away ?? null;
+        const homeMarketProb = homeMl?.winProb ?? null;
+        const awayMarketProb = awayMl?.winProb ?? null;
+
+        if (pHome >= 0.70 && homeMl?.odds != null) {
+          recommended = {
+            marketType: "moneyline",
+            side: "home",
+            line: null,
+            odds: homeMl.odds,
+            modelProb: pHome,
+            rawWinProb: pHome,
+            calWinProb: pHome,
+            calibrationMethod: "ncaam_fallback",
+            calibrationVersion: "ncaam_fallback_v1",
+            impliedProb: homeMarketProb,
+            edge: Number.isFinite(homeMarketProb) ? (pHome - homeMarketProb) : 0,
+            evForStake100: null,
+            kellyHalf: null,
+            tier: "LEAN",
+          };
+        } else if (pHome <= 0.30 && awayMl?.odds != null) {
+          const awayModelProb = 1 - pHome;
+          recommended = {
+            marketType: "moneyline",
+            side: "away",
+            line: null,
+            odds: awayMl.odds,
+            modelProb: awayModelProb,
+            rawWinProb: awayModelProb,
+            calWinProb: awayModelProb,
+            calibrationMethod: "ncaam_fallback",
+            calibrationVersion: "ncaam_fallback_v1",
+            impliedProb: awayMarketProb,
+            edge: Number.isFinite(awayMarketProb) ? (awayModelProb - awayMarketProb) : 0,
+            evForStake100: null,
+            kellyHalf: null,
+            tier: "LEAN",
+          };
+        }
+      }
+
       const allowModelOnly =
   String(process.env.ALLOW_MODEL_ONLY_BACKFILL || "true").toLowerCase() !== "false";
 
@@ -2638,8 +2685,8 @@ let pick = pickFromCandidate(recommended);
 let modelOnly = false;
 
 /* 🔒 HARD FILTERS (NCAAM) */
-const minWinProb = 0.58;
-const minEdge = 0.025;
+const minWinProb = 0.55;
+const minEdge = 0.010;
 
 /* Kill weak recommended bets */
 if (recommended) {
