@@ -15,9 +15,19 @@ function normalizeDateParam(date) {
 }
 
 function getArg(name, fallback = null) {
-  const prefix = `--${name}=`;
-  const hit = process.argv.find((x) => String(x).startsWith(prefix));
-  return hit ? hit.slice(prefix.length) : fallback;
+  const argv = process.argv.slice(2).map((x) => String(x));
+
+  for (const arg of argv) {
+    if (arg.startsWith(`--${name}=`)) return arg.slice(`--${name}=`.length);
+    if (arg.startsWith(`${name}=`)) return arg.slice(`${name}=`.length);
+  }
+
+  if (name === "date") {
+    const positional = argv.find((arg) => /^\d{4}-\d{2}-\d{2}$/.test(arg));
+    if (positional) return positional;
+  }
+
+  return fallback;
 }
 
 function normMarket(x) {
@@ -195,6 +205,7 @@ async function buildPredictionsInternal(league, date) {
 
 async function main() {
   const date = normalizeDateParam(getArg("date")) || yyyymmddUTC(new Date());
+  console.log(JSON.stringify({ job: "captureMarketSnapshots", requestedDate: date }, null, 2));
   const leagues = String(getArg("leagues", "nba,ncaam,nhl"))
     .split(",")
     .map((s) => s.trim().toLowerCase())
@@ -204,7 +215,7 @@ async function main() {
   const summary = [];
 
   for (const league of leagues) {
-    const out = await buildPredictionsInternal(league, date);
+    const out = await buildPredictionsInternal(league, date, { forceDate: date, date });
     const games = Array.isArray(out?.games) ? out.games : [];
     const rows = [];
 

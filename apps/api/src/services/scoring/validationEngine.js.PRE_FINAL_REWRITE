@@ -1,0 +1,13 @@
+export function validatePerformance(perf) {
+  const { picks, wins, losses, pushes, scored } = perf;
+
+  if (wins + losses + pushes !== scored) {
+    throw new Error("INVALID: scored mismatch");
+  }
+
+  if (scored > picks) {
+    throw new Error("INVALID: scored > picks");
+  }
+
+  return true;
+}

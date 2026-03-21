@@ -1,0 +1,30 @@
+export function buildPerformanceFromPicks(rows) {
+  const out = {
+    picks: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    scored: 0
+  };
+
+  for (const r of rows) {
+    if ((r.pick || "").toUpperCase() === "PASS") continue;
+
+    out.picks += 1;
+
+    const result = String(r.result || "").toLowerCase();
+
+    if (result === "win") {
+      out.wins += 1;
+      out.scored += 1;
+    } else if (result === "loss") {
+      out.losses += 1;
+      out.scored += 1;
+    } else if (result === "push") {
+      out.pushes += 1;
+      out.scored += 1;
+    }
+  }
+
+  return out;
+}

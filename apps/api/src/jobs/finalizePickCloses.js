@@ -14,9 +14,19 @@ function normalizeDateParam(date) {
 }
 
 function getArg(name, fallback = null) {
-  const prefix = `--${name}=`;
-  const hit = process.argv.find((x) => String(x).startsWith(prefix));
-  return hit ? hit.slice(prefix.length) : fallback;
+  const argv = process.argv.slice(2).map((x) => String(x));
+
+  for (const arg of argv) {
+    if (arg.startsWith(`--${name}=`)) return arg.slice(`--${name}=`.length);
+    if (arg.startsWith(`${name}=`)) return arg.slice(`${name}=`.length);
+  }
+
+  if (name === "date") {
+    const positional = argv.find((arg) => /^\d{4}-\d{2}-\d{2}$/.test(arg));
+    if (positional) return positional;
+  }
+
+  return fallback;
 }
 
 function normMarket(x) {
@@ -49,6 +59,7 @@ function chooseLatestSnapshot(rows) {
 
 async function main() {
   const date = normalizeDateParam(getArg("date")) || yyyymmddUTC(new Date());
+  console.log(JSON.stringify({ job: "finalizePickCloses", requestedDate: date }, null, 2));
   const leagues = String(getArg("leagues", "nba,ncaam,nhl"))
     .split(",")
     .map((s) => s.trim().toLowerCase())

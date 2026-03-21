@@ -1,0 +1,152 @@
+const SCOREBOARD_CONFIG = {
+  nba: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+  nhl: "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard",
+  ncaam: "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
+};
+
+function ymdToEspnDate(date) {
+  return String(date || "").replaceAll("-", "");
+}
+
+function toNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractEventId(gameKey) {
+  const s = String(gameKey || "");
+  const m = s.match(/(\d+)(?!.*\d)/);
+  return m ? m[1] : null;
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": "sports-mvp-scoring-rewrite/1.0",
+      "Accept": "application/json",
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Scoreboard fetch failed (${res.status}) for ${url}`);
+  }
+  return res.json();
+}
+
+export async function fetchFinalsForLeague(date, league) {
+  const base = SCOREBOARD_CONFIG[league];
+  if (!base) throw new Error(`Unsupported league: ${league}`);
+
+  const url = `${base}?dates=${ymdToEspnDate(date)}`;
+  const json = await fetchJson(url);
+  const finals = new Map();
+
+  for (const event of json?.events || []) {
+    const comp = event?.competitions?.[0];
+    const comps = comp?.competitors || [];
+    const home = comps.find((c) => c?.homeAway === "home");
+    const away = comps.find((c) => c?.homeAway === "away");
+    const statusType = String(comp?.status?.type?.name || event?.status?.type?.name || "").toLowerCase();
+    const completed = statusType === "status_final" || statusType === "final";
+
+    if (!home || !away || !completed) continue;
+
+    finals.set(String(event.id), {
+      eventId: String(event.id),
+      completed: true,
+      homeScore: toNum(home?.score),
+      awayScore: toNum(away?.score),
+    });
+  }
+
+  return finals;
+}
+
+function gradeMoneyline(pick, homeScore, awayScore) {
+  if (homeScore === awayScore) return "push";
+  if (pick === "home") return homeScore > awayScore ? "win" : "loss";
+  if (pick === "away") return awayScore > homeScore ? "win" : "loss";
+  return null;
+}
+
+function gradeSpread(pick, line, homeScore, awayScore) {
+  if (!Number.isFinite(line)) return null;
+
+  const homeMargin = homeScore - awayScore;
+
+  if (pick === "home") {
+    const v = homeMargin + line;
+    if (v > 0) return "win";
+    if (v < 0) return "loss";
+    return "push";
+  }
+
+  if (pick === "away") {
+    const v = (-homeMargin) + line;
+    if (v > 0) return "win";
+    if (v < 0) return "loss";
+    return "push";
+  }
+
+  return null;
+}
+
+function gradeTotal(pick, line, homeScore, awayScore) {
+  if (!Number.isFinite(line)) return null;
+  const total = homeScore + awayScore;
+  if (pick === "over") {
+    if (total > line) return "win";
+    if (total < line) return "loss";
+    return "push";
+  }
+  if (pick === "under") {
+    if (total < line) return "win";
+    if (total > line) return "loss";
+    return "push";
+  }
+  return null;
+}
+
+export function settleRows(rows, finalsMap) {
+  const updates = [];
+
+  for (const row of rows || []) {
+    const pick = String(row?.pick || "").toLowerCase();
+    if (!pick || pick === "pass") continue;
+
+    const eventId = extractEventId(row?.game_key);
+    if (!eventId) continue;
+
+    const final = finalsMap.get(String(eventId));
+    if (!final?.completed) continue;
+
+    const homeScore = toNum(final.homeScore);
+    const awayScore = toNum(final.awayScore);
+    if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+
+    const market = String(row?.market || "").toLowerCase();
+    const line = toNum(row?.market_line ?? row?.publish_line ?? row?.close_line);
+    let result = null;
+
+    if (market === "moneyline") {
+      result = gradeMoneyline(pick, homeScore, awayScore);
+    } else if (market === "spread") {
+      result = gradeSpread(pick, line, homeScore, awayScore);
+    } else if (market === "total") {
+      result = gradeTotal(pick, line, homeScore, awayScore);
+    }
+
+    if (!result) continue;
+
+    updates.push({
+      date: row.date,
+      league: row.league,
+      game_key: row.game_key,
+      market: row.market,
+      pick: row.pick,
+      result,
+      graded_at: new Date().toISOString(),
+    });
+  }
+
+  return updates;
+}

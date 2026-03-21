@@ -1864,8 +1864,25 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
             recommended: null,
           };
 
-      const recommended = marketBundle.recommended;
-      
+      let recommended = marketBundle.recommended;
+
+      /* NBA selection tightening */
+      if (recommended?.marketType === "total") {
+        const prob = recommended.calWinProb ?? recommended.modelProb ?? 0;
+        const edge = recommended.edge ?? 0;
+        if (prob < 0.64 || edge < 0.10) {
+          recommended = null;
+        }
+      }
+
+      if (recommended?.marketType === "spread") {
+        const prob = recommended.calWinProb ?? recommended.modelProb ?? 0;
+        const edge = recommended.edge ?? 0;
+        if (prob < 0.58 || edge < 0.05) {
+          recommended = null;
+        }
+      }
+
 const allowModelOnly =
   String(process.env.ALLOW_MODEL_ONLY_BACKFILL || "true").toLowerCase() !== "false";
 
@@ -1906,7 +1923,12 @@ if (!pick.pick) noBetCount++;
             side: recommended.side,
             line: recommended.line ?? null,
             odds: recommended.odds ?? null,
-            tier: recommended.tier,
+            tier:
+  (recommended.edge ?? 0) >= 0.06
+    ? "ELITE"
+    : (recommended.edge ?? 0) >= 0.035
+    ? "STRONG"
+    : "LEAN",
             modelProb: recommended.modelProb ?? null,
             rawWinProb: recommended.rawWinProb ?? null,
             calWinProb: recommended.calWinProb ?? recommended.modelProb ?? null,
@@ -2615,16 +2637,24 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
 let pick = pickFromCandidate(recommended);
 let modelOnly = false;
 
-if (!pick?.pick && allowModelOnly && (!odds.ok || !vegasRow)) {
-  const mo = modelOnlyMoneylinePick(pHome, "ncaam");
-  if (mo) {
-    pick = { pick: mo, tier: "LEAN" };
-    modelOnly = true;
-    modelOnlyCount++;
+/* 🔒 HARD FILTERS (NCAAM) */
+const minWinProb = 0.58;
+const minEdge = 0.025;
+
+/* Kill weak recommended bets */
+if (recommended) {
+  if (
+    (recommended.calWinProb ?? recommended.modelProb ?? 0) < minWinProb ||
+    (recommended.edge ?? 0) < minEdge
+  ) {
+    pick = { pick: null };
   }
 }
 
-if (!pick.pick) noBetCount++;
+/* Disable model-only fallback (too noisy) */
+if (!pick?.pick) {
+  noBetCount++;
+}
 
       const why = buildWhy({
         marketPick: pick.pick,

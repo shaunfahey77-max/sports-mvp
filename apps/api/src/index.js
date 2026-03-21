@@ -6,7 +6,6 @@ import parlaysOddsRouter from "./routes/parlaysOdds.js";
 import cors from "cors";
 
 import adminPerformanceRouter from "./routes/adminPerformance.js";
-import performanceCacheRouter from "./routes/performanceCache.js";
 import predictRouter from "./routes/predict.js";
 import performanceRoutes from "./routes/performance.js";
 import upsetsRouter from "./routes/upsets.js";
@@ -78,7 +77,6 @@ app.use("/api/ev", evRouter);
 
 // My Bets ledger
 app.use("/api", betsRouter);
-app.use("/api/performance", performanceCacheRouter);
 
 // Optional NBA premium router
 if (nbaPremiumRouter) {
