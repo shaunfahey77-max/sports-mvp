@@ -350,9 +350,9 @@ export default function Home() {
       setError("");
       try {
         const [nbaRes, ncaamRes, nhlRes] = await Promise.all([
-          fetch("http://127.0.0.1:3001/api/predictions?league=nba"),
-          fetch("http://127.0.0.1:3001/api/predictions?league=ncaam"),
-          fetch("http://127.0.0.1:3001/api/predictions?league=nhl"),
+          fetch("/api/predictions?league=nba"),
+          fetch("/api/predictions?league=ncaam"),
+          fetch("/api/predictions?league=nhl"),
         ]);
 
         const [nbaJson, ncaamJson, nhlJson] = await Promise.all([
@@ -398,7 +398,7 @@ export default function Home() {
       setPerfLoading(true);
       setPerfError("");
       try {
-        const res = await fetch("http://127.0.0.1:3001/api/performance/kpis");
+        const res = await fetch("/api/performance/kpis");
         const json = await res.json();
         if (!cancelled) setPerformance(json);
       } catch {
