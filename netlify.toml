@@ -1,10 +1,11 @@
 [build]
   base = "."
-  command = "npm install && npm run build --workspace=web"
+  command = "npm install --include=optional && npm run build --workspace=web"
   publish = "apps/web/dist"
 
 [build.environment]
   NODE_VERSION = "20"
+  NPM_CONFIG_OPTIONAL = "true"
 
 [[redirects]]
   from = "/*"
