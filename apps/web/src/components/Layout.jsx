@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import logo from "../assets/sports-mvp-logo.png";
 
 function NavItem({ to, children }) {
@@ -27,6 +27,9 @@ function NavItem({ to, children }) {
 }
 
 export default function Layout({ children }) {
+  const location = useLocation();
+  const isLanding = location.pathname === "/";
+
   const styles = {
     shell: {
       minHeight: "100vh",
@@ -92,6 +95,18 @@ export default function Layout({ children }) {
       flexWrap: "wrap",
       justifyContent: "flex-end",
     },
+    navBtn: {
+      textDecoration: "none",
+      padding: "10px 14px",
+      borderRadius: "12px",
+      fontSize: "14px",
+      fontWeight: 700,
+      letterSpacing: "0.01em",
+      color: "#cbd5e1",
+      border: "1px solid transparent",
+      transition: "all 160ms ease",
+      whiteSpace: "nowrap",
+    },
     main: {
       maxWidth: "100%",
     },
@@ -110,12 +125,23 @@ export default function Layout({ children }) {
           </NavLink>
 
           <nav style={styles.nav} aria-label="Primary">
-            <NavItem to="/">Home</NavItem>
-            <NavItem to="/predict">Picks</NavItem>
-            <NavItem to="/parlays">Parlays</NavItem>
-            <NavItem to="/performance">Performance</NavItem>
-            <NavItem to="/my-bets">My Bets</NavItem>
-            <NavItem to="/tournament">Tournament</NavItem>
+            {isLanding ? (
+              <>
+                <a href="#gallery" style={{...styles.navBtn}}>Platform</a>
+                <a href="#proof" style={{...styles.navBtn}}>Proof</a>
+                <a href="#pricing" style={{...styles.navBtn}}>Pricing</a>
+                <NavItem to="/app">Enter App</NavItem>
+              </>
+            ) : (
+              <>
+                <NavItem to="/app">Dashboard</NavItem>
+                <NavItem to="/predict">Picks</NavItem>
+                <NavItem to="/parlays">Parlays</NavItem>
+                <NavItem to="/tournament">Tournament</NavItem>
+                <NavItem to="/performance">Performance</NavItem>
+                <NavItem to="/my-bets">My Bets</NavItem>
+              </>
+            )}
           </nav>
         </div>
       </header>

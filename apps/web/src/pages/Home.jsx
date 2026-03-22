@@ -443,11 +443,13 @@ export default function Home() {
       color: "#e5e7eb",
       padding: "28px 20px 40px",
     },
-    shell: { maxWidth: "1180px", margin: "0 auto" },
+    shell: {
+      maxWidth: "1200px",
+      margin: "0 auto", maxWidth: "1180px", margin: "0 auto" },
     hero: {
       display: "grid",
       gridTemplateColumns: "1.35fr 0.95fr",
-      gap: "20px",
+      gap: "16px",
       marginBottom: "22px",
     },
     panel: {
@@ -457,7 +459,8 @@ export default function Home() {
       boxShadow: "0 24px 60px rgba(0,0,0,0.28)",
       backdropFilter: "blur(10px)",
     },
-    heroMain: { padding: "24px" },
+    heroMain: { opacity: 0.92,
+      padding: "18px", padding: "24px" },
     heroMeta: {
       padding: "20px",
       display: "grid",
@@ -506,16 +509,18 @@ export default function Home() {
       maxWidth: "640px",
     },
     heroGrid: {
+      gap: "12px",
       display: "grid",
       gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
       gap: "14px",
       marginTop: "20px",
     },
     statCard: {
+      padding: "12px",
       background: "rgba(15,23,42,0.92)",
       border: "1px solid rgba(148,163,184,0.14)",
       borderRadius: "18px",
-      padding: "16px",
+      padding: "14px",
       minHeight: "112px",
       display: "flex",
       flexDirection: "column",
@@ -544,7 +549,7 @@ export default function Home() {
       background: "linear-gradient(180deg, rgba(15,23,42,0.95) 0%, rgba(7,12,24,0.95) 100%)",
       border: "1px solid rgba(96,165,250,0.18)",
       borderRadius: "20px",
-      padding: "18px",
+      padding: "14px",
     },
     matchup: {
       display: "flex",
@@ -599,15 +604,15 @@ export default function Home() {
       textTransform: "uppercase",
       letterSpacing: "0.08em",
     },
-    bodyGrid: { display: "grid", gridTemplateColumns: "1.55fr 0.95fr", gap: "20px" },
-    sectionPanel: { padding: "22px" },
-    picksGrid: { display: "grid", gap: "14px" },
+    bodyGrid: { display: "grid", gridTemplateColumns: "1.25fr 0.95fr", gap: "16px" },
+    sectionPanel: { padding: "18px" },
+    picksGrid: { display: "grid", gap: "12px" },
     pickCard: {
       background: "rgba(9,15,28,0.82)",
       border: "1px solid rgba(148,163,184,0.14)",
       borderRadius: "20px",
       padding: "18px",
-      boxShadow: "0 16px 34px rgba(0,0,0,0.18)",
+      boxShadow: "0 20px 40px rgba(0,0,0,0.28)",
     },
     pickTop: {
       display: "flex",
@@ -655,7 +660,7 @@ export default function Home() {
       overflow: "hidden",
       border: "1px solid rgba(148,163,184,0.12)",
     },
-    rightColStack: { display: "grid", gap: "20px" },
+    rightColStack: { display: "grid", gap: "16px" },
     policyCard: {
       background: "rgba(9,15,28,0.82)",
       border: "1px solid rgba(148,163,184,0.14)",
@@ -877,8 +882,8 @@ export default function Home() {
             >
               <div>
                 <div style={styles.sectionTitle}>Premium Edge Board</div>
-                <h2 style={{ margin: 0, fontSize: "28px", fontWeight: 800, color: "#f8fafc" }}>
-                  🔥 Today's Top Picks
+                <h2 style={{ margin: 0, fontSize: "30px", fontWeight: 900, color: "#f8fafc" }}>
+                  🔥 🔥 Today’s Top Picks
                 </h2>
 
                 <SectionSummary
