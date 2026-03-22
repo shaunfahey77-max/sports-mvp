@@ -1,0 +1,9 @@
+{
+  "name": "sports-mvp-root",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": ["apps/web", "apps/api"],
+  "scripts": {
+    "build": "echo root build skipped"
+  }
+}
