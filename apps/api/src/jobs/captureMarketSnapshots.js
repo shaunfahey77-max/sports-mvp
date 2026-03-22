@@ -203,8 +203,8 @@ async function buildPredictionsInternal(league, date) {
   return { meta: { league, date, error: "unsupported league" }, games: [] };
 }
 
-async function main() {
-  const date = normalizeDateParam(getArg("date")) || yyyymmddUTC(new Date());
+export async function runCaptureMarketSnapshots(dateOverride = null) {
+  const date = normalizeDateParam(dateOverride) || normalizeDateParam(getArg("date")) || yyyymmddUTC(new Date());
   console.log(JSON.stringify({ job: "captureMarketSnapshots", requestedDate: date }, null, 2));
   const leagues = String(getArg("leagues", "nba,ncaam,nhl"))
     .split(",")
@@ -323,10 +323,16 @@ async function main() {
     });
   }
 
-  console.log(JSON.stringify({ ok: true, captured_at, results: summary }, null, 2));
+  const result = { ok: true, captured_at, results: summary };
+  console.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
-main().catch((err) => {
-  console.error(JSON.stringify({ ok: false, error: String(err?.message || err) }, null, 2));
-  process.exit(1);
-});
+const isDirectRun = process.argv[1] && process.argv[1].endsWith("captureMarketSnapshots.js");
+
+if (isDirectRun) {
+  runCaptureMarketSnapshots().catch((err) => {
+    console.error(JSON.stringify({ ok: false, error: String(err?.message || err) }, null, 2));
+    process.exit(1);
+  });
+}

@@ -12,6 +12,7 @@ import upsetsRouter from "./routes/upsets.js";
 import scoreRouter from "./routes/score.js";
 import upsetsOddsRouter from "./routes/upsetsOdds.js";
 import { startDailyScoreJob } from "./cron/dailyScore.js";
+import { runCaptureMarketSnapshots } from "./jobs/captureMarketSnapshots.js";
 import evRouter from "./routes/ev.js";
 import betsRouter from "./routes/bets.js";
 
@@ -210,6 +211,20 @@ app.listen(PORT, () => {
   if (ENABLE_CRON) {
     console.log("[CRON] Daily scoring job enabled");
     startDailyScoreJob();
+
+    // Market snapshot cron (runs every 10 minutes)
+    import("node-cron").then(cron => {
+      cron.default.schedule("*/10 * * * *", async () => {
+        try {
+          console.log("[CRON] Running market snapshot capture...");
+          const today = new Date().toISOString().slice(0,10);
+          await runCaptureMarketSnapshots(today);
+        } catch (e) {
+          console.error("[CRON] Snapshot error:", e.message);
+        }
+      });
+    });
+
   } else {
     console.log("[CRON] Disabled via ENABLE_CRON=false");
   }
