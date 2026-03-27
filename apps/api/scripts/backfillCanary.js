@@ -23,10 +23,11 @@
 
     console.log(`=== [${i}/${DAYS}] Backfilling ${date} ===`);
     try {
-      const results = await runDailyScoreOnce({
+      const { ok, results, totalGames } = await runDailyScoreOnce({
         date,
         leagues: ["nba", "ncaam", "nhl"],
       });
+      console.log(`  totalGames=${totalGames} ok=${ok}`);
       for (const r of results) {
         if (r.ok) {
           const rep = r.report || {};
