@@ -887,22 +887,7 @@ const CAL = {
   nhl: { marginSd: 1.9, totalSd: 1.9, baseTotal: 6.1, marginScale: 4.2 },
 };
 
-function recommendedTierFromCandidate(c) {
-  const e = Number.isFinite(c?.edge) ? c.edge : null;
-  const ev = Number.isFinite(c?.evForStake100) ? c.evForStake100 : null;
-  const kh = Number.isFinite(c?.kellyHalf) ? c.kellyHalf : null;
-  const p = Number.isFinite(c?.modelProb) ? c.modelProb : null;
-
-  if (!Number.isFinite(e) || !Number.isFinite(ev) || !Number.isFinite(kh) || !Number.isFinite(p)) return "PASS";
-  if (p < 0.52 || p > 0.75) return "PASS";
-
-  if (e >= 0.10 && ev >= 12 && kh >= 0.015) return "ELITE";
-  if (e >= 0.07 && ev >= 8 && kh >= 0.010) return "STRONG";
-  if (e >= 0.05 && ev >= 5 && kh >= 0.0075) return "EDGE";
-
-  return "PASS";
-}
-const TIER_RANK = { PASS: 0, LEAN: 1, EDGE: 2, STRONG: 3, ELITE: 4 };
+// Tier assignment is handled exclusively by premiumSelection.js.
 
 function pickFromCandidate(reco) {
   if (!reco || reco.tier === "PASS") return { pick: null, tier: "PASS" };
@@ -1209,7 +1194,7 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
 
   const candidates = [];
   let bestRejectedCandidate = null;
-
+  function pushCandidate(marketType, side, payload) {
   function pushCandidate(marketType, side, payload) {
     if (!payload) return;
     const edge = payload.edge;
@@ -1234,22 +1219,8 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
       kellyHalf,
       tier: "PASS",
     };
-    c.tier = recommendedTierFromCandidate(c);
-
-    if (
-      !bestRejectedCandidate ||
-      (Number.isFinite(c.edge) ? c.edge : -999) > (Number.isFinite(bestRejectedCandidate.edge) ? bestRejectedCandidate.edge : -999) ||
-      (
-        (Number.isFinite(c.edge) ? c.edge : -999) === (Number.isFinite(bestRejectedCandidate.edge) ? bestRejectedCandidate.edge : -999) &&
-        (Number.isFinite(c.evForStake100) ? c.evForStake100 : -999) > (Number.isFinite(bestRejectedCandidate.evForStake100) ? bestRejectedCandidate.evForStake100 : -999)
-      )
-    ) {
-      bestRejectedCandidate = { ...c };
-    }
-
-    if (c.tier !== "PASS") candidates.push(c);
+    candidates.push(c);
   }
-
   pushCandidate("moneyline", "home", markets.moneyline.home);
   pushCandidate("moneyline", "away", markets.moneyline.away);
 
@@ -1259,120 +1230,32 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
   pushCandidate("total", "over", markets.total.over);
   pushCandidate("total", "under", markets.total.under);
 
-  if (candidates.length === 0 && bestRejectedCandidate) {
-    bestRejectedCandidate.tier = "LEAN";
-    candidates.push(bestRejectedCandidate);
-  }
-
   const premiumSelection = applyPremiumSelection(league, candidates);
   let recommended = premiumSelection.recommended ?? null;
 
-  // Premium quality gate
+
+  // Structural sanity checks only — threshold gating is in premiumSelection.js
   if (recommended) {
-    const e = Number.isFinite(recommended.edge) ? recommended.edge : null;
-    const ev = Number.isFinite(recommended.evForStake100) ? recommended.evForStake100 : null;
-    const kh = Number.isFinite(recommended.kellyHalf) ? recommended.kellyHalf : null;
+    const mt = String(recommended.marketType || "").toLowerCase();
     const odds = Number.isFinite(recommended.odds) ? recommended.odds : null;
     const line = Number.isFinite(recommended.line) ? recommended.line : null;
-    const pModel = Number.isFinite(recommended.modelProb) ? recommended.modelProb : null;
-    const mt = String(recommended.marketType || "").toLowerCase();
 
-    let minEdge = 0.06;
-    let minEv = 5;
-    let minKellyHalf = 0.02;
-
-    if (mt === "moneyline") {
-      
-  if (league === "ncaam") {
-    const wp = num(winProb);
-
-    // NHL calibration (reduce overconfidence)
-    if (lg === "nhl" && wp != null) {
-      wp = 0.5 + (wp - 0.5) * 0.55;
-    }
-    const edge = num(edgeVsMarket);
-
-    // Moneyline (stable base)
-    if (
-      market === "moneyline" &&
-      wp != null && wp >= 0.60
-    ) return true;
-
-    // Totals (broad + proven)
-    if (
-      market === "total" &&
-      wp != null && wp >= 0.58 &&
-      edge != null && edge >= 0.07
-    ) return true;
-
-    return false;
-  }
- else
-      if (league === "nba") {
-        minEdge = 0.08;
-        minEv = 8;
-        minKellyHalf = 0.02;
-      } else {
-        minEdge = 0.04;
-        minEv = 3;
-        minKellyHalf = 0.01;
-      }
-    } else if (mt === "spread") {
-      if (league === "nba") {
-        minEdge = 0.055;
-        minEv = 5;
-        minKellyHalf = 0.02;
-      } else {
-        minEdge = 0.045;
-        minEv = 3.5;
-        minKellyHalf = 0.015;
-      }
-    } else if (mt === "total") {
-      minEdge = 0.055;
-      minEv = 4.5;
-      minKellyHalf = 0.02;
-    }
-
-    // Tournament totals need stronger discipline
-    if (league === "ncaam" && mt === "total" && isTournamentContext) {
-      minEdge = 0.08;
-      minEv = 8;
-      minKellyHalf = 0.02;
-    }
-
-    if (
-      e == null ||
-      ev == null ||
-      kh == null ||
-      pModel == null ||
-      pModel < 0.52 ||
-      pModel > 0.75 ||
-      e < minEdge ||
-      ev < minEv ||
-      kh < minKellyHalf
-    ) {
+    if (league === "nba" && mt === "spread" && line != null && Math.abs(line) > 17.5) {
       recommended = null;
     }
-
-    // Market sanity filters
-    if (recommended && league === "nba" && mt === "spread" && line != null && Math.abs(line) > 17.5) {
-      recommended = null;
-    }
-
     if (recommended && league === "nba" && mt === "moneyline" && odds != null && odds > 400) {
       recommended = null;
     }
-
     if (recommended && league === "nhl" && odds != null && odds < -200) {
       recommended = null;
     }
   }
-
   return {
     markets,
     recommended,
     premiumCandidates: premiumSelection.candidates || [],
-  };
+    premiumCandidates: premiumSelection.candidates || [],
+    rejectedCandidates: premiumSelection.rejected || [],
 }
 
 function deriveMeansFromStats(league, pHome, homeStats, awayStats) {
