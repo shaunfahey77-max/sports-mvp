@@ -1254,9 +1254,8 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
     markets,
     recommended,
     premiumCandidates: premiumSelection.candidates || [],
-    premiumCandidates: premiumSelection.candidates || [],
     rejectedCandidates: premiumSelection.rejected || [],
-}
+  };
 
 function deriveMeansFromStats(league, pHome, homeStats, awayStats) {
   const cal = CAL[league] || CAL.nba;
@@ -1871,6 +1870,7 @@ if (!pick.pick) noBetCount++;
         markets: marketBundle.markets,
         ...buildExplicitMarketNodesFromVegas(marketBundle.markets, vegasRow),
         premiumCandidates: marketBundle.premiumCandidates || [],
+        rejectedCandidates: marketBundle.rejectedCandidates || [],
         recommendedBet,
 
         market: {
@@ -2229,6 +2229,7 @@ if (!pick.pick) noBetCount++;
 
         markets: marketBundle.markets,
         premiumCandidates: marketBundle.premiumCandidates || [],
+        rejectedCandidates: marketBundle.rejectedCandidates || [],
         recommendedBet,
 
         market: {
@@ -2639,6 +2640,7 @@ if (!pick?.pick) {
 
         markets: marketBundle.markets,
         premiumCandidates: marketBundle.premiumCandidates || [],
+        rejectedCandidates: marketBundle.rejectedCandidates || [],
         recommendedBet,
 
         market: {
