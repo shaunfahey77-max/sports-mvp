@@ -2885,8 +2885,6 @@ router.get("/predictions", async (req, res) => {
   }
 });
 
-export { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions };
-export default router;
 
 
 router.get("/top-bets", async (req, res) => {
@@ -2929,3 +2927,6 @@ router.get("/top-bets", async (req, res) => {
     res.status(500).json({ ok:false, error:String(e) })
   }
 })
+
+export { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions };
+export default router;
