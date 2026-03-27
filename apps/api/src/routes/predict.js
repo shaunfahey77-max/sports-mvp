@@ -1256,6 +1256,7 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
     premiumCandidates: premiumSelection.candidates || [],
     rejectedCandidates: premiumSelection.rejected || [],
   };
+}
 
 function deriveMeansFromStats(league, pHome, homeStats, awayStats) {
   const cal = CAL[league] || CAL.nba;
