@@ -1372,6 +1372,7 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
     markets,
     recommended,
     premiumCandidates: premiumSelection.candidates || [],
+    rejectedCandidates: premiumSelection.rejected || [],
   };
 }
 
@@ -1988,6 +1989,7 @@ if (!pick.pick) noBetCount++;
         markets: marketBundle.markets,
         ...buildExplicitMarketNodesFromVegas(marketBundle.markets, vegasRow),
         premiumCandidates: marketBundle.premiumCandidates || [],
+        rejectedCandidates: marketBundle.rejectedCandidates || [],
         recommendedBet,
 
         market: {
@@ -2346,6 +2348,7 @@ if (!pick.pick) noBetCount++;
 
         markets: marketBundle.markets,
         premiumCandidates: marketBundle.premiumCandidates || [],
+        rejectedCandidates: marketBundle.rejectedCandidates || [],
         recommendedBet,
 
         market: {
@@ -2756,6 +2759,7 @@ if (!pick?.pick) {
 
         markets: marketBundle.markets,
         premiumCandidates: marketBundle.premiumCandidates || [],
+        rejectedCandidates: marketBundle.rejectedCandidates || [],
         recommendedBet,
 
         market: {
