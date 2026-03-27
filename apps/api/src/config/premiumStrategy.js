@@ -3,7 +3,7 @@
   // premiumSelection.js reads from this file — no threshold values elsewhere.
 
   export const MARKET_GATING = {
-    nba:   { moneyline: true,  spread: true,  total: true  },
+    nba:   { moneyline: true,  spread: false, total: false },
     ncaam: { moneyline: false, spread: false, total: true  },
     nhl:   { moneyline: true,  spread: true,  total: true  },
   };
