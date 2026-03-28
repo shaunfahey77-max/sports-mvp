@@ -2,6 +2,7 @@
 import "dotenv/config";
 import cron from "node-cron";
 import { writeSlatePicksToLedger, upsertPerformanceDaily } from "../db/dailyLedger.js";
+import { MARKET_GATING } from "../config/premiumStrategy.js";
 
 /**
  * Premium v20 CRON runner (market-aware)
@@ -268,13 +269,26 @@ export async function runDailyScoreOnce({ date, leagues, lookbackDays, modelVers
       const games = Array.isArray(slate?.games) ? slate.games : [];
       totalGames += games.length;
 
+      // Scrub recommendedBet for any market type blocked by MARKET_GATING.
+      // Prevents modelOnly fallbacks (e.g. NCAAM moneyline) from being written
+      // to the ledger as real picks when their market type is gated off.
+      const leagueGating = MARKET_GATING[league] || {};
+      const gatedGames = games.map((g) => {
+        const bet = g?.recommendedBet;
+        if (!bet) return g;
+        const mt = String(bet.marketType || "").toLowerCase();
+        if (leagueGating[mt] === false) return { ...g, recommendedBet: null };
+        return g;
+      });
+
       // 1) Ledger write (what we recommended, regardless of finals)
       await writeSlatePicksToLedger({
         date: ymd,
         league,
         modelVersion: slate?.meta?.model || "premium-v18",
         oddsOk: Boolean(slate?.meta?.odds?.ok),
-        games,
+        games: gatedGames,
+      });
       });
 
       // 2) Score completed finals (market-aware, based on recommendedBet)
