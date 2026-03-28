@@ -45,7 +45,7 @@
         minKellyHalf: 0.02,
         minEdge: 0.055,
         minOdds: -175,
-        maxOdds: 180,
+        maxOdds: 140,
       },
       spread: {
         minEvForStake100: 6,
@@ -81,7 +81,7 @@
   };
 
   // Probability compression factor: shrinks model prob toward 0.5 to reduce overconfidence.
-  export const CALIBRATION_FACTOR = 0.4;
+  export const CALIBRATION_FACTOR = 0.65;
 
   // Maximum candidates to surface per league after ranking.
   export const MAX_PICKS = {
