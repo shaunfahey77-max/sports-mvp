@@ -269,15 +269,18 @@ export async function runDailyScoreOnce({ date, leagues, lookbackDays, modelVers
       const games = Array.isArray(slate?.games) ? slate.games : [];
       totalGames += games.length;
 
-      // Scrub recommendedBet for any market type blocked by MARKET_GATING.
-      // Prevents modelOnly fallbacks (e.g. NCAAM moneyline) from being written
-      // to the ledger as real picks when their market type is gated off.
+      // Scrub recommendedBet AND game.market for any market type blocked by MARKET_GATING.
+      // writeSlatePicksToLedger falls back to game.market.pick when recommendedBet is null,
+      // so both must be cleared to prevent gated markets leaking via the compat fallback chain.
       const leagueGating = MARKET_GATING[league] || {};
+      const PASS_MARKET = { marketType: null, marketOdds: null, marketLine: null, marketSide: null, pick: "PASS", tier: "PASS" };
       const gatedGames = games.map((g) => {
         const bet = g?.recommendedBet;
         if (!bet) return g;
         const mt = String(bet.marketType || "").toLowerCase();
-        if (leagueGating[mt] === false) return { ...g, recommendedBet: null };
+        if (leagueGating[mt] === false) {
+          return { ...g, recommendedBet: null, market: { ...(g.market || {}), ...PASS_MARKET } };
+        }
         return g;
       });
 
