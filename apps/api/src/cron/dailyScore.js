@@ -289,7 +289,6 @@ export async function runDailyScoreOnce({ date, leagues, lookbackDays, modelVers
         oddsOk: Boolean(slate?.meta?.odds?.ok),
         games: gatedGames,
       });
-      });
 
       // 2) Score completed finals (market-aware, based on recommendedBet)
       const report = scoreSlate(games);
