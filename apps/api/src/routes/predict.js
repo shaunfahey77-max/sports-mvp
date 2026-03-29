@@ -2167,18 +2167,27 @@ function buildNhlTeamStatsFromHistory(history, endDateYYYYMMDD, recentN = 10) {
     }
 
     const recent = games.slice(0, recentN);
-    let rWins = 0, rMargin = 0;
+    let rWins = 0, rMargin = 0, rpf = 0, rpa = 0;
     for (const gg of recent) {
       if (gg.my > gg.opp) rWins++;
       rMargin += gg.my - gg.opp;
+      rpf += gg.my;
+      rpa += gg.opp;
     }
+
+    // Pythagorean expected win% — more stable than raw win%.
+    // Regresses toward mean better; less susceptible to lucky hot streaks.
+    const pythWinPct = pf > 0 || pa > 0 ? (pf * pf) / (pf * pf + pa * pa) : 0.5;
+    const pythRecentWinPct = rpf > 0 || rpa > 0 ? (rpf * rpf) / (rpf * rpf + rpa * rpa) : null;
 
     out.set(id, {
       ok: true,
       played,
       winPct: wins / played,
+      pythWinPct,
       marginPerGame: (pf - pa) / played,
       recentWinPct: recent.length ? rWins / recent.length : null,
+      pythRecentWinPct,
       recentMargin: recent.length ? rMargin / recent.length : null,
       pointsForPerGame: pf / played,
       pointsAgainstPerGame: pa / played,
@@ -2190,22 +2199,32 @@ function buildNhlTeamStatsFromHistory(history, endDateYYYYMMDD, recentN = 10) {
 function nhlEdge(home, away) {
   if (!home?.ok || !away?.ok) return NaN;
 
-  const wWin = 0.48;
-  const wMargin = 0.32;
-  const wRecent = 0.20;
+  // Pythagorean win% is the primary quality signal (stable, mean-regressing).
+  // Reduced margin weight — NHL goal margins are tiny and noisy vs basketball.
+  const wWin = 0.55;
+  const wMargin = 0.15;
+  const wRecent = 0.30;
 
-  const winDiff = home.winPct - away.winPct;
-  const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 3.2, -1, 1);
+  // Use Pythagorean expected win% instead of raw win% to reduce streak-chasing.
+  const winDiff = home.pythWinPct - away.pythWinPct;
+
+  // Hockey margins are 0-2 goals/game; /3.2 was a basketball scale constant.
+  const marginScaled = clampNum((home.marginPerGame - away.marginPerGame) / 1.2, -1, 1);
+
   const recentDiff =
-    (Number.isFinite(home.recentWinPct) ? home.recentWinPct : 0.5) -
-    (Number.isFinite(away.recentWinPct) ? away.recentWinPct : 0.5);
+    (Number.isFinite(home.pythRecentWinPct) ? home.pythRecentWinPct : 0.5) -
+    (Number.isFinite(away.pythRecentWinPct) ? away.pythRecentWinPct : 0.5);
 
-  const homeAdv = 0.012;
+  // NHL home teams win ~55% of games. Old value of 0.012 was negligible.
+  const homeAdv = 0.06;
   return wWin * winDiff + wMargin * marginScaled + wRecent * recentDiff + homeAdv;
 }
-function nhlProbFromEdge(edge, edgeScale = 0.17) {
+function nhlProbFromEdge(edge, edgeScale = 0.22) {
+  // edgeScale 0.17→0.22: model was overconfident given weak raw feature signal.
+  // Clamp widened [0.36,0.74]→[0.30,0.70]: premiumSelection applies CALIBRATION_FACTOR
+  // on top; the old tight clamp caused double-compression, crushing edge signal.
   if (!Number.isFinite(edge)) return 0.5;
-  return clampNum(sigmoid(edge / edgeScale), 0.36, 0.74);
+  return clampNum(sigmoid(edge / edgeScale), 0.30, 0.70);
 }
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
