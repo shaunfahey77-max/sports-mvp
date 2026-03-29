@@ -1,7 +1,7 @@
 // apps/api/src/cron/dailyScore.js
 import "dotenv/config";
 import cron from "node-cron";
-import { writeSlatePicksToLedger, upsertPerformanceDaily } from "../db/dailyLedger.js";
+import { writeSlatePicksToLedger, upsertPerformanceDaily, updatePickResultsBatch } from "../db/dailyLedger.js";
 import { MARKET_GATING } from "../config/premiumStrategy.js";
 
 /**
@@ -292,6 +292,24 @@ export async function runDailyScoreOnce({ date, leagues, lookbackDays, modelVers
         oddsOk: Boolean(slate?.meta?.odds?.ok),
         games: gatedGames,
       });
+
+      // 1.5) Write individual pick results back to picks_daily.result
+      // scoreSlate writes aggregates to performance_daily but never updates individual rows.
+      // This pass grades each recommended bet and persists result=WIN/LOSS/PUSH per row.
+      const pickResultRows = [];
+      for (const g of gatedGames) {
+        const bet = g?.recommendedBet || null;
+        if (!bet) continue;
+        const graded = gradeRecommendedBet(g);
+        if (!["WIN", "LOSS", "PUSH"].includes(graded.result)) continue;
+        const gk = g?.gameKey || g?.game_key || g?.id || g?.gameId || g?.eventId;
+        if (!gk) continue;
+        const mkt = String(bet?.marketType || "moneyline").toLowerCase();
+        pickResultRows.push({ date: ymd, league, game_key: String(gk), market: mkt, result: graded.result });
+      }
+      if (pickResultRows.length > 0) {
+        await updatePickResultsBatch(pickResultRows);
+      }
 
       // 2) Score completed finals (market-aware, based on recommendedBet)
       const report = scoreSlate(games);
