@@ -5,7 +5,7 @@
   export const MARKET_GATING = {
     nba:   { moneyline: true,  spread: false, total: false },
     ncaam: { moneyline: false, spread: false, total: true  },
-    nhl:   { moneyline: true,  spread: true,  total: true  },
+    nhl:   { moneyline: true,  spread: false, total: true  },
   };
 
   // Global fallback thresholds for any league/market not explicitly defined in MARKET_RULES
