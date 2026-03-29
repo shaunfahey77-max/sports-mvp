@@ -2,6 +2,7 @@
 import "dotenv/config";
 import cron from "node-cron";
 import { writeSlatePicksToLedger, upsertPerformanceDaily, updatePickResultsBatch } from "../db/dailyLedger.js";
+  import { finalizePickCloses } from "../jobs/finalizePickCloses.js";
 import { MARKET_GATING } from "../config/premiumStrategy.js";
 
 /**
@@ -308,10 +309,17 @@ export async function runDailyScoreOnce({ date, leagues, lookbackDays, modelVers
         pickResultRows.push({ date: ymd, league, game_key: String(gk), market: mkt, result: graded.result });
       }
       if (pickResultRows.length > 0) {
-        await updatePickResultsBatch(pickResultRows);
-      }
+          await updatePickResultsBatch(pickResultRows);
+        }
 
-      // 2) Score completed finals (market-aware, based on recommendedBet)
+        // Wire CLV finalization — updates close_odds/close_line from market_snapshots
+        try {
+          await finalizePickCloses({ date: ymd, leagues: [league] });
+        } catch (clvErr) {
+          console.warn(`[CLV] finalizePickCloses failed for ${league} ${ymd}:`, clvErr?.message || clvErr);
+        }
+
+        // 2) Score completed finals (market-aware, based on recommendedBet)
       const report = scoreSlate(games);
       const counts = report?.counts || {};
       const metrics = report?.metrics || {};
