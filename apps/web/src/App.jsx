@@ -15,6 +15,7 @@ import TournamentCenter from "./pages/TournamentCenter";
 import MyBets from "./pages/MyBets";
 import Login from "./pages/Login";
 import EvScanner from "./pages/EvScanner";
+  import TrackRecord from "./pages/TrackRecord";
 
 function normalizeLeague(raw) {
   const l = String(raw || "nba").toLowerCase();
@@ -107,6 +108,9 @@ export default function App() {
           <Route path="/:league/hub" element={<HubLegacyRedirect />} />
 
           <Route path="/ev" element={<ProtectedRoute><EvScanner /></ProtectedRoute>} />
+
+          {/* Public trust page — no login required */}
+          <Route path="/track-record" element={<TrackRecord />} />
 
           {/* Catch-all */}
           <Route path="*" element={<Navigate to="/" replace />} />
