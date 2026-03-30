@@ -78,36 +78,43 @@ import {
    * All scoring and filtering uses these values, not raw candidate fields.
    */
   function calibratedMetrics(candidate) {
-    const odds = num(candidate?.odds);
-    const rawModelProb = normalizeProb(candidate?.modelProb);
-    const modelProb = compressProb(rawModelProb);
-    const impliedProb = impliedProbFromAmericanOdds(odds);
+      const odds = num(candidate?.odds);
+      // rawWinProb is stored by computeMarketEV before market anchoring; fall back to modelProb
+      const rawModelProb = normalizeProb(candidate?.rawWinProb ?? candidate?.modelProb);
+      const modelProb = compressProb(rawModelProb);
+      const impliedProb = impliedProbFromAmericanOdds(odds);
 
-    const edge =
-      impliedProb == null
-        ? (num(candidate?.edge) ?? 0)
-        : modelProb - impliedProb;
+      // Candidates from buildMarketBundle already have edge/evForStake100/kellyHalf computed
+      // by computeMarketEV with market anchoring (single calibration). Recomputing from a
+      // further compressProb() call causes double-calibration: a legitimate +6% NBA edge
+      // becomes negative after the second pass, failing every threshold check.
+      const preEdge = num(candidate?.edge);
+      const edge = Number.isFinite(preEdge)
+        ? preEdge
+        : impliedProb == null
+          ? 0
+          : modelProb - impliedProb;
 
-    const evForStake100 =
-      evFor100(modelProb, odds) ??
-      num(candidate?.evForStake100) ??
-      0;
+      const preEv = num(candidate?.evForStake100);
+      const evForStake100 = Number.isFinite(preEv)
+        ? preEv
+        : (evFor100(modelProb, odds) ?? 0);
 
-    const kellyHalf =
-      kellyHalfFromProb(modelProb, odds) ??
-      num(candidate?.kellyHalf) ??
-      0;
+      const preKelly = num(candidate?.kellyHalf);
+      const kellyHalf = Number.isFinite(preKelly)
+        ? preKelly
+        : (kellyHalfFromProb(modelProb, odds) ?? 0);
 
-    return {
-      rawModelProb,
-      modelProb,
-      impliedProb,
-      edge,
-      evForStake100,
-      kellyHalf,
-      calibrationFactor: CALIBRATION_FACTOR,
-    };
-  }
+      return {
+        rawModelProb,
+        modelProb,
+        impliedProb,
+        edge,
+        evForStake100,
+        kellyHalf,
+        calibrationFactor: CALIBRATION_FACTOR,
+      };
+    }
 
   /**
    * Single threshold gate. Does NOT depend on upstream tier assignment.
