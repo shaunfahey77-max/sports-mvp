@@ -980,6 +980,7 @@ function recommendedTierFromCandidate(c) {
   if (e >= 0.10 && ev >= 12 && kh >= 0.015) return "ELITE";
   if (e >= 0.07 && ev >= 8 && kh >= 0.010) return "STRONG";
   if (e >= 0.05 && ev >= 5 && kh >= 0.0075) return "EDGE";
+  if (e >= 0.025 && ev >= 2 && kh >= 0.004) return "LEAN";
 
   return "PASS";
 }
@@ -1390,9 +1391,9 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
   }
  else
       if (league === "nba") {
-        minEdge = 0.08;
-        minEv = 8;
-        minKellyHalf = 0.02;
+        minEdge = 0.03;
+        minEv = 4;
+        minKellyHalf = 0.01;
       } else {
         minEdge = 0.04;
         minEv = 3;
@@ -1855,7 +1856,7 @@ function modelOnlyMoneylinePick(pHome, league) {
 
 async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
   const mv = modelVersion === "v1" ? "v1" : "v2";
-  const key = `PREDV20:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
+  const key = `PREDV21:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2318,7 +2319,7 @@ function nhlProbFromEdge(edge, edgeScale = 0.22) {
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   const historyDays = clampNum(Number(windowDays) || 40, 14, 120);
-  const key = `PREDV20:nhl:${dateYYYYMMDD}:w${historyDays}`;
+  const key = `PREDV21:nhl:${dateYYYYMMDD}:w${historyDays}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2667,7 +2668,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
   const historyDays = clampNum(Number(windowDays) || 45, 14, 90);
   const isT = Boolean(tournamentMode);
   const tournamentPhase = getTournamentPhase(dateYYYYMMDD, isT);
-  const key = `PREDV20:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
+  const key = `PREDV21:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
