@@ -50,6 +50,27 @@ const ODDS_SPORT_NBA = String(process.env.ODDS_SPORT_NBA || "basketball_nba");
 const ODDS_SPORT_NCAAM = String(process.env.ODDS_SPORT_NCAAM || "basketball_ncaab");
 const ODDS_SPORT_NHL = String(process.env.ODDS_SPORT_NHL || "icehockey_nhl");
 
+  /**
+   * NBA team name aliases — bridges BallDontLie full_name vs The Odds API display names.
+   * The Odds API abbreviates some city names (e.g. "LA Clippers") while BallDontLie
+   * uses the NBA official full names (e.g. "Los Angeles Clippers"). Both directions
+   * are stored so we can resolve whichever side differs.
+   */
+  const NBA_TEAM_ALIASES = {
+    "la clippers": "los angeles clippers",
+    "los angeles clippers": "la clippers",
+    "la lakers": "los angeles lakers",
+    "los angeles lakers": "la lakers",
+    "gs warriors": "golden state warriors",
+    "golden state warriors": "gs warriors",
+    "okc thunder": "oklahoma city thunder",
+    "oklahoma city thunder": "okc thunder",
+    "sa spurs": "san antonio spurs",
+    "san antonio spurs": "sa spurs",
+    "nola pelicans": "new orleans pelicans",
+    "new orleans pelicans": "nola pelicans",
+  };
+
 /* ----------------------------
    Cache / In-flight
 ---------------------------- */
@@ -832,9 +853,69 @@ function lookupVegas(vegasMap, homeName, awayName) {
   if (rev) return invertVegasRow(rev);
 
   return null;
-}
+  }
 
-function normalizeStatusForScoring(rawState) {
+  /**
+   * NBA-specific odds lookup. Falls back through three tiers:
+   * 1. Exact normalized match (same as lookupVegas)
+   * 2. Explicit alias match (LA Clippers ↔ Los Angeles Clippers, etc.)
+   * 3. Team nickname suffix match (last word) as last resort
+   *
+   * NHL and NCAAM are NOT affected — they continue to use lookupVegas directly.
+   */
+  function lookupVegasNba(vegasMap, homeName, awayName) {
+    if (!vegasMap || !(vegasMap instanceof Map)) return null;
+
+    const homeNorm = normTeamName(homeName);
+    const awayNorm = normTeamName(awayName);
+
+    // Tier 1: exact match (fast path)
+    const exact = vegasMap.get(`${homeNorm}|${awayNorm}`) || null;
+    if (exact) return exact;
+    const exactRev = vegasMap.get(`${awayNorm}|${homeNorm}`) || null;
+    if (exactRev) return invertVegasRow(exactRev);
+
+    // Tier 2: explicit alias substitution
+    const homeAlias = NBA_TEAM_ALIASES[homeNorm] || null;
+    const awayAlias = NBA_TEAM_ALIASES[awayNorm] || null;
+    const homeVariants = [homeNorm, homeAlias].filter(Boolean);
+    const awayVariants = [awayNorm, awayAlias].filter(Boolean);
+
+    for (const h of homeVariants) {
+      for (const a of awayVariants) {
+        if (h === homeNorm && a === awayNorm) continue; // already tried exact
+        const r = vegasMap.get(`${h}|${a}`) || null;
+        if (r) return r;
+        const rr = vegasMap.get(`${a}|${h}`) || null;
+        if (rr) return invertVegasRow(rr);
+      }
+    }
+
+    // Tier 3: team nickname (last word) fuzzy match — handles any remaining city-name variants
+    const lastWord = (s) => { const w = s.trim().split(/\s+/); return w[w.length - 1]; };
+    const homeNick = lastWord(homeNorm);
+    const awayNick = lastWord(awayNorm);
+
+    if (homeNick.length >= 4 && awayNick.length >= 4) {
+      for (const [key, val] of vegasMap.entries()) {
+        const [mh, ma] = key.split("|");
+        if (!mh || !ma) continue;
+        if (lastWord(mh) === homeNick && lastWord(ma) === awayNick) {
+          console.log(`[NBA odds] Fuzzy match: "${key}" for "${homeNorm}|${awayNorm}"`);
+          return val;
+        }
+        if (lastWord(mh) === awayNick && lastWord(ma) === homeNick) {
+          console.log(`[NBA odds] Fuzzy match (reversed): "${key}" for "${homeNorm}|${awayNorm}"`);
+          return invertVegasRow(val);
+        }
+      }
+    }
+
+    console.warn(`[NBA odds] No match: "${homeNorm}|${awayNorm}". Keys: [${Array.from(vegasMap.keys()).slice(0, 6).join(" | ")}]`);
+    return null;
+  }
+
+  function normalizeStatusForScoring(rawState) {
   const s = String(rawState || "").toLowerCase().trim();
   if (!s) return "Scheduled";
   if (s === "post" || s === "final" || s.includes("final") || s.includes("post")) return "Final";
@@ -1828,7 +1909,7 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
       const statEdge = nbaEdge(homeS, awayS, mv);
       const pHomeModel = nbaProbFromEdge(statEdge, 0.11);
 
-      const vegasRow = odds.ok ? lookupVegas(oddsMap, g.home.name, g.away.name) : null;
+      const vegasRow = odds.ok ? lookupVegasNba(oddsMap, g.home.name, g.away.name) : null;
       const pHomeMarket = Number.isFinite(vegasRow?.h2h?.pHome) ? vegasRow.h2h.pHome : null;
 
       let pHomeAnchored = pHomeModel;
