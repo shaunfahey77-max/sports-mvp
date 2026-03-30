@@ -1990,7 +1990,8 @@ if (!pick?.pick && allowModelOnly && (!odds.ok || !vegasRow)) {
   }
 }
 
-if (!pick.pick) noBetCount++;
+console.warn(`[NBA bet] ${g?.home?.abbr}@${g?.away?.abbr} modelOnly=${modelOnly} pickPick=${JSON.stringify(pick?.pick)} allowModelOnly=${allowModelOnly} oddsOk=${odds.ok} hasVegas=${!!vegasRow} pHomeAnchored=${pHomeAnchored?.toFixed?.(4)}`);
+        if (!pick.pick) noBetCount++;
 
       const why = buildWhy({
         marketPick: pick.pick,
