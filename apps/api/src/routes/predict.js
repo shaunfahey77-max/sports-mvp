@@ -1834,10 +1834,18 @@ function buildWhy({ marketPick, notes = [], deltas = [] }) {
    - These picks are flagged as "modelOnly" and do not include odds/EV/Kelly.
 ---------------------------- */
 function modelOnlyMoneylinePick(pHome, league) {
-  return null;
-}
+    const p = Number(pHome);
+    if (!Number.isFinite(p)) return null;
+    // Require 54%+ model confidence before making a model-only pick.
+    // This threshold mirrors the calibrated ~54% edge from the validated
+    // +6.08% ROI model. Below that, no meaningful directional edge exists
+    // without market-odds anchoring.
+    if (p > 0.54) return { marketType: "moneyline", side: "home", line: null };
+    if (p < 0.46) return { marketType: "moneyline", side: "away", line: null };
+    return null; // 46–54%: too close to call model-only
+  }
 
-function pickStringFromPickObj(pickObj) {
+  function pickStringFromPickObj(pickObj) {
   const p = pickObj?.pick;
   if (!p) return "PASS";
   if (p.marketType === "total") return p.side === "over" ? "over" : p.side === "under" ? "under" : "PASS";
