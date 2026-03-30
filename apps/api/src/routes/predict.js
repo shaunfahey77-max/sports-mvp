@@ -1856,7 +1856,7 @@ function modelOnlyMoneylinePick(pHome, league) {
 
 async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
   const mv = modelVersion === "v1" ? "v1" : "v2";
-  const key = `PREDV21:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
+  const key = `PREDV22:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2319,7 +2319,7 @@ function nhlProbFromEdge(edge, edgeScale = 0.22) {
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   const historyDays = clampNum(Number(windowDays) || 40, 14, 120);
-  const key = `PREDV21:nhl:${dateYYYYMMDD}:w${historyDays}`;
+  const key = `PREDV22:nhl:${dateYYYYMMDD}:w${historyDays}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2668,7 +2668,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
   const historyDays = clampNum(Number(windowDays) || 45, 14, 90);
   const isT = Boolean(tournamentMode);
   const tournamentPhase = getTournamentPhase(dateYYYYMMDD, isT);
-  const key = `PREDV21:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
+  const key = `PREDV22:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
