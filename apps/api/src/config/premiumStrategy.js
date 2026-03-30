@@ -92,7 +92,7 @@
 
   // Minimum premium score required for the top candidate to become the recommended pick.
   export const MIN_SCORE = {
-    nba: 3.0,
+    nba: 1.5,
     ncaam: 2.0,
     nhl: 3.0,
   };
