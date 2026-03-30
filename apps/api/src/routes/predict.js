@@ -1906,11 +1906,20 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
       },
     });
 
-    const games = [];
-    let noBetCount = 0;
-    let modelOnlyCount = 0;
+    console.warn(`[NBA diag 2026-03-30] histRows=${histRows.length} teamStats.size=${teamStats.size} slate=${slate.length}`);
+      if (histRows.length > 0 && teamStats.size === 0) {
+        const s0 = histRows[0];
+        console.warn(`[NBA diag] histRows[0]: home_score=${s0?.home_team_score} visitor_score=${s0?.visitor_team_score} homeAbbr=${s0?.home_team?.abbreviation} status=${s0?.status}`);
+      } else if (teamStats.size > 0 && slate.length > 0) {
+        const s0 = slate[0];
+        console.warn(`[NBA diag] slate[0].home.id=${s0?.home?.id}, teamStats has that key: ${teamStats.has(s0?.home?.id)}, sample keys: [${Array.from(teamStats.keys()).slice(0,4).join(",")}]`);
+      }
 
-    for (const g of slate) {
+      const games = [];
+      let noBetCount = 0;
+      let modelOnlyCount = 0;
+
+      for (const g of slate) {
       const homeS = teamStats.get(g.home.id) || { ok: false };
       const awayS = teamStats.get(g.away.id) || { ok: false };
 
