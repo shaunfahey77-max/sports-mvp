@@ -1855,7 +1855,7 @@ function modelOnlyMoneylinePick(pHome, league) {
 
 async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
   const mv = modelVersion === "v1" ? "v1" : "v2";
-  const key = `PREDV18:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
+  const key = `PREDV19:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -1906,15 +1906,6 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
       },
     });
 
-    console.warn(`[NBA diag 2026-03-30] histRows=${histRows.length} teamStats.size=${teamStats.size} slate=${slate.length}`);
-      if (histRows.length > 0 && teamStats.size === 0) {
-        const s0 = histRows[0];
-        console.warn(`[NBA diag] histRows[0]: home_score=${s0?.home_team_score} visitor_score=${s0?.visitor_team_score} homeAbbr=${s0?.home_team?.abbreviation} status=${s0?.status}`);
-      } else if (teamStats.size > 0 && slate.length > 0) {
-        const s0 = slate[0];
-        console.warn(`[NBA diag] slate[0].home.id=${s0?.home?.id}, teamStats has that key: ${teamStats.has(s0?.home?.id)}, sample keys: [${Array.from(teamStats.keys()).slice(0,4).join(",")}]`);
-      }
-
       const games = [];
       let noBetCount = 0;
       let modelOnlyCount = 0;
@@ -1925,7 +1916,6 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
 
       const statEdge = nbaEdge(homeS, awayS, mv);
       const pHomeModel = nbaProbFromEdge(statEdge, 0.11);
-      console.warn(`[NBA game] ${g.home.abbr}@${g.away.abbr} edge=${Number.isFinite(statEdge)?statEdge.toFixed(4):'NaN'} pHome=${pHomeModel.toFixed(4)} homeOk=${homeS?.ok} awayOk=${awayS?.ok} hGames=${homeS?.played} aGames=${awayS?.played}`);
 
       const vegasRow = odds.ok ? lookupVegasNba(oddsMap, g.home.name, g.away.name) : null;
       const pHomeMarket = Number.isFinite(vegasRow?.h2h?.pHome) ? vegasRow.h2h.pHome : null;
@@ -2328,7 +2318,7 @@ function nhlProbFromEdge(edge, edgeScale = 0.22) {
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   const historyDays = clampNum(Number(windowDays) || 40, 14, 120);
-  const key = `PREDV18:nhl:${dateYYYYMMDD}:w${historyDays}`;
+  const key = `PREDV19:nhl:${dateYYYYMMDD}:w${historyDays}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
