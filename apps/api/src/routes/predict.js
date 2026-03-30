@@ -561,6 +561,11 @@ function redactOddsUrl(url) {
 function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
   const sport = String(sportKey || "").trim();
   if (!sport) throw new Error("Missing Odds API sportKey");
+  // Historical: drop bookmaker filter (unsupported); T22:00:00Z = 6pm ET, all pre-game lines posted
+  const bookmakerParam = (ODDS_COMPARISON_ALL_BOOKS || historical)
+    ? ""
+    : `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`;
+
 
   const common =
     `apiKey=${encodeURIComponent(ODDS_API_KEY)}` +
@@ -568,10 +573,10 @@ function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
     `&markets=${encodeURIComponent(ODDS_MARKETS)}` +
     `&oddsFormat=${encodeURIComponent(ODDS_ODDS_FORMAT)}` +
     `&dateFormat=iso` +
-    (ODDS_COMPARISON_ALL_BOOKS ? "" : `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`);
+    bookmakerParam;
 
   if (historical) {
-    const snap = `${ymd}T12:00:00Z`;
+    const snap = `${ymd}T22:00:00Z`;
     return `${ODDS_API_BASE}/historical/sports/${sport}/odds?date=${encodeURIComponent(snap)}&${common}`;
   }
 
@@ -740,6 +745,25 @@ async function fetchVegasForLeagueDate(league, ymd) {
       const pAwayRaw = americanToImpliedProb(oAway?.price);
       const nv = normalizeNoVig(pHomeRaw, pAwayRaw);
       out.h2h = { home: oHome?.price ?? null, away: oAway?.price ?? null, pHome: nv.pA, pAway: nv.pB, vig: nv.vig };
+    }
+
+    // Fallback: if primary bookmaker lacked h2h, try every returned bookmaker
+    if ((!out.h2h || out.h2h.home == null || out.h2h.away == null) && bks.length > 0) {
+      for (const fbBk of bks) {
+        const fbMarkets = Array.isArray(fbBk?.markets) ? fbBk.markets : [];
+        const fbH2h = fbMarkets.find((m) => m?.key === "h2h");
+        if (fbH2h?.outcomes?.length >= 2) {
+          const oH = fbH2h.outcomes.find((o) => normTeamName(o?.name) === home);
+          const oA = fbH2h.outcomes.find((o) => normTeamName(o?.name) === away);
+          if (oH?.price != null && oA?.price != null) {
+            const pHR = americanToImpliedProb(oH.price);
+            const pAR = americanToImpliedProb(oA.price);
+            const nvFb = normalizeNoVig(pHR, pAR);
+            out.h2h = { home: oH.price, away: oA.price, pHome: nvFb.pA, pAway: nvFb.pB, vig: nvFb.vig };
+            break;
+          }
+        }
+      }
     }
 
     const sp = markets.find((m) => m?.key === "spreads");
@@ -1856,7 +1880,7 @@ function modelOnlyMoneylinePick(pHome, league) {
 
 async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
   const mv = modelVersion === "v1" ? "v1" : "v2";
-  const key = `PREDV22:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
+  const key = `PREDV23:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2319,7 +2343,7 @@ function nhlProbFromEdge(edge, edgeScale = 0.22) {
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   const historyDays = clampNum(Number(windowDays) || 40, 14, 120);
-  const key = `PREDV22:nhl:${dateYYYYMMDD}:w${historyDays}`;
+  const key = `PREDV23:nhl:${dateYYYYMMDD}:w${historyDays}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2668,7 +2692,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
   const historyDays = clampNum(Number(windowDays) || 45, 14, 90);
   const isT = Boolean(tournamentMode);
   const tournamentPhase = getTournamentPhase(dateYYYYMMDD, isT);
-  const key = `PREDV22:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
+  const key = `PREDV23:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
