@@ -1925,6 +1925,7 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
 
       const statEdge = nbaEdge(homeS, awayS, mv);
       const pHomeModel = nbaProbFromEdge(statEdge, 0.11);
+      console.warn(`[NBA game] ${g.home.abbr}@${g.away.abbr} edge=${Number.isFinite(statEdge)?statEdge.toFixed(4):'NaN'} pHome=${pHomeModel.toFixed(4)} homeOk=${homeS?.ok} awayOk=${awayS?.ok} hGames=${homeS?.played} aGames=${awayS?.played}`);
 
       const vegasRow = odds.ok ? lookupVegasNba(oddsMap, g.home.name, g.away.name) : null;
       const pHomeMarket = Number.isFinite(vegasRow?.h2h?.pHome) ? vegasRow.h2h.pHome : null;
