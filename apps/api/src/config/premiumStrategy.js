@@ -3,27 +3,27 @@
   // premiumSelection.js reads from this file — no threshold values elsewhere.
 
   export const MARKET_GATING = {
-    nba:   { moneyline: true,  spread: false, total: false },
+    nba: { moneyline: true, spread: false, total: false },
     ncaam: { moneyline: false, spread: false, total: true  },
     nhl:   { moneyline: true,  spread: false, total: true  },
   };
 
   // Global fallback thresholds for any league/market not explicitly defined in MARKET_RULES
   export const THRESHOLDS = {
-    minEvForStake100: 7.5,
-    minKellyHalf: 0.02,
-    minEdge: 0.04,
-  };
+  minEvForStake100: 5,
+  minKellyHalf: 0.015,
+  minEdge: 0.03,
+};
 
   export const MARKET_RULES = {
     nba: {
       moneyline: {
-        minEvForStake100: 6,
-        minKellyHalf: 0.015,
-        minEdge: 0.03,
-        minOdds: -200,
-        maxOdds: 200,
-      },
+      minOdds: -400,
+      maxOdds: 500,
+      minEdge: 0.02,
+      minEvForStake100: 4,
+      minKellyHalf: 0.01
+    },
       spread: {
         minEvForStake100: 8,
         minKellyHalf: 0.02,
@@ -48,7 +48,7 @@
         maxOdds: 140,
       },
       spread: {
-        minEvForStake100: 6,
+        minEvForStake100: 4,
         minKellyHalf: 0.015,
         minEdge: 0.02,
         minOdds: -260,
@@ -92,7 +92,7 @@
 
   // Minimum premium score required for the top candidate to become the recommended pick.
   export const MIN_SCORE = {
-    nba: 1.5,
+    nba: 1.0,
     ncaam: 2.0,
     nhl: 3.0,
   };

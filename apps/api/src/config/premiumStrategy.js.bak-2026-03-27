@@ -1,0 +1,110 @@
+export const MARKET_GATING = {
+  nba:   { moneyline: false, spread: true,  total: false },
+  ncaam: { moneyline: false, spread: false, total: true  },
+  nhl:   { moneyline: true,  spread: false, total: false },
+};
+
+export const THRESHOLDS = {
+  minEvForStake100: 7.5,
+  minKellyHalf: 0.02,
+  minEdge: 0.04,
+  allowedTiers: ["ELITE"],
+};
+
+export const MARKET_RULES = {
+  nba: {
+    moneyline: {
+      minEvForStake100: 10,
+      minKellyHalf: 0.025,
+      minEdge: 0.06,
+      minOdds: -175,
+      maxOdds: 180,
+      allowedTiers: ["ELITE"],
+    },
+    spread: {
+      minEvForStake100: 10,
+      minKellyHalf: 0.02,
+      minEdge: 0.06,
+      minOdds: -140,
+      maxOdds: 180,
+      allowedTiers: ["ELITE"],
+    },
+    total: {
+      minEvForStake100: 10,
+      minKellyHalf: 0.02,
+      minEdge: 0.06,
+      minOdds: -140,
+      maxOdds: 140,
+      allowedTiers: ["ELITE"],
+    },
+  },
+  nhl: {
+    moneyline: {
+      minEvForStake100: 10,
+      minKellyHalf: 0.03,
+      minEdge: 0.06,
+      minOdds: -165,
+      maxOdds: 150,
+      allowedTiers: ["ELITE"],
+    },
+    spread: {
+      minEvForStake100: 7.5,
+      minKellyHalf: 0.02,
+      minEdge: 0.04,
+      minOdds: -200,
+      maxOdds: 180,
+      allowedTiers: ["ELITE"],
+    },
+    total: {
+      minEvForStake100: 7,
+      minKellyHalf: 0.02,
+      minEdge: 0.04,
+      minOdds: -160,
+      maxOdds: 140,
+      allowedTiers: ["ELITE"],
+    },
+  },
+  ncaam: {
+    total: {
+      minEvForStake100: 14,
+      minKellyHalf: 0.035,
+      minEdge: 0.10,
+      minOdds: -130,
+      maxOdds: 105,
+      allowedTiers: ["ELITE"],
+    },
+  },
+};
+
+export const HISTORICAL_MARKET_ROI = {
+  nba: {
+    moneyline: -0.0176,
+    spread: -0.0031,
+    total: -0.0193,
+  },
+  ncaam: {
+    moneyline: -0.2046,
+    spread: -0.0303,
+    total: 0.0133,
+  },
+  nhl: {
+    moneyline: -0.0086,
+    spread: 0.0048,
+    total: -0.0580,
+  },
+};
+
+export const RANKING_WEIGHTS = {
+  ev: 0.45,
+  kelly: 0.25,
+  modelProb: 0.20,
+  marketRoi: 0.10,
+};
+
+export const TIER_RANK = {
+  PASS: 0,
+  LEAN: 1,
+  EDGE: 2,
+  STRONG: 3,
+  ELITE: 4,
+};

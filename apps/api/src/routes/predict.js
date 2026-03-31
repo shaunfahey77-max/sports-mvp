@@ -561,7 +561,7 @@ function redactOddsUrl(url) {
 function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
   const sport = String(sportKey || "").trim();
   if (!sport) throw new Error("Missing Odds API sportKey");
-  // Historical: drop bookmaker filter (unsupported); T22:00:00Z = 6pm ET, all pre-game lines posted
+  // Historical: drop bookmaker filter (unsupported); T18:00:00Z = 6pm ET, all pre-game lines posted
   const bookmakerParam = (ODDS_COMPARISON_ALL_BOOKS || historical)
     ? ""
     : `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`;
@@ -576,7 +576,7 @@ function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
     bookmakerParam;
 
   if (historical) {
-    const snap = `${ymd}T22:00:00Z`;
+    const snap = `${ymd}T18:00:00Z`;
     return `${ODDS_API_BASE}/historical/sports/${sport}/odds?date=${encodeURIComponent(snap)}&${common}`;
   }
 
@@ -866,14 +866,30 @@ function invertVegasRow(row) {
   return out;
 }
 
+
 function lookupVegas(vegasMap, homeName, awayName) {
+
   if (!vegasMap || !(vegasMap instanceof Map)) return null;
-  const key = `${normTeamName(homeName)}|${normTeamName(awayName)}`;
-  const direct = vegasMap.get(key) || null;
+  const homeNorm = normTeamName(homeName);
+  const awayNorm = normTeamName(awayName);
+  const key = `${homeNorm}|${awayNorm}`;
+  const direct =
+  vegasMap.get(key) ||
+  vegasMap.get(key.replace("canadiens", "canadiens").replace("montral", "montreal")) ||
+  null;
   if (direct) return direct;
 
   const revKey = `${normTeamName(awayName)}|${normTeamName(homeName)}`;
   const rev = vegasMap.get(revKey) || null;
+  // 🔧 fallback: fuzzy match on partial names
+  if (!direct && !rev) {
+    for (const k of vegasMap.keys()) {
+      if (k.includes(homeNorm.split(" ").pop()) && k.includes(awayNorm.split(" ").pop())) {
+        return vegasMap.get(k);
+      }
+    }
+  }
+
   if (rev) return invertVegasRow(rev);
 
   return null;
@@ -902,16 +918,22 @@ function lookupVegas(vegasMap, homeName, awayName) {
     // Tier 2: explicit alias substitution
     const homeAlias = NBA_TEAM_ALIASES[homeNorm] || null;
     const awayAlias = NBA_TEAM_ALIASES[awayNorm] || null;
-    const homeVariants = [homeNorm, homeAlias].filter(Boolean);
-    const awayVariants = [awayNorm, awayAlias].filter(Boolean);
+
+    const homeVariants = Array.from(new Set([homeNorm, homeAlias].filter(Boolean)));
+    const awayVariants = Array.from(new Set([awayNorm, awayAlias].filter(Boolean)));
 
     for (const h of homeVariants) {
       for (const a of awayVariants) {
-        if (h === homeNorm && a === awayNorm) continue; // already tried exact
-        const r = vegasMap.get(`${h}|${a}`) || null;
-        if (r) return r;
-        const rr = vegasMap.get(`${a}|${h}`) || null;
-        if (rr) return invertVegasRow(rr);
+        const key1 = `${h}|${a}`;
+        const key2 = `${a}|${h}`;
+
+        if (vegasMap.has(key1)) {
+          return vegasMap.get(key1);
+        }
+
+        if (vegasMap.has(key2)) {
+          return invertVegasRow(vegasMap.get(key2));
+        }
       }
     }
 
@@ -925,17 +947,13 @@ function lookupVegas(vegasMap, homeName, awayName) {
         const [mh, ma] = key.split("|");
         if (!mh || !ma) continue;
         if (lastWord(mh) === homeNick && lastWord(ma) === awayNick) {
-          console.log(`[NBA odds] Fuzzy match: "${key}" for "${homeNorm}|${awayNorm}"`);
           return val;
         }
         if (lastWord(mh) === awayNick && lastWord(ma) === homeNick) {
-          console.log(`[NBA odds] Fuzzy match (reversed): "${key}" for "${homeNorm}|${awayNorm}"`);
           return invertVegasRow(val);
         }
       }
     }
-
-    console.warn(`[NBA odds] No match: "${homeNorm}|${awayNorm}". Keys: [${Array.from(vegasMap.keys()).slice(0, 6).join(" | ")}]`);
     return null;
   }
 
@@ -1039,104 +1057,95 @@ function americanOddsSortValue(odds) {
 }
 
 function buildOddsComparisonForMarketType(marketType, vegasRow) {
-  const mt = String(marketType || "").toLowerCase();
-  const books = Array.isArray(vegasRow?.books) ? vegasRow.books : [];
-  if (!mt || !books.length) return null;
+  if (!marketType || !vegasRow) return null;
 
+  const mt = String(marketType || "").toLowerCase();
   const rows = [];
 
-  for (const b of books) {
-    if (!b) continue;
+  if (mt === "moneyline") {
+    const homeOdds = Number(vegasRow?.h2h?.home);
+    const awayOdds = Number(vegasRow?.h2h?.away);
 
-    if (mt === "moneyline") {
-      const homeOdds = Number(b?.homeOdds);
-      const awayOdds = Number(b?.awayOdds);
-
-      if (Number.isFinite(homeOdds)) {
-        rows.push({
-          bookKey: b?.bookmaker ?? null,
-          book: b?.bookTitle ?? b?.bookmaker ?? null,
-          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
-          side: "home",
-          odds: homeOdds,
-          line: null,
-        });
-      }
-
-      if (Number.isFinite(awayOdds)) {
-        rows.push({
-          bookKey: b?.bookmaker ?? null,
-          book: b?.bookTitle ?? b?.bookmaker ?? null,
-          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
-          side: "away",
-          odds: awayOdds,
-          line: null,
-        });
-      }
+    if (Number.isFinite(homeOdds)) {
+      rows.push({
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        side: "home",
+        odds: homeOdds,
+        line: null,
+      });
     }
 
-    if (mt === "spread") {
-      const homeLine = Number(b?.homeSpread);
-      const awayLine = Number(b?.awaySpread);
-      const homeOdds = Number(b?.homeSpreadOdds);
-      const awayOdds = Number(b?.awaySpreadOdds);
+    if (Number.isFinite(awayOdds)) {
+      rows.push({
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        side: "away",
+        odds: awayOdds,
+        line: null,
+      });
+    }
+  } else if (mt === "spread") {
+    const homeLine = Number(vegasRow?.spreads?.homeSpread);
+    const awayLine = Number(vegasRow?.spreads?.awaySpread);
+    const homeOdds = Number(vegasRow?.spreads?.homePrice);
+    const awayOdds = Number(vegasRow?.spreads?.awayPrice);
 
-      if (Number.isFinite(homeLine) && Number.isFinite(homeOdds)) {
-        rows.push({
-          bookKey: b?.bookmaker ?? null,
-          book: b?.bookTitle ?? b?.bookmaker ?? null,
-          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
-          side: "home",
-          odds: homeOdds,
-          line: homeLine,
-        });
-      }
-
-      if (Number.isFinite(awayLine) && Number.isFinite(awayOdds)) {
-        rows.push({
-          bookKey: b?.bookmaker ?? null,
-          book: b?.bookTitle ?? b?.bookmaker ?? null,
-          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
-          side: "away",
-          odds: awayOdds,
-          line: awayLine,
-        });
-      }
+    if (Number.isFinite(homeLine) && Number.isFinite(homeOdds)) {
+      rows.push({
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        side: "home",
+        odds: homeOdds,
+        line: homeLine,
+      });
     }
 
-    if (mt === "total") {
-      const totalLine = Number(b?.totalLine);
-      const overOdds = Number(b?.overOdds);
-      const underOdds = Number(b?.underOdds);
+    if (Number.isFinite(awayLine) && Number.isFinite(awayOdds)) {
+      rows.push({
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        side: "away",
+        odds: awayOdds,
+        line: awayLine,
+      });
+    }
+  } else if (mt === "total") {
+    const totalLine = Number(vegasRow?.totals?.total);
+    const overOdds = Number(vegasRow?.totals?.overPrice);
+    const underOdds = Number(vegasRow?.totals?.underPrice);
 
-      if (Number.isFinite(totalLine) && Number.isFinite(overOdds)) {
-        rows.push({
-          bookKey: b?.bookmaker ?? null,
-          book: b?.bookTitle ?? b?.bookmaker ?? null,
-          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
-          side: "over",
-          odds: overOdds,
-          line: totalLine,
-        });
-      }
+    if (Number.isFinite(totalLine) && Number.isFinite(overOdds)) {
+      rows.push({
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        side: "over",
+        odds: overOdds,
+        line: totalLine,
+      });
+    }
 
-      if (Number.isFinite(totalLine) && Number.isFinite(underOdds)) {
-        rows.push({
-          bookKey: b?.bookmaker ?? null,
-          book: b?.bookTitle ?? b?.bookmaker ?? null,
-          lastUpdate: b?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
-          side: "under",
-          odds: underOdds,
-          line: totalLine,
-        });
-      }
+    if (Number.isFinite(totalLine) && Number.isFinite(underOdds)) {
+      rows.push({
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        side: "under",
+        odds: underOdds,
+        line: totalLine,
+      });
     }
   }
 
   if (!rows.length) return null;
 
   return {
-    preferredBook: ODDS_BOOKMAKER,
+    preferredBook: vegasRow?.bookmaker ?? null,
     bestBook: null,
     bestBookKey: null,
     bestOdds: null,
@@ -1188,7 +1197,7 @@ function buildExplicitMarketNodesFromVegas(markets, vegasRow) {
 }
 
 function buildOddsComparisonForCompatMarket(recommendedBet, vegasRow) {
-  if (!recommendedBet?.marketType || !recommendedBet?.side || !vegasRow?.books) return null;
+  if (!recommendedBet?.marketType || !recommendedBet?.side || !vegasRow) return null;
 
   const marketType = String(recommendedBet.marketType || "").toLowerCase();
   const side = String(recommendedBet.side || "").toLowerCase();
@@ -1196,50 +1205,51 @@ function buildOddsComparisonForCompatMarket(recommendedBet, vegasRow) {
   let books = [];
 
   if (marketType === "moneyline") {
-    books = (vegasRow?.books?.h2h || [])
-      .map((b) => ({
-        bookKey: b?.bookmaker ?? null,
-        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
-        lastUpdate: b?.lastUpdate ?? null,
-        odds: side === "home" ? b?.home ?? null : side === "away" ? b?.away ?? null : null,
+    const odds = side === "home" ? Number(vegasRow?.h2h?.home) : side === "away" ? Number(vegasRow?.h2h?.away) : NaN;
+    if (Number.isFinite(odds)) {
+      books = [{
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        odds,
         line: null,
-      }))
-      .filter((b) => Number.isFinite(Number(b.odds)));
+      }];
+    }
   } else if (marketType === "spread") {
-    books = (vegasRow?.books?.spreads || [])
-      .map((b) => ({
-        bookKey: b?.bookmaker ?? null,
-        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
-        lastUpdate: b?.lastUpdate ?? null,
-        odds: side === "home" ? b?.homePrice ?? null : side === "away" ? b?.awayPrice ?? null : null,
-        line: side === "home" ? b?.homeSpread ?? null : side === "away" ? b?.awaySpread ?? null : null,
-      }))
-      .filter((b) => Number.isFinite(Number(b.odds)));
+    const odds = side === "home" ? Number(vegasRow?.spreads?.homePrice) : side === "away" ? Number(vegasRow?.spreads?.awayPrice) : NaN;
+    const line = side === "home" ? Number(vegasRow?.spreads?.homeSpread) : side === "away" ? Number(vegasRow?.spreads?.awaySpread) : NaN;
+    if (Number.isFinite(odds) && Number.isFinite(line)) {
+      books = [{
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        odds,
+        line,
+      }];
+    }
   } else if (marketType === "total") {
-    books = (vegasRow?.books?.totals || [])
-      .map((b) => ({
-        bookKey: b?.bookmaker ?? null,
-        book: b?.bookTitle ?? b?.bookmaker ?? "Book",
-        lastUpdate: b?.lastUpdate ?? null,
-        odds: side === "over" ? b?.overPrice ?? null : side === "under" ? b?.underPrice ?? null : null,
-        line: b?.total ?? null,
-      }))
-      .filter((b) => Number.isFinite(Number(b.odds)));
+    const odds = side === "over" ? Number(vegasRow?.totals?.overPrice) : side === "under" ? Number(vegasRow?.totals?.underPrice) : NaN;
+    const line = Number(vegasRow?.totals?.total);
+    if (Number.isFinite(odds) && Number.isFinite(line)) {
+      books = [{
+        bookKey: vegasRow?.bookmaker ?? null,
+        book: vegasRow?.bookmaker ?? "market",
+        lastUpdate: vegasRow?.lastUpdate ?? null,
+        odds,
+        line,
+      }];
+    }
   }
 
   if (!books.length) return null;
 
-  books = books.sort((a, b) => americanOddsSortValue(b.odds) - americanOddsSortValue(a.odds));
-
-  const best = books[0] || null;
-
   return {
     preferredBook: vegasRow?.bookmaker ?? null,
-    bestBook: best?.book ?? null,
-    bestBookKey: best?.bookKey ?? null,
-    bestOdds: best?.odds ?? null,
-    bestLine: best?.line ?? (recommendedBet?.line ?? null),
-    booksLastUpdate: best?.lastUpdate ?? vegasRow?.lastUpdate ?? null,
+    bestBook: null,
+    bestBookKey: null,
+    bestOdds: null,
+    bestLine: null,
+    booksLastUpdate: vegasRow?.lastUpdate ?? null,
     books,
   };
 }
@@ -1943,6 +1953,15 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
       const pHomeModel = nbaProbFromEdge(statEdge, 0.11);
 
       const vegasRow = odds.ok ? lookupVegasNba(oddsMap, g.home.name, g.away.name) : null;
+
+      // 🔥 CRITICAL FIX: attach vegasRow so downstream EV + selection works
+      if (vegasRow) {
+        g.vegasRow = vegasRow;
+      }
+
+
+      // CRITICAL FIX: attach vegasRow to game object
+      g.vegasRow = vegasRow;
       const pHomeMarket = Number.isFinite(vegasRow?.h2h?.pHome) ? vegasRow.h2h.pHome : null;
 
       let pHomeAnchored = pHomeModel;
