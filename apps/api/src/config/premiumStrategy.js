@@ -42,11 +42,12 @@
       },
       nhl: {
         moneyline: {
-          // Raised aggressively — NHL moneyline was -2.07% ROI over 280 picks.
+          // Model profitable on underdogs/even (+20.1% / +7.7% ROI) but loses on -120 to -150
+          // favorites (-9.4% ROI on 114 picks). Block favorites above -108.
           minEvForStake100: 20,
           minKellyHalf: 0.05,
           minEdge: 0.08,
-          minOdds: -175,
+          minOdds: -108,
           maxOdds: 140,
         },
         spread: {
