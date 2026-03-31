@@ -777,9 +777,9 @@ export default function Landing() {
       <div style={styles.shell}>
         <nav style={styles.nav}>
           <div style={styles.brand}>
-            <img src="/sports-mvp-logo.png" alt="Sports MVP hero logo" style={styles.brandLogo} />
+            <img src="/sports-mvp-logo.png" alt="SportsMVP hero logo" style={styles.brandLogo} />
             <div style={styles.brandTextWrap}>
-              <p style={styles.brandTitle}>Sports MVP</p>
+              <p style={styles.brandTitle}>SportsMVP</p>
               <p style={styles.brandSub}>NBA · NHL · NCAAM</p>
             </div>
           </div>
@@ -788,6 +788,7 @@ export default function Landing() {
             <a href="#gallery" style={styles.navBtn}>Platform</a>
             <a href="#proof" style={styles.navBtn}>Proof</a>
             <a href="#pricing" style={styles.navBtn}>Pricing</a>
+            <Link to="/track-record" style={styles.navBtn}>Track Record</Link>
             <Link to="/app" style={styles.navBtnPrimary}>Enter App</Link>
           </div>
         </nav>
@@ -796,7 +797,7 @@ export default function Landing() {
           <div style={styles.heroGrid}>
             <div style={styles.heroLeft}>
               <div style={styles.heroLogoPanel}>
-                <img src="/sports-mvp-logo.png" alt="Sports MVP logo" style={styles.heroLogoPanelImg} />
+                <img src="/sports-mvp-logo.png" alt="SportsMVP logo" style={styles.heroLogoPanelImg} />
               </div>
 
               <p style={styles.heroEyebrow}>Professional Betting Intelligence</p>
@@ -825,7 +826,7 @@ export default function Landing() {
               <div style={styles.heroShotFrame}>
                 <img
                   src="/landing/sports-mvp-top-picks.png"
-                  alt="Sports MVP live pick board"
+                  alt="SportsMVP live pick board"
                   style={styles.heroShot}
                 />
               </div>
@@ -837,7 +838,7 @@ export default function Landing() {
           <p style={styles.sectionTitle}>Platform Overview</p>
           <h2 style={styles.sectionHeadline}>Three core workflows built for serious bettors.</h2>
           <p style={styles.sectionText}>
-            Sports MVP combines ranked plays, bankroll intelligence, and transparent performance proof
+            SportsMVP combines ranked plays, bankroll intelligence, and transparent performance proof
             into a single premium workflow.
           </p>
 
@@ -845,7 +846,7 @@ export default function Landing() {
             <article style={styles.galleryCard}>
               <img
                 src="/landing/sports-mvp-top-picks.png"
-                alt="Sports MVP live pick board"
+                alt="SportsMVP live pick board"
                 style={styles.galleryImage}
               />
               <h3 style={styles.galleryTitle}>Live Pick Board</h3>
@@ -857,7 +858,7 @@ export default function Landing() {
             <article style={styles.galleryCard}>
               <img
                 src="/landing/sports-mvp-payout-calc.png"
-                alt="Sports MVP payout calculator"
+                alt="SportsMVP payout calculator"
                 style={styles.galleryImage}
               />
               <h3 style={styles.galleryTitle}>Bankroll Intelligence</h3>
@@ -869,7 +870,7 @@ export default function Landing() {
             <article style={styles.galleryCard}>
               <img
                 src="/landing/sports-mvp-trust.png"
-                alt="Sports MVP verified performance"
+                alt="SportsMVP verified performance"
                 style={styles.galleryImage}
               />
               <h3 style={styles.galleryTitle}>Verified Performance</h3>
@@ -897,7 +898,7 @@ export default function Landing() {
                 Beat the market — not just the game.
               </h2>
               <p style={styles.sectionText}>
-                Sports MVP identifies pricing inefficiencies across NBA, NHL, and NCAAM markets before
+                SportsMVP identifies pricing inefficiencies across NBA, NHL, and NCAAM markets before
                 sportsbooks fully adjust. The platform is built to help serious bettors evaluate edge,
                 not chase blind picks.
               </p>
@@ -1018,7 +1019,7 @@ export default function Landing() {
               Turn model insight into disciplined betting decisions.
             </h2>
             <p style={{ ...styles.sectionText, marginTop: 0, color: "#dbeafe" }}>
-              Sports MVP helps serious bettors move from raw information to structured action.
+              SportsMVP helps serious bettors move from raw information to structured action.
             </p>
             <div style={styles.heroActions}>
               <Link to="/app" style={styles.navBtnPrimary}>Enter Premium App</Link>
@@ -1028,10 +1029,10 @@ export default function Landing() {
         </section>
 
         <section style={{ ...styles.card, ...styles.section }}>
-          <p style={styles.sectionTitle}>Why Sports MVP Wins</p>
+          <p style={styles.sectionTitle}>Why SportsMVP Wins</p>
           <h2 style={styles.sectionHeadline}>Built for disciplined bettors who want an edge.</h2>
           <p style={styles.sectionText}>
-            Sports MVP is designed to help users evaluate real betting quality, prioritize stronger opportunities,
+            SportsMVP is designed to help users evaluate real betting quality, prioritize stronger opportunities,
             and turn model signals into more structured execution.
           </p>
 
@@ -1076,7 +1077,7 @@ export default function Landing() {
                   letterSpacing: "0.16em",
                 }}
               >
-                Sports MVP Premium
+                SportsMVP Premium
               </div>
 
               <div
@@ -1118,9 +1119,9 @@ export default function Landing() {
 
         <section style={{ ...styles.card, ...styles.section }}>
           <p style={styles.sectionTitle}>Stay Ahead of the Market</p>
-          <h2 style={styles.sectionHeadline}>Get Sports MVP updates and model insights.</h2>
+          <h2 style={styles.sectionHeadline}>Get SportsMVP updates and model insights.</h2>
           <p style={styles.sectionText}>
-            Join the Sports MVP mailing list to receive product updates, model insights, and major
+            Join the SportsMVP mailing list to receive product updates, model insights, and major
             feature releases as the platform evolves.
           </p>
 
@@ -1135,7 +1136,7 @@ export default function Landing() {
         </section>
 
         <div style={styles.footer}>
-          Sports MVP — premium sports betting intelligence for NBA, NHL, and NCAAM.
+          SportsMVP — premium sports betting intelligence for NBA, NHL, and NCAAM.
         </div>
       </div>
     </div>
