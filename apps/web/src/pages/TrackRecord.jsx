@@ -104,7 +104,7 @@ import { useEffect, useState } from "react";
         {/* Header */}
         <div style={{ background: "rgba(0,0,0,0.4)", borderBottom: "1px solid rgba(255,255,255,0.08)", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <span style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.5px" }}>SportEdge</span>
+            <span style={{ fontSize: "22px", fontWeight: 800, letterSpacing: "-0.5px" }}>SportsMVP</span>
             <span style={{ background: "rgba(74,222,128,0.15)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.3)", borderRadius: "6px", padding: "2px 8px", fontSize: "11px", fontWeight: 600 }}>LIVE TRACK RECORD</span>
           </div>
           <a
