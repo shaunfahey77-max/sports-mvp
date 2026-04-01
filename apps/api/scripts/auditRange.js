@@ -12,13 +12,13 @@
    *
    * Options (env vars):
    *   API_BASE=http://127.0.0.1:3001/api   (default)
-   *   CONCURRENCY=4                         parallel API calls per batch (default 4)
+   *   CONCURRENCY=2                         parallel API calls per batch (default 2; use 1 for NBA-only)
    *   LEAGUES=nba,nhl,ncaam                 (default all three)
    *   QUIET=1                               suppress per-pick detail
    */
 
   const API        = process.env.API_BASE    || "http://127.0.0.1:3001/api";
-  const CONCURRENCY = Number(process.env.CONCURRENCY) || 4;
+  const CONCURRENCY = Number(process.env.CONCURRENCY) || 2;
   const LEAGUES    = (process.env.LEAGUES || "nba,nhl,ncaam").split(",").map(l => l.trim().toLowerCase());
   const STAKE      = 100;
   const QUIET      = process.env.QUIET === "1";
@@ -93,7 +93,7 @@
   // ─── Fetch helpers ────────────────────────────────────────────────────────────
 
   async function fetchJson(url) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(90_000) });
     if (!res.ok) throw new Error("HTTP " + res.status + " — " + url);
     return res.json();
   }
