@@ -195,12 +195,14 @@ import {
     );
   }
 
-  // Tier assignment by rank position after scoring. Not set upstream.
-  function tierByRank(index) {
-    if (index < 2) return "ELITE";
-    if (index < 6) return "STRONG";
-    return "EDGE";
-  }
+    // Tier assignment by absolute weighted score — not rank position.
+    // ELITE ≥8 means genuinely high signal; rank-based assignment made 92% of picks ELITE.
+    function tierByScore(score) {
+      const s = Number(score ?? 0);
+      if (s >= 8) return "ELITE";
+      if (s >= 4) return "STRONG";
+      return "EDGE";
+    }
 
   /**
    * Main export. Single authority for candidate filtering, scoring, tiering, and selection.
@@ -257,7 +259,7 @@ import {
 
     // Assign tiers by rank position and cap
     const tiered = passing.map((c, i) => {
-      const tier = tierByRank(i);
+      const tier = tierByScore(c.premiumScore);
       return {
         ...c,
         tier,
