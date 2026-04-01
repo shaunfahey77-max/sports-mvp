@@ -22,7 +22,7 @@
           minOdds: -400,
           maxOdds: 500,
           minEdge: 0.07,
-          minEvForStake100: 18,
+          minEvForStake100: 12,
           minKellyHalf: 0.05,
         },
         spread: {
