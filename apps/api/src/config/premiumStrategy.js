@@ -34,10 +34,11 @@
         },
         total: {
           minEvForStake100: 8,
-          minKellyHalf: 0.02,
-          minEdge: 0.05,
+          minKellyHalf: 0.03,
+          minEdge: 0.08,
+          maxEdge: 0.12,
           minOdds: -140,
-          maxOdds: 140,
+          maxOdds: 120,
         },
       },
       nhl: {
