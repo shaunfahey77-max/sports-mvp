@@ -527,7 +527,7 @@ function computeMarketEV({ oddsAmerican, winProb, stake = 100 }) {
     rawWinProb: pModel,
     calWinProb: p,
     calibrationMethod: "market_anchor",
-    calibrationVersion: `market_anchor_${anchorWeight.toFixed(2)}`,
+    calibrationVersion: "elo_b2b_inj_v1",
     impliedProb,
     breakEvenProb: impliedProb,
     edge,
