@@ -2007,10 +2007,10 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
           if (ranged.length > 0) {
             histRows = ranged; // Odds API covers this window — use it
           } else {
-            histRows = await getNbaGamesInRange(start, end); // old date (backtest) → BDL
+            try { histRows = await getNbaGamesInRange(start, end); } catch (_) { histRows = []; }
           }
         } else {
-          histRows = await getNbaGamesInRange(start, end); // no Odds API key → BDL
+          try { histRows = await getNbaGamesInRange(start, end); } catch (_) { histRows = []; }
         }
       }
 
