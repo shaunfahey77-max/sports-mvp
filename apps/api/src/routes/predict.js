@@ -562,7 +562,7 @@ function redactOddsUrl(url) {
 function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
   const sport = String(sportKey || "").trim();
   if (!sport) throw new Error("Missing Odds API sportKey");
-  // Historical: drop bookmaker filter (unsupported); T18:00:00Z = 6pm ET, all pre-game lines posted
+  // Historical: uses T23:00:00Z (6pm ET) — true pre-game closing line odds for NBA/NHL/NCAAM
   const bookmakerParam = (ODDS_COMPARISON_ALL_BOOKS || historical)
     ? ""
     : `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`;
@@ -577,7 +577,7 @@ function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
     bookmakerParam;
 
   if (historical) {
-    const snap = `${ymd}T18:00:00Z`;
+    const snap = `${ymd}T23:00:00Z`; // 6pm ET — pre-game closing line
     return `${ODDS_API_BASE}/historical/sports/${sport}/odds?date=${encodeURIComponent(snap)}&${common}`;
   }
 
@@ -2997,7 +2997,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
         const homeMarketProb = homeMl?.winProb ?? null;
         const awayMarketProb = awayMl?.winProb ?? null;
 
-        if (pHome >= 0.70 && homeMl?.odds != null && homeMl.odds <= -300) {
+        if (pHome >= 0.70 && homeMl?.odds != null) {
           recommended = {
             marketType: "moneyline",
             side: "home",
@@ -3014,7 +3014,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
             kellyHalf: null,
             tier: "LEAN",
           };
-        } else if (pHome <= 0.30 && awayMl?.odds != null && awayMl.odds <= -300) {
+        } else if (pHome <= 0.30 && awayMl?.odds != null) {
           const awayModelProb = 1 - pHome;
           recommended = {
             marketType: "moneyline",
