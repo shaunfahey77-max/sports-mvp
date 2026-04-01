@@ -1462,8 +1462,6 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
       ev == null ||
       kh == null ||
       pModel == null ||
-      pModel < 0.52 ||
-      pModel > 0.75 ||
       e < minEdge ||
       ev < minEv ||
       kh < minKellyHalf
@@ -1476,7 +1474,7 @@ function buildMarketBundle({ league, pHomeWin, meanMargin, meanTotal, vegasRow, 
       recommended = null;
     }
 
-    if (recommended && league === "nba" && mt === "moneyline" && odds != null && odds > 400) {
+    if (recommended && league === "nba" && mt === "moneyline" && odds != null && odds > 700) {
       recommended = null;
     }
 
