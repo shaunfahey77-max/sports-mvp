@@ -129,6 +129,7 @@ import {
     const minEvForStake100 = num(rule?.minEvForStake100) ?? THRESHOLDS.minEvForStake100;
     const minKellyHalf = num(rule?.minKellyHalf) ?? THRESHOLDS.minKellyHalf;
     const minEdge = num(rule?.minEdge) ?? THRESHOLDS.minEdge;
+    const maxEdge = num(rule?.maxEdge) ?? null;
 
     if (!marketAllowed(league, marketType)) {
       return { passed: false, rejectionReason: "market_disabled", rejectionDetail: null };
@@ -169,6 +170,13 @@ import {
         passed: false,
         rejectionReason: "edge_below_threshold",
         rejectionDetail: { actual: Number(edge.toFixed(4)), required: minEdge },
+      };
+    }
+    if (maxEdge != null && edge > maxEdge) {
+      return {
+        passed: false,
+        rejectionReason: "edge_above_max",
+        rejectionDetail: { actual: Number(edge.toFixed(4)), maxAllowed: maxEdge },
       };
     }
 
