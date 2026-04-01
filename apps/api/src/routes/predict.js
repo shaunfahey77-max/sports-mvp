@@ -509,8 +509,9 @@ function computeMarketEV({ oddsAmerican, winProb, stake = 100 }) {
   if (decimalOdds == null || impliedProb == null) return {};
 
   const pModel = clampNum(pRaw, 0.02, 0.98);
-  const anchorWeight = clampNum(Number(process.env.MARKET_ANCHOR_WEIGHT || 0.35), 0, 0.60);
-  const p = clampNum((pModel * (1 - anchorWeight)) + (impliedProb * anchorWeight), 0.02, 0.98);
+  // Second market anchor removed — buildNbaPredictions already anchors toward market once.
+  // A second anchor compounds compression, crushing genuine 8-12% edge signals to <3%.
+  const p = clampNum(pModel, 0.02, 0.98);
 
   const edge = p - impliedProb;
   const profitIfWin = stakeAmt * (decimalOdds - 1);
@@ -1888,9 +1889,32 @@ function modelOnlyMoneylinePick(pHome, league) {
   return "PASS";
 }
 
+// ─── Elo ratings helper (used by NBA and NHL) ───────────────────────────────
+// Computes Elo ratings from a list of parsed game objects.
+// Each item must have { date, homeId, awayId, homeScore, awayScore }.
+function computeEloMap(parsedGames, startElo = 1500, K = 20) {
+  const eloMap = new Map();
+  const getElo = (id) => eloMap.get(id) ?? startElo;
+  const sorted = [...parsedGames].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  for (const { homeId, awayId, homeScore, awayScore } of sorted) {
+    if (!homeId || !awayId || !Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
+    const eH = getElo(homeId);
+    const eA = getElo(awayId);
+    const expected = 1 / (1 + Math.pow(10, (eA - eH) / 400));
+    const actual = homeScore > awayScore ? 1 : homeScore < awayScore ? 0 : 0.5;
+    eloMap.set(homeId, eH + K * (actual - expected));
+    eloMap.set(awayId, eA + K * ((1 - actual) - (1 - expected)));
+  }
+  return eloMap;
+}
+function eloProbHome(homeElo, awayElo, homeAdv = 0.02) {
+  return clampNum(1 / (1 + Math.pow(10, (awayElo - homeElo) / 400)) + homeAdv, 0.25, 0.80);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v2" } = {}) {
   const mv = modelVersion === "v1" ? "v1" : "v2";
-  const key = `PREDV23:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
+  const key = `PREDV24:nba:${dateYYYYMMDD}:w${windowDays}:m${mv}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -1921,6 +1945,45 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
     const start = addDaysUTC(end, -(windowDays - 1));
     const histRows = await getNbaGamesInRange(start, end);
 
+    // ─── Elo ratings from historical NBA data ───────────────────────────────
+    const nbaEloParsed = histRows.map(g => {
+      const hs = g?.home_team_score; const as = g?.visitor_team_score;
+      if (typeof hs !== 'number' || typeof as !== 'number') return null;
+      const ha = g?.home_team?.abbreviation; const aa = g?.visitor_team?.abbreviation;
+      if (!ha || !aa) return null;
+      return { date: String(g?.date || '').slice(0,10), homeId: toNbaTeamId(ha), awayId: toNbaTeamId(aa), homeScore: hs, awayScore: as };
+    }).filter(Boolean);
+    const nbaEloMap = computeEloMap(nbaEloParsed);
+
+    // ─── Back-to-back detection ────────────────────────────────────────────
+    const nbaYesterday = addDaysUTC(dateYYYYMMDD, -1);
+    const nbaB2BTeams = new Set();
+    histRows.forEach(g => {
+      const d = String(g?.date || '').slice(0, 10);
+      if (d !== nbaYesterday) return;
+      const ha = g?.home_team?.abbreviation; const aa = g?.visitor_team?.abbreviation;
+      if (ha) nbaB2BTeams.add(toNbaTeamId(ha));
+      if (aa) nbaB2BTeams.add(toNbaTeamId(aa));
+    });
+
+    // ─── Injury penalty (Ball Don't Lie) ──────────────────────────────────
+    const nbaInjuryPenalty = new Map();
+    try {
+      const injUrl = `${NBA_API_BASE}/player_injuries?per_page=100`;
+      const injData = await fetchJson(injUrl, { headers: { Authorization: NBA_API_KEY } }, { cacheTtlMs: 30 * 60_000, hostConcurrency: 1, retries: 1, timeoutMs: 8_000 });
+      const injured = Array.isArray(injData?.data) ? injData.data : [];
+      const teamOutCounts = new Map();
+      for (const pl of injured) {
+        const abbr = pl?.team?.abbreviation;
+        if (!abbr || String(pl?.status || '').toLowerCase() !== 'out') continue;
+        const id = toNbaTeamId(abbr);
+        teamOutCounts.set(id, (teamOutCounts.get(id) || 0) + 1);
+      }
+      // Each confirmed Out player = -0.012 win probability (capped at 0.04)
+      for (const [id, cnt] of teamOutCounts.entries()) nbaInjuryPenalty.set(id, Math.min(0.04, cnt * 0.012));
+    } catch (_) { /* Injury API unavailable — no adjustment applied */ }
+    // ──────────────────────────────────────────────────────────────────────
+
     const teamStats = buildTeamStatsFromHistory_Generic(histRows, {
       recent5: 5,
       recent10: 10,
@@ -1950,7 +2013,20 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
       const awayS = teamStats.get(g.away.id) || { ok: false };
 
       const statEdge = nbaEdge(homeS, awayS, mv);
-      const pHomeModel = nbaProbFromEdge(statEdge, 0.11);
+      const pStatModel = nbaProbFromEdge(statEdge, 0.11);
+      // Blend Elo (60%) with stat-based model (40%) for stronger team quality signal
+      const eloH = nbaEloMap.get(g.home.id);
+      const eloA = nbaEloMap.get(g.away.id);
+      const pEloBlend = (eloH != null && eloA != null) ? eloProbHome(eloH, eloA, 0.02) : null;
+      const pHomeBase = pEloBlend != null ? 0.60 * pEloBlend + 0.40 * pStatModel : pStatModel;
+      // Back-to-back: rested team gets +3.5% win probability
+      const homeB2B = nbaB2BTeams.has(g.home.id);
+      const awayB2B = nbaB2BTeams.has(g.away.id);
+      const b2bAdj = (homeB2B && !awayB2B) ? -0.035 : (awayB2B && !homeB2B) ? 0.035 : 0;
+      // Injury: each confirmed Out player = -1.2% win prob (capped at -4%)
+      const homeInjPenalty = nbaInjuryPenalty.get(g.home.id) ?? 0;
+      const awayInjPenalty = nbaInjuryPenalty.get(g.away.id) ?? 0;
+      const pHomeModel = clampNum(pHomeBase + b2bAdj - homeInjPenalty + awayInjPenalty, 0.25, 0.80);
 
       const vegasRow = odds.ok ? lookupVegasNba(oddsMap, g.home.name, g.away.name) : null;
 
@@ -2362,7 +2438,7 @@ function nhlProbFromEdge(edge, edgeScale = 0.22) {
 
 async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
   const historyDays = clampNum(Number(windowDays) || 40, 14, 120);
-  const key = `PREDV23:nhl:${dateYYYYMMDD}:w${historyDays}`;
+  const key = `PREDV24:nhl:${dateYYYYMMDD}:w${historyDays}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -2392,6 +2468,44 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
     const history = await getNhlHistory(dateYYYYMMDD, historyDays);
     const teamStats = buildNhlTeamStatsFromHistory(history, dateYYYYMMDD, 10);
 
+    // ─── NHL Elo ratings from season history ─────────────────────────────────
+    const nhlEloParsed = history.map(g => ({
+      date: String(g.date || '').slice(0, 10),
+      homeId: g.homeTeamId,
+      awayId: g.awayTeamId,
+      homeScore: g.homeScore,
+      awayScore: g.awayScore,
+    })).filter(g => g.homeId && g.awayId && Number.isFinite(g.homeScore) && Number.isFinite(g.awayScore));
+    const nhlEloMap = computeEloMap(nhlEloParsed, 1500, 16);
+
+    // ─── NHL back-to-back detection ───────────────────────────────────────────
+    const nhlYesterday = addDaysUTC(dateYYYYMMDD, -1);
+    const nhlB2BTeams = new Set();
+    history.forEach(g => {
+      if (String(g.date || '').slice(0, 10) !== nhlYesterday) return;
+      if (g.homeTeamId) nhlB2BTeams.add(g.homeTeamId);
+      if (g.awayTeamId) nhlB2BTeams.add(g.awayTeamId);
+    });
+
+    // ─── NHL starting goalie adjustment (ESPN API — fallback no-op) ───────────
+    const nhlGoalieStatus = new Map();
+    try {
+      const espnNhlSB = await fetchJson(
+        `${ESPN_SITE_V2}/${ESPN_NHL_PATH}/scoreboard?dates=${toEspnYYYYMMDD(dateYYYYMMDD)}`,
+        {},
+        { cacheTtlMs: HEAVY_CACHE_TTL_MS, retries: 2, timeoutMs: 10_000 }
+      );
+      for (const ev of (espnNhlSB?.events || [])) {
+        for (const comp of (ev?.competitions || [])) {
+          const pg = comp?.probableStartingGoalie;
+          if (!pg?.team?.id) continue;
+          const isStarter = pg?.isStarter !== false;
+          nhlGoalieStatus.set(String(pg.team.id), isStarter ? 'starter' : 'backup');
+        }
+      }
+    } catch (_) { /* Goalie API unavailable — no adjustment applied */ }
+    // ──────────────────────────────────────────────────────────────────────────
+
     const games = [];
     let noBetCount = 0;
     let modelOnlyCount = 0;
@@ -2401,7 +2515,21 @@ async function buildNhlPredictions(dateYYYYMMDD, windowDays) {
       const awayS = teamStats.get(g.awayTeamId) || { ok: false };
 
       const edgeSigned = nhlEdge(homeS, awayS);
-      const pHome = nhlProbFromEdge(edgeSigned, 0.17);
+      const pStatNhl = nhlProbFromEdge(edgeSigned, 0.17);
+      // Blend Elo (50%) with stat-based model (50%) for NHL
+      const eloNhlH = nhlEloMap.get(g.homeTeamId);
+      const eloNhlA = nhlEloMap.get(g.awayTeamId);
+      const pEloNhl = (eloNhlH != null && eloNhlA != null) ? eloProbHome(eloNhlH, eloNhlA, 0.03) : null;
+      const pNhlBase = pEloNhl != null ? 0.50 * pEloNhl + 0.50 * pStatNhl : pStatNhl;
+      // NHL back-to-back: -4% for team on B2B (bigger impact in NHL than NBA)
+      const homeNhlB2B = nhlB2BTeams.has(g.homeTeamId);
+      const awayNhlB2B = nhlB2BTeams.has(g.awayTeamId);
+      const nhlB2BAdj = (homeNhlB2B && !awayNhlB2B) ? -0.04 : (awayNhlB2B && !homeNhlB2B) ? 0.04 : 0;
+      // Goalie adjustment: backup goalie = -5% win prob (goalies dominate NHL outcomes)
+      const homeGoalie = nhlGoalieStatus.get(String(g.homeTeamId));
+      const awayGoalie = nhlGoalieStatus.get(String(g.awayTeamId));
+      const nhlGoalieAdj = (homeGoalie === 'backup' ? -0.05 : 0) + (awayGoalie === 'backup' ? 0.05 : 0);
+      const pHome = clampNum(pNhlBase + nhlB2BAdj + nhlGoalieAdj, 0.22, 0.78);
 
       const homeObj = {
         id: toNhlTeamId(g.homeTeamId),
@@ -2711,7 +2839,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
   const historyDays = clampNum(Number(windowDays) || 45, 14, 90);
   const isT = Boolean(tournamentMode);
   const tournamentPhase = getTournamentPhase(dateYYYYMMDD, isT);
-  const key = `PREDV23:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
+  const key = `PREDV24:ncaam:${dateYYYYMMDD}:w${historyDays}:t${isT ? 1 : 0}`;
 
   return computeCached(key, HEAVY_CACHE_TTL_MS, async () => {
     const t0 = Date.now();
@@ -3158,45 +3286,3 @@ router.get("/predictions", async (req, res) => {
 
 export { buildNbaPredictions, buildNhlPredictions, buildNcaamPredictions };
 export default router;
-
-
-router.get("/top-bets", async (req, res) => {
-  try {
-
-    const date = req.query.date || new Date().toISOString().slice(0,10)
-    const league = req.query.league || "nba"
-
-    const r = await fetch(`http://127.0.0.1:3001/api/predictions?league=${league}&date=${date}`)
-    const data = await r.json()
-
-    const games = (data.games || [])
-      .filter(g => g?.market?.recommendedMarket)
-      .map(g => ({
-        matchup: `${g.away?.abbr} @ ${g.home?.abbr}`,
-        market: g.market.recommendedMarket,
-        pick: g.market.pick,
-        line: g.market.marketLine,
-        odds: g.market.marketOdds,
-        prob: g.market.winProb,
-        edge: g.market.edgeVsMarket,
-        ev: g.market.evForStake100,
-        kelly: g.market.kellyHalf
-      }))
-
-    const ranked = games
-      .filter(g => g.ev && g.prob)
-      .sort((a,b) => b.ev - a.ev)
-
-    const top = ranked.slice(0,3)
-
-    res.json({
-      ok: true,
-      date,
-      league,
-      topBets: top
-    })
-
-  } catch(e) {
-    res.status(500).json({ ok:false, error:String(e) })
-  }
-})
