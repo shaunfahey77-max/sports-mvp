@@ -41,7 +41,7 @@ const ODDS_MARKETS = String(process.env.ODDS_MARKETS || "h2h,spreads,totals");
 const ODDS_REGIONS = String(process.env.ODDS_REGIONS || "us");
 const ODDS_ODDS_FORMAT = String(process.env.ODDS_ODDS_FORMAT || "american");
 const ODDS_ALLOW_HISTORICAL =
-  String(process.env.ODDS_ALLOW_HISTORICAL || "false").toLowerCase() === "true";
+  String(process.env.ODDS_ALLOW_HISTORICAL || "true").toLowerCase() === "true";
 
 const ODDS_COMPARISON_ALL_BOOKS =
   String(process.env.ODDS_COMPARISON_ALL_BOOKS || "true").toLowerCase() !== "false";
@@ -1999,9 +1999,14 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
     const start = addDaysUTC(end, -(windowDays - 1));
     // Try The Odds API first (fast, no rate limit) — falls back to Ball Don't Lie
       // for historical backtest dates that are outside the Odds API rolling window.
+      // Dynamic: calculate how far back Odds API /scores must reach for this date's stat window.
+      // Live picks ≈ 16 days; 30-day backtest up to ≈ 46 days back.
+      const _endDaysAgo = Math.round((Date.now() - new Date(end + 'T00:00:00Z').getTime()) / 86_400_000);
+      const _neededDaysFrom = _endDaysAgo + windowDays + 2;
+      const _maxOddsScoresDays = Number(process.env.ODDS_SCORES_MAX_DAYS || 60);
       let histRows;
       {
-        const oddsRows = ODDS_API_KEY ? await getOddsApiNbaScores(windowDays + 2) : null;
+        const oddsRows = (ODDS_API_KEY && _neededDaysFrom <= _maxOddsScoresDays) ? await getOddsApiNbaScores(_neededDaysFrom) : null;
         if (oddsRows !== null) {
           const ranged = oddsRows.filter(g => g.date >= start && g.date <= end);
           if (ranged.length > 0) {
