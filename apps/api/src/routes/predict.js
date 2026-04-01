@@ -2006,7 +2006,9 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
       const _maxOddsScoresDays = Number(process.env.ODDS_SCORES_MAX_DAYS || 60);
       let histRows;
       {
-        const oddsRows = (ODDS_API_KEY && _neededDaysFrom <= _maxOddsScoresDays) ? await getOddsApiNbaScores(_neededDaysFrom) : null;
+        // Use the max allowed window for every call so all backtest dates share one cache entry
+          const _callDays = (_neededDaysFrom <= _maxOddsScoresDays) ? _maxOddsScoresDays : null;
+          const oddsRows = (ODDS_API_KEY && _callDays) ? await getOddsApiNbaScores(_callDays) : null;
         if (oddsRows !== null) {
           const ranged = oddsRows.filter(g => g.date >= start && g.date <= end);
           if (ranged.length > 0) {
