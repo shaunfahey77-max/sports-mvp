@@ -67,11 +67,13 @@
         },
       },
       ncaam: {
-        // NCAAM total was +0.50% ROI — keep threshold, do not loosen.
+        // EV 15-20 bucket: 69.2% WR +32.2% ROI. EV 20+ bucket: 48.4% WR -7.7% ROI (phantom edge).
+        // maxEdge 0.12 cuts overconfident model picks. Tightened 2026-04-01.
         total: {
-          minEvForStake100: 10,
-          minKellyHalf: 0.025,
+          minEvForStake100: 8,
+          minKellyHalf: 0.03,
           minEdge: 0.08,
+          maxEdge: 0.12,
           minOdds: -140,
           maxOdds: 120,
         },
