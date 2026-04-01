@@ -19,12 +19,12 @@
     export const MARKET_RULES = {
       nba: {
         moneyline: {
-          minOdds: -500,
-          maxOdds: 700,
-          minEdge: 0.06,
-          minEvForStake100: 10,
-          minKellyHalf: 0.04,
-        },
+            minOdds: -170,
+            maxOdds: 220,
+            minEdge: 0.10,
+            minEvForStake100: 15,
+            minKellyHalf: 0.06,
+          },
         spread: {
           minEvForStake100: 8,
           minKellyHalf: 0.02,
