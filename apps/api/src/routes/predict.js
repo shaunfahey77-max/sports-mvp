@@ -562,7 +562,7 @@ function redactOddsUrl(url) {
 function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
   const sport = String(sportKey || "").trim();
   if (!sport) throw new Error("Missing Odds API sportKey");
-  // Historical: uses T23:00:00Z (6pm ET) — true pre-game closing line odds for NBA/NHL/NCAAM
+  // Historical: T18:00:00Z = 6pm UTC (≈1pm ET). Pre-game for ALL leagues: noon NCAA tips, 7:30pm NBA/NHL.
   const bookmakerParam = (ODDS_COMPARISON_ALL_BOOKS || historical)
     ? ""
     : `&bookmakers=${encodeURIComponent(ODDS_BOOKMAKER)}`;
@@ -577,7 +577,7 @@ function buildOddsUrlForDate(ymd, { sportKey, historical = false } = {}) {
     bookmakerParam;
 
   if (historical) {
-    const snap = `${ymd}T23:00:00Z`; // 6pm ET — pre-game closing line
+    const snap = `${ymd}T18:00:00Z`; // 6pm UTC (≈1pm ET) — pre-game for all US sports incl. noon NCAA tip-offs
     return `${ODDS_API_BASE}/historical/sports/${sport}/odds?date=${encodeURIComponent(snap)}&${common}`;
   }
 
