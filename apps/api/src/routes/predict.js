@@ -1018,7 +1018,7 @@ function recommendedTierFromCandidate(c) {
   const p = Number.isFinite(c?.modelProb) ? c.modelProb : null;
 
   if (!Number.isFinite(e) || !Number.isFinite(ev) || !Number.isFinite(kh) || !Number.isFinite(p)) return "PASS";
-  if (p < 0.52 || p > 0.75) return "PASS";
+  // Removed probability gate (p<0.52||p>0.75) that blocked all underdogs; edge/EV/Kelly filter sufficiently
 
   if (e >= 0.10 && ev >= 12 && kh >= 0.015) return "ELITE";
   if (e >= 0.07 && ev >= 8 && kh >= 0.010) return "STRONG";
