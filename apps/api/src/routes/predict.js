@@ -1668,6 +1668,60 @@ async function getNbaGamesByDate(dateYYYYMMDD) {
   });
 }
 
+
+  // ─── NBA name→abbreviation map for The Odds API score responses ───────────
+  const NBA_NAME_TO_ABBR = {
+    "Atlanta Hawks": "ATL", "Boston Celtics": "BOS", "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA", "Chicago Bulls": "CHI", "Cleveland Cavaliers": "CLE",
+    "Dallas Mavericks": "DAL", "Denver Nuggets": "DEN", "Detroit Pistons": "DET",
+    "Golden State Warriors": "GSW", "Houston Rockets": "HOU", "Indiana Pacers": "IND",
+    "Los Angeles Clippers": "LAC", "Los Angeles Lakers": "LAL", "Memphis Grizzlies": "MEM",
+    "Miami Heat": "MIA", "Milwaukee Bucks": "MIL", "Minnesota Timberwolves": "MIN",
+    "New Orleans Pelicans": "NOP", "New York Knicks": "NYK", "Oklahoma City Thunder": "OKC",
+    "Orlando Magic": "ORL", "Philadelphia 76ers": "PHI", "Phoenix Suns": "PHX",
+    "Portland Trail Blazers": "POR", "Sacramento Kings": "SAC", "San Antonio Spurs": "SAS",
+    "Toronto Raptors": "TOR", "Utah Jazz": "UTA", "Washington Wizards": "WAS",
+  };
+
+  // Fetch NBA completed-game scores from The Odds API.
+  // Returns array of BDL-shaped objects (date, home_team.abbreviation, etc.)
+  // so all existing histRows parsing works unchanged.
+  // Returns null on failure → caller falls back to Ball Don't Lie.
+  async function getOddsApiNbaScores(daysBack) {
+    if (!ODDS_API_KEY) return null;
+    const cacheKey = `ODDS_NBA_SCORES:d${daysBack}`;
+    const cached = getCache(cacheKey);
+    if (cached) return cached;
+    try {
+      const url = `https://api.the-odds-api.com/v4/sports/${ODDS_SPORT_NBA}/scores?apiKey=${ODDS_API_KEY}&daysFrom=${daysBack}`;
+      const json = await fetchJson(url, {}, { cacheTtlMs: 30 * 60_000, retries: 2, timeoutMs: 15_000 });
+      if (!Array.isArray(json)) return null;
+      const rows = json
+        .filter(ev => ev.completed && Array.isArray(ev.scores) && ev.scores.length === 2)
+        .map(ev => {
+          const homeAbbr = NBA_NAME_TO_ABBR[ev.home_team];
+          const awayAbbr = NBA_NAME_TO_ABBR[ev.away_team];
+          if (!homeAbbr || !awayAbbr) return null;
+          const hObj = ev.scores.find(s => s.name === ev.home_team);
+          const aObj = ev.scores.find(s => s.name === ev.away_team);
+          if (!hObj || !aObj) return null;
+          const hs = Number(hObj.score); const as = Number(aObj.score);
+          if (!isFinite(hs) || !isFinite(as)) return null;
+          return {
+            date: String(ev.commence_time || "").slice(0, 10),
+            home_team: { abbreviation: homeAbbr },
+            visitor_team: { abbreviation: awayAbbr },
+            home_team_score: hs,
+            visitor_team_score: as,
+          };
+        })
+        .filter(Boolean);
+      setCache(cacheKey, rows, 30 * 60_000);
+      return rows;
+    } catch (_) { return null; }
+  }
+
+  
 async function getNbaGamesInRange(startYYYYMMDD, endYYYYMMDD) {
   if (!NBA_API_KEY) throw new Error("Missing NBA_API_KEY");
 
@@ -1943,7 +1997,22 @@ async function buildNbaPredictions(dateYYYYMMDD, windowDays, { modelVersion = "v
 
     const end = addDaysUTC(dateYYYYMMDD, -1);
     const start = addDaysUTC(end, -(windowDays - 1));
-    const histRows = await getNbaGamesInRange(start, end);
+    // Try The Odds API first (fast, no rate limit) — falls back to Ball Don't Lie
+      // for historical backtest dates that are outside the Odds API rolling window.
+      let histRows;
+      {
+        const oddsRows = ODDS_API_KEY ? await getOddsApiNbaScores(windowDays + 2) : null;
+        if (oddsRows !== null) {
+          const ranged = oddsRows.filter(g => g.date >= start && g.date <= end);
+          if (ranged.length > 0) {
+            histRows = ranged; // Odds API covers this window — use it
+          } else {
+            histRows = await getNbaGamesInRange(start, end); // old date (backtest) → BDL
+          }
+        } else {
+          histRows = await getNbaGamesInRange(start, end); // no Odds API key → BDL
+        }
+      }
 
     // ─── Elo ratings from historical NBA data ───────────────────────────────
     const nbaEloParsed = histRows.map(g => {
