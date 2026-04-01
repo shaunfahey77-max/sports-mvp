@@ -2997,7 +2997,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
         const homeMarketProb = homeMl?.winProb ?? null;
         const awayMarketProb = awayMl?.winProb ?? null;
 
-        if (pHome >= 0.70 && homeMl?.odds != null) {
+        if (pHome >= 0.70 && homeMl?.odds != null && homeMl.odds <= -300) {
           recommended = {
             marketType: "moneyline",
             side: "home",
@@ -3014,7 +3014,7 @@ async function buildNcaamPredictions(dateYYYYMMDD, windowDays, { tournamentMode,
             kellyHalf: null,
             tier: "LEAN",
           };
-        } else if (pHome <= 0.30 && awayMl?.odds != null) {
+        } else if (pHome <= 0.30 && awayMl?.odds != null && awayMl.odds <= -300) {
           const awayModelProb = 1 - pHome;
           recommended = {
             marketType: "moneyline",
