@@ -54,6 +54,7 @@ const PLANS = [
     accentBg: "rgba(66,66,66,0.15)",
     items: ["Today's #1 top pick (daily)", "Tier badge only", "No metrics or history", "Web access"],
     cta: "Start Free",
+    ctaHref: "/sign-up",
     ctaStyle: "border border-[#424242] text-white hover:bg-white/5",
     popular: false,
   },
@@ -74,6 +75,7 @@ const PLANS = [
       "Picks updated every 10 minutes",
     ],
     cta: "Get MVP",
+    ctaHref: "/subscribe",
     ctaStyle: "bg-[#0033A0] text-white hover:bg-[#0040CC]",
     popular: true,
   },
@@ -93,6 +95,7 @@ const PLANS = [
       "Priority support",
     ],
     cta: "Get MVP Pro",
+    ctaHref: "/subscribe",
     ctaStyle: "bg-[#FFC107] text-[#060D1F] hover:bg-[#FFD54F] font-bold",
     popular: false,
   },
@@ -109,11 +112,11 @@ function LandingNav() {
           <a href="#how-it-works" className="text-sm text-white/60 hover:text-white transition-colors font-medium">How It Works</a>
           <a href="#features" className="text-sm text-white/60 hover:text-white transition-colors font-medium">Features</a>
           <a href="#pricing" className="text-sm text-white/60 hover:text-white transition-colors font-medium">Pricing</a>
-          <Link href="/picks" className="text-sm text-white/60 hover:text-white transition-colors font-medium">Today's Picks</Link>
+          <Link href="/sign-in" className="text-sm text-white/60 hover:text-white transition-colors font-medium">Today's Picks</Link>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/picks" className="text-sm text-white/70 hover:text-white transition-colors font-medium hidden md:block">Sign In</Link>
-          <Link href="/picks" className="inline-flex items-center gap-1.5 bg-[#0033A0] hover:bg-[#0040CC] text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+          <Link href="/sign-in" className="text-sm text-white/70 hover:text-white transition-colors font-medium hidden md:block">Sign In</Link>
+          <Link href="/sign-up" className="inline-flex items-center gap-1.5 bg-[#0033A0] hover:bg-[#0040CC] text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
             Start Free <ArrowRight size={14} />
           </Link>
         </div>
@@ -160,8 +163,8 @@ function HeroSection() {
             No gut calls. No hype. Just math — updated every 10 minutes.
           </p>
           <div className="flex flex-wrap gap-4">
-            <Link href="/picks" className="inline-flex items-center gap-2 bg-[#0033A0] hover:bg-[#0040CC] text-white font-bold px-8 py-4 rounded-xl text-base transition-colors shadow-[0_0_30px_rgba(0,51,160,0.4)]">
-              View Today's Picks <ChevronRight size={18} />
+            <Link href="/sign-up" className="inline-flex items-center gap-2 bg-[#0033A0] hover:bg-[#0040CC] text-white font-bold px-8 py-4 rounded-xl text-base transition-colors shadow-[0_0_30px_rgba(0,51,160,0.4)]">
+              Start Free <ChevronRight size={18} />
             </Link>
             <a href="#pricing" className="inline-flex items-center gap-2 border border-white/20 text-white/80 hover:bg-white/5 font-medium px-8 py-4 rounded-xl text-base transition-colors">
               See Pricing
@@ -245,8 +248,8 @@ function TodaysTopPick() {
         </div>
 
         <div className="text-center mt-8">
-          <Link href="/picks" className="inline-flex items-center gap-2 text-[#4488FF] hover:text-[#6699FF] font-semibold text-sm transition-colors">
-            View all today's picks <ArrowRight size={14} />
+          <Link href="/sign-up" className="inline-flex items-center gap-2 text-[#4488FF] hover:text-[#6699FF] font-semibold text-sm transition-colors">
+            Get all today's picks <ArrowRight size={14} />
           </Link>
         </div>
       </div>
@@ -507,7 +510,7 @@ function PricingSection() {
               </ul>
 
               <Link
-                href="/picks"
+                href={plan.ctaHref}
                 className={`w-full py-3 rounded-xl text-sm font-bold text-center transition-colors block ${plan.ctaStyle}`}
               >
                 {plan.cta}
@@ -542,7 +545,7 @@ function LandingFooter() {
             <div className="text-white/60 text-xs font-bold uppercase tracking-wider mb-4">Platform</div>
             <ul className="space-y-2.5">
               {[
-                { label: "Today's Picks", href: "/picks" },
+                { label: "Today's Picks", href: "/sign-in" },
                 { label: "Performance", href: "/performance" },
                 { label: "Pick History", href: "/history" },
               ].map((l) => (

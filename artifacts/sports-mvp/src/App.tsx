@@ -83,11 +83,11 @@ function Router() {
           <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} afterSignUpUrl={`${basePath}/picks`} />
         </div>
       )} />
-      <Route path="/picks" component={Dashboard} />
+      <Route path="/picks" component={() => <ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/performance" component={Performance} />
       <Route path="/history" component={History} />
-      <Route path="/parlay" component={ParlayGenerator} />
-      <Route path="/tracker" component={Tracker} />
+      <Route path="/parlay" component={() => <ProtectedRoute><ParlayGenerator /></ProtectedRoute>} />
+      <Route path="/tracker" component={() => <ProtectedRoute><Tracker /></ProtectedRoute>} />
       <Route path="/subscribe" component={Subscribe} />
       <Route path="/account" component={() => <ProtectedRoute><Account /></ProtectedRoute>} />
       <Route path="/privacy" component={Privacy} />
