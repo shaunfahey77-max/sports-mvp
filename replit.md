@@ -59,6 +59,19 @@ React + Vite subscriber-facing dashboard at preview path `/`.
 
 **API integration**: axios default baseURL set to `/api`, uses orval-generated hooks from `@workspace/api-client-react`
 
+**Key components:**
+- `src/components/PickCard.tsx` — Pick card with team logos, matchup display, tier/edge/EV tooltips, CLV delta
+- `src/components/CandidateCard.tsx` — Candidate card with same logo + tooltip features
+- `src/components/TopPickCallout.tsx` — Gold-accented TOP PICK OF THE DAY hero banner (highest rankScore among A/B tiers)
+- `src/components/ui/InfoTooltip.tsx` — Inline ⓘ tooltip with explanatory copy for any metric label
+- `src/lib/teamLogos.ts` — ESPN CDN team logo lookup by league (NBA/NHL/NCAAM) + gameKey matchup parser
+
+**Features per page:**
+- All pages: shield logo in header, collapsible "How to Read / How It Works" explainer section
+- Dashboard: Top Pick callout + highlighted pick card for highest-ranked pick; team logos with picked-side highlighting
+- Performance: 12 stat cards each with info tooltip; color-coded tier/league/market breakdowns; model pipeline explanation
+- History: Picks count + Win/Loss/Push/Pending summary row; CLV delta shown on every graded pick
+
 ## Architecture
 
 ### Prediction Layer (`artifacts/api-server/src/prediction/`)
