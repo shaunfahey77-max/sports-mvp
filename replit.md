@@ -50,6 +50,8 @@ React + Vite subscriber-facing dashboard at preview path `/`.
 
 **Pages:**
 - `/` — Today's Action: candidate picks with tier badges, league/market labels, EV%, edge%, result
+- `/picks` — Dashboard: today's scored picks grid with Top Pick callout
+- `/parlay` — Parlay Builder (MVP+ subscriber feature): pick selection + parlay calculator + auto-build
 - `/performance` — Model Performance: rolling analytics (win rate, ROI, units won, Brier score, CLV hit rate) with 14/30/45-day window toggle + tier/league/market breakdowns
 - `/history` — Pick History: filterable grid of all historical picks
 
