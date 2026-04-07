@@ -103,7 +103,7 @@ function LandingNav() {
     <nav className="sticky top-0 z-50 w-full border-b border-[#1A3066]/80 bg-[#060D1F]/95 backdrop-blur">
       <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2">
-          <img src="/logo-nav.png" alt="SportsMVP" className="h-8 object-contain" />
+          <img src="/logo-nav.png" alt="SportsMVP" className="h-12 object-contain" />
         </Link>
         <div className="hidden md:flex items-center gap-8">
           <a href="#how-it-works" className="text-sm text-white/60 hover:text-white transition-colors font-medium">How It Works</a>
@@ -140,12 +140,19 @@ function HeroSection() {
             <Star size={12} className="text-[#FFC107] fill-[#FFC107]" />
             <span className="text-[#FFC107] text-xs font-bold tracking-widest uppercase">NBA + NHL · April 2026</span>
           </div>
-          <h1 className="text-5xl lg:text-6xl font-black font-display leading-[1.05] tracking-tight text-white mb-6">
-            Bet Like<br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#0033A0] via-[#4488FF] to-[#FFC107]">
-              an MVP.
-            </span>
-          </h1>
+          <div className="flex items-center gap-5 mb-6">
+            <img
+              src="/shield-logo.png"
+              alt="SportsMVP Shield"
+              className="h-28 lg:h-36 w-auto object-contain drop-shadow-[0_0_24px_rgba(255,193,7,0.35)] shrink-0"
+            />
+            <h1 className="text-5xl lg:text-6xl font-black font-display leading-[1.05] tracking-tight text-white">
+              Bet Like<br />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#0033A0] via-[#4488FF] to-[#FFC107]">
+                an MVP.
+              </span>
+            </h1>
+          </div>
           <p className="text-lg text-white/70 leading-relaxed mb-8 max-w-lg">
             SportsMVP uses calibrated machine learning models to identify positive expected-value picks across NBA and NHL markets.
             No gut calls. No hype. Just math — updated every 10 minutes.
@@ -208,8 +215,13 @@ function TodaysTopPick() {
   const pick = data?.picks?.[0] ?? null;
 
   return (
-    <section className="py-20 bg-[#060D1F]">
-      <div className="max-w-7xl mx-auto px-6">
+    <section className="relative py-20 bg-[#060D1F] overflow-hidden">
+      {/* Section glow */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[400px] rounded-full bg-[#FFC107]/8 blur-[100px]" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[250px] rounded-full bg-[#0033A0]/15 blur-[80px]" />
+      </div>
+      <div className="max-w-7xl mx-auto px-6 relative">
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-2 text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-3">
             <Star size={12} className="fill-[#FFC107]" /> Live Today
@@ -262,12 +274,12 @@ function TopPickCard({ pick }: { pick: any }) {
         {matchup && (
           <div className="flex items-center gap-3 mb-3">
             <div className="flex items-center gap-1.5">
-              <img src={getTeamLogoUrl(matchup.awayAbbrev, pick.league)} className="h-9 w-9 object-contain drop-shadow" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} alt="" />
+              <img src={getTeamLogoUrl(pick.league, matchup.awayAbbrev) ?? undefined} className="h-9 w-9 object-contain drop-shadow" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} alt="" />
               <span className={`text-lg font-black font-display ${pick.pick === 'away' ? 'text-white' : 'text-white/40'}`}>{matchup.awayAbbrev.toUpperCase()}</span>
             </div>
             <span className="text-white/30 text-sm">@</span>
             <div className="flex items-center gap-1.5">
-              <img src={getTeamLogoUrl(matchup.homeAbbrev, pick.league)} className="h-9 w-9 object-contain drop-shadow" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} alt="" />
+              <img src={getTeamLogoUrl(pick.league, matchup.homeAbbrev) ?? undefined} className="h-9 w-9 object-contain drop-shadow" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} alt="" />
               <span className={`text-lg font-black font-display ${pick.pick === 'home' ? 'text-white' : 'text-white/40'}`}>{matchup.homeAbbrev.toUpperCase()}</span>
             </div>
           </div>

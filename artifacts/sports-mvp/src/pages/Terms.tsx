@@ -5,7 +5,7 @@ function LegalNav() {
     <nav className="sticky top-0 z-50 w-full border-b border-[#1A3066]/80 bg-[#060D1F]/95 backdrop-blur">
       <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2">
-          <img src="/logo-nav.png" alt="SportsMVP" className="h-8 object-contain" />
+          <img src="/logo-nav.png" alt="SportsMVP" className="h-12 object-contain" />
         </Link>
         <Link href="/picks" className="text-sm text-white/60 hover:text-white transition-colors">Back to App</Link>
       </div>
