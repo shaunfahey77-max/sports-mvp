@@ -1,0 +1,43 @@
+A bet logger is a great capstone feature — here's how I'd scope it:
+
+Bet Tracker — Feature Scope
+
+The core flow: Three views in one page at /tracker:
+
+1. Quick-Add Bet form
+A slide-in panel or modal — minimum taps to log a bet:
+
+League (NBA / NHL toggle)
+Matchup (free text or pick from today's games dropdown)
+Market (Moneyline / Spread / Total)
+Pick direction + line + odds
+Stake ($)
+Sportsbook (DraftKings, FanDuel, BetMGM, Caesars, PointsBet — dropdown)
+Optional notes
+"Log This Pick" shortcut button on every pick card in the Dashboard and Parlay Builder, pre-fills the form automatically.
+
+2. Bet Ledger
+All logged bets listed by date, with:
+
+Color-coded result status (Pending / Win / Loss / Push)
+Dollar P&L and unit P&L per bet
+One-tap to mark a result on any pending bet
+Filter by date range, league, market, sportsbook
+3. Summary Dashboard
+Stats panel at the top of the page:
+
+Total P&L in $ and units
+Win rate %
+ROI %
+Total amount wagered
+Current win/loss streak
+A P&L over time line chart (running balance, green/red fills)
+Data persistence note: Since SportsMVP doesn't have user accounts yet, bets would be stored in the browser (localStorage). This means they persist across sessions on the same device but don't sync across devices or browsers. When you add authentication later, the data layer can be migrated to the database with a user ID. This is the honest tradeoff — we can build the full UI and logic now without blocking on auth.
+
+My additional recommendations before launch:
+
+Three smaller things that would round out the premium offering significantly:
+
+Kelly Criterion stake sizing — A simple calculator that takes the platform's edge % and your bankroll and recommends an optimal bet size per pick. Very easy to build, extremely useful.
+"Log this pick" one-click integration — Surface a log button directly on the Dashboard and Parlay Builder so a user never has to re-enter what they're already looking at.
+Bankroll growth chart — A visual on the tracker page showing running balance over time if they were following the platform's picks. Converts users to subscribers when they see the hypothetical P&L.

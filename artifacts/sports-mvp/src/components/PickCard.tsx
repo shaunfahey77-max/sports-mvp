@@ -28,7 +28,7 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
   );
 }
 
-export function PickCard({ pick, highlight = false }: { pick: ScoredPick; highlight?: boolean }) {
+export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredPick; highlight?: boolean; onLogPick?: () => void }) {
   const matchup = parseGameMatchup(pick.gameKey, pick.league);
   const leagueLogo = getLeagueLogoUrl(pick.league);
 
@@ -139,6 +139,14 @@ export function PickCard({ pick, highlight = false }: { pick: ScoredPick; highli
           </span>
           <InfoTooltip content="Closing Line Value — how much the market moved in our favor after we published the pick. Positive CLV = we beat the closing line." />
         </div>
+      )}
+      {onLogPick && (
+        <button
+          onClick={onLogPick}
+          className="w-full text-[10px] font-bold uppercase tracking-wider text-[#4488FF] hover:text-[#FFC107] border-t border-[#1A3066] pt-2 transition-colors text-center"
+        >
+          + Log This Pick
+        </button>
       )}
     </Card>
   );

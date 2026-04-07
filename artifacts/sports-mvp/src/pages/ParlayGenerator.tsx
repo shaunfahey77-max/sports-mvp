@@ -17,7 +17,9 @@ import {
 } from "@/lib/utils";
 import { parseGameMatchup } from "@/lib/teamLogos";
 import { calcParlay, autoBuildParlay, americanToDecimal, decimalToAmerican } from "@/lib/parlayMath";
-import { X, Zap, AlertTriangle, ChevronDown, ChevronUp, Lock } from "lucide-react";
+import { AddBetPanel } from "@/components/AddBetPanel";
+import { addBet, LogPickData } from "@/lib/betTracker";
+import { X, Zap, AlertTriangle, ChevronDown, ChevronUp, Lock, BookOpen } from "lucide-react";
 
 // ─── Parlay Pick Row ──────────────────────────────────────────────────────────
 
@@ -118,10 +120,12 @@ function ParlaySlip({
   legs,
   onRemoveLeg,
   onClear,
+  onLogParlay,
 }: {
   legs: ScoredPick[];
   onRemoveLeg: (id: number) => void;
   onClear: () => void;
+  onLogParlay?: () => void;
 }) {
   const parlay = useMemo(() => calcParlay(legs), [legs]);
   const hasEnough = legs.length >= 2;
@@ -256,6 +260,16 @@ function ParlaySlip({
         </div>
       </div>
 
+      {onLogParlay && hasEnough && (
+        <button
+          onClick={onLogParlay}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded border border-[#4488FF]/40 text-[#4488FF] text-xs font-bold font-display uppercase tracking-wider hover:bg-[#4488FF]/10 transition-colors"
+        >
+          <BookOpen size={12} />
+          Log This Parlay
+        </button>
+      )}
+
       <div className="text-[9px] text-muted-foreground/60 leading-relaxed text-center">
         For entertainment and informational use only. Not financial advice. Bet responsibly.
       </div>
@@ -326,6 +340,8 @@ export function ParlayGenerator() {
   const [leagueFilter, setLeagueFilter] = useState<string | null>(null);
   const [marketFilter, setMarketFilter] = useState<string | null>(null);
   const [howOpen, setHowOpen] = useState(false);
+  const [parlayPanelOpen, setParlayPanelOpen] = useState(false);
+  const [parlayLogData, setParlayLogData] = useState<LogPickData | undefined>(undefined);
 
   const { data, isLoading } = useListPicks(
     { date: todayStr },
@@ -371,6 +387,24 @@ export function ParlayGenerator() {
   };
 
   const handleClear = () => setSelectedIds(new Set());
+
+  function handleLogParlay() {
+    const parlay = calcParlay(selectedLegs);
+    const legDescriptions = selectedLegs.map(leg => {
+      const matchup = parseGameMatchup(leg.gameKey, leg.league);
+      const isOver = leg.pick === 'over'; const isUnder = leg.pick === 'under'; const isHome = leg.pick === 'home';
+      const label = isOver ? 'OVER' : isUnder ? 'UNDER' : isHome ? (matchup?.homeAbbrev ?? 'HOME') : (matchup?.awayAbbrev ?? 'AWAY');
+      return label;
+    }).join(' + ');
+    setParlayLogData({
+      league: 'nba',
+      matchup: `${selectedLegs.length}-Leg Parlay`,
+      market: 'parlay',
+      pick: legDescriptions,
+      odds: parlay.americanOdds,
+    });
+    setParlayPanelOpen(true);
+  }
 
   const legCounts = [2, 3, 4, 5, 6];
   const proLocked = (n: number) => n >= 5;
@@ -521,9 +555,17 @@ export function ParlayGenerator() {
             legs={selectedLegs}
             onRemoveLeg={handleRemoveLeg}
             onClear={handleClear}
+            onLogParlay={handleLogParlay}
           />
         </div>
       </div>
+
+      <AddBetPanel
+        isOpen={parlayPanelOpen}
+        onClose={() => setParlayPanelOpen(false)}
+        onSubmit={(bet) => { addBet(bet); setParlayPanelOpen(false); }}
+        initialData={parlayLogData}
+      />
     </PageLayout>
   );
 }

@@ -1,12 +1,41 @@
 import { useState } from "react";
 import { useListPicks, useListCandidates, getListPicksQueryKey, getListCandidatesQueryKey } from "@workspace/api-client-react";
+import type { ScoredPick } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { PickCard } from "@/components/PickCard";
 import { CandidateCard } from "@/components/CandidateCard";
 import { TopPickCallout } from "@/components/TopPickCallout";
+import { AddBetPanel } from "@/components/AddBetPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { addBet, LogPickData } from "@/lib/betTracker";
+import { parseGameMatchup } from "@/lib/teamLogos";
+
+function pickToLogData(pick: ScoredPick): LogPickData {
+  const matchup = parseGameMatchup(pick.gameKey, pick.league);
+  const matchupStr = matchup ? `${matchup.awayAbbrev} @ ${matchup.homeAbbrev}` : pick.gameKey;
+  const pickIsOver = pick.pick === 'over';
+  const pickIsUnder = pick.pick === 'under';
+  const pickIsHome = pick.pick === 'home';
+  const pickLabel = pickIsOver ? 'OVER'
+    : pickIsUnder ? 'UNDER'
+    : pickIsHome ? (matchup?.homeAbbrev ?? 'HOME')
+    : (matchup?.awayAbbrev ?? 'AWAY');
+  const line = pick.publishLine != null && pick.publishLine !== '' ? ` ${Number(pick.publishLine) > 0 ? '+' : ''}${pick.publishLine}` : '';
+  return {
+    league: pick.league,
+    matchup: matchupStr,
+    gameKey: pick.gameKey,
+    market: pick.market,
+    pick: `${pickLabel}${line}`,
+    odds: Number(pick.publishOdds),
+    tier: pick.tier,
+    edge: Number(pick.edge),
+    ev: Number(pick.ev),
+    sourcePickId: pick.id,
+  };
+}
 
 function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
@@ -41,6 +70,13 @@ function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void })
 export function Dashboard() {
   const todayStr = format(new Date(), "yyyy-MM-dd");
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelData, setPanelData] = useState<LogPickData | undefined>(undefined);
+
+  function handleLogPick(pick: ScoredPick) {
+    setPanelData(pickToLogData(pick));
+    setPanelOpen(true);
+  }
 
   const { data: scoredPicksData, isLoading: loadingPicks } = useListPicks(
     { date: todayStr },
@@ -94,7 +130,7 @@ export function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {picks.map((pick, i) => (
               <div key={pick.id} className="animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both" style={{ animationDelay: `${i * 50}ms` }}>
-                <PickCard pick={pick} highlight={pick.id === topPickId} />
+                <PickCard pick={pick} highlight={pick.id === topPickId} onLogPick={() => handleLogPick(pick)} />
               </div>
             ))}
           </div>
@@ -127,6 +163,13 @@ export function Dashboard() {
           <p className="text-muted-foreground">The model hasn't found any edges worth betting. Sharp bettors wait for the right spots — check back later.</p>
         </div>
       )}
+
+      <AddBetPanel
+        isOpen={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        onSubmit={(bet) => { addBet(bet); setPanelOpen(false); }}
+        initialData={panelData}
+      />
     </PageLayout>
   );
 }

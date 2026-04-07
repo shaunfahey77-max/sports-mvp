@@ -13,6 +13,7 @@ import { History } from "./pages/History";
 import { Privacy } from "./pages/Privacy";
 import { Terms } from "./pages/Terms";
 import { ParlayGenerator } from "./pages/ParlayGenerator";
+import { Tracker } from "./pages/Tracker";
 
 // Configure axios base URL for generated orval hooks
 axios.defaults.baseURL = `${import.meta.env.BASE_URL.replace(/\/+$/, '')}/api`;
@@ -34,6 +35,7 @@ function Router() {
       <Route path="/performance" component={Performance} />
       <Route path="/history" component={History} />
       <Route path="/parlay" component={ParlayGenerator} />
+      <Route path="/tracker" component={Tracker} />
       <Route path="/privacy" component={Privacy} />
       <Route path="/terms" component={Terms} />
       <Route component={NotFound} />

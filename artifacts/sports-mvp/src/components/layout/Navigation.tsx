@@ -7,6 +7,7 @@ export function Navigation() {
   const links = [
     { href: "/picks", label: "Today's Picks" },
     { href: "/parlay", label: "Parlay Builder" },
+    { href: "/tracker", label: "Bet Tracker" },
     { href: "/performance", label: "Performance" },
     { href: "/history", label: "History" },
   ];
