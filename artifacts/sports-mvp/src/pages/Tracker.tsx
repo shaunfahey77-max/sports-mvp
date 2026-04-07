@@ -17,10 +17,51 @@ import {
   loadBankroll, saveBankroll, calcSummary, calcPnLCurve,
 } from "@/lib/betTracker";
 
+// ─── One-time seeder for April 7 DraftKings bets ──────────────────────────────
+
+const SEED_KEY = "sportsmvp_seed_apr7_2026";
+
+function seedApril7Bets() {
+  if (localStorage.getItem(SEED_KEY)) return;
+  const apr7: Omit<UserBet, "id" | "createdAt">[] = [
+    {
+      date: "2026-04-07",
+      league: "nba",
+      matchup: "2-Leg Parlay",
+      market: "parlay",
+      pick: "UNDER 240.5 (MIA@TOR) + OVER 220.5 (MIL@BKN)",
+      odds: 276,
+      stake: 10,
+      sportsbook: "DraftKings",
+      result: "pending",
+      profit: null,
+      notes: "+20% Parlay Boost applied",
+    },
+    {
+      date: "2026-04-07",
+      league: "nhl",
+      matchup: "3-Leg Parlay",
+      market: "parlay",
+      pick: "UNDER 6.5 (BOS@CAR) + OVER 6.5 (TB@OTT) + OVER 5.5 (PHI@NJ)",
+      odds: 614,
+      stake: 20,
+      sportsbook: "DraftKings",
+      result: "pending",
+      profit: null,
+      notes: "Boosted +20% — original +511",
+    },
+  ];
+  apr7.forEach((bet) => addBet(bet));
+  localStorage.setItem(SEED_KEY, "1");
+}
+
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
 function useBets() {
-  const [bets, setBets] = useState<UserBet[]>(() => loadBets());
+  const [bets, setBets] = useState<UserBet[]>(() => {
+    seedApril7Bets();
+    return loadBets();
+  });
   const add = useCallback((data: Omit<UserBet, "id" | "createdAt">) => {
     addBet(data);
     setBets(loadBets());
