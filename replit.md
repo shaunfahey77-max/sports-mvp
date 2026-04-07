@@ -44,6 +44,21 @@ Premium sports prediction and scoring engine for NBA, NCAAM, and NHL betting mar
 
 Full brand details: `.local/brand-guidelines.md`
 
+## Frontend — SportsMVP (`artifacts/sports-mvp`)
+
+React + Vite subscriber-facing dashboard at preview path `/`.
+
+**Pages:**
+- `/` — Today's Action: candidate picks with tier badges, league/market labels, EV%, edge%, result
+- `/performance` — Model Performance: rolling analytics (win rate, ROI, units won, Brier score, CLV hit rate) with 14/30/45-day window toggle + tier/league/market breakdowns
+- `/history` — Pick History: filterable grid of all historical picks
+
+**Brand applied**: Dark navy theme (page BG `#060D1F`, card `#0D1B3E`), Montserrat + Roboto fonts, tier badges (A=gold, B=blue, C=slate), result indicators (win=green, loss=red)
+
+**Logos copied to `public/`**: `logo-shield.png` (hero), `logo-nav.png` (navbar)
+
+**API integration**: axios default baseURL set to `/api`, uses orval-generated hooks from `@workspace/api-client-react`
+
 ## Architecture
 
 ### Prediction Layer (`artifacts/api-server/src/prediction/`)

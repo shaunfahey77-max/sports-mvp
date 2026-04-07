@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "SportsMVP"
+version = "1.0.0"
+id = "artifacts/sports-mvp"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24487
+
+[services.development]
+run = "pnpm --filter @workspace/sports-mvp run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/sports-mvp", "run", "build" ]
+publicDir = "artifacts/sports-mvp/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24487"
+BASE_PATH = "/"
