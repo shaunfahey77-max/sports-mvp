@@ -29,7 +29,7 @@ function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void })
             <p><strong className="text-foreground">Edge</strong> is the gap between our calibrated probability and the book's true fair probability (after removing the vig). <strong className="text-foreground">EV</strong> is the estimated profit per $100 wagered. Both should be positive to bet.</p>
           </div>
           <div>
-            <div className="text-[#0033A0] font-bold font-display mb-1 uppercase text-xs tracking-wider">Matchup</div>
+            <div className="text-[#4488FF] font-bold font-display mb-1 uppercase text-xs tracking-wider">Matchup</div>
             <p>The highlighted team or side is our pick. <strong className="text-foreground">HOME</strong> = home team, <strong className="text-foreground">AWAY</strong> = away team. For totals, <strong className="text-foreground">OVER/UNDER</strong> refers to the posted total. Odds are shown in American format.</p>
           </div>
         </div>
@@ -72,7 +72,7 @@ export function Dashboard() {
             <p className="text-muted-foreground mt-1">{format(new Date(), "EEEE, MMMM do, yyyy")}</p>
           </div>
         </div>
-        <div className="text-sm font-display font-bold uppercase tracking-widest text-[#0033A0]">
+        <div className="text-sm font-display font-bold uppercase tracking-widest text-[#4488FF]">
           Bet Like an MVP.
         </div>
       </div>

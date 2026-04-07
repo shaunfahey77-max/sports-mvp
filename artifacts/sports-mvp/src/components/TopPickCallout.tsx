@@ -99,7 +99,7 @@ export function TopPickCallout({ picks = [], candidates = [] }: TopPickCalloutPr
               {publishLine !== null && publishLine !== undefined && (
                 <span className="text-muted-foreground text-xl">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>
               )}
-              <span className="text-[#0033A0] text-xl">{formatOdds(publishOdds)}</span>
+              <span className="text-[#4488FF] text-xl">{formatOdds(publishOdds)}</span>
             </div>
           </div>
         </div>

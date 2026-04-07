@@ -125,13 +125,15 @@ function LandingNav() {
 function HeroSection() {
   return (
     <section className="relative overflow-hidden py-20 lg:py-28">
-      {/* Decorative background */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[600px] rounded-full bg-[#0033A0]/10 blur-[120px]" />
-        <div className="absolute bottom-0 right-0 w-[400px] h-[400px] rounded-full bg-[#FFC107]/5 blur-[100px]" />
-        <div className="absolute inset-0 opacity-[0.03]"
-          style={{ backgroundImage: "radial-gradient(circle, #ffffff 1px, transparent 1px)", backgroundSize: "32px 32px" }}
+      {/* Sportsbook background image */}
+      <div className="absolute inset-0">
+        <img
+          src="/sportsbook-hero.jpg"
+          alt=""
+          className="w-full h-full object-cover object-center"
         />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#060D1F] via-[#060D1F]/92 to-[#060D1F]/65" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#060D1F] via-transparent to-[#060D1F]/40" />
       </div>
 
       <div className="relative max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-12 items-center">
@@ -243,7 +245,7 @@ function TodaysTopPick() {
         </div>
 
         <div className="text-center mt-8">
-          <Link href="/picks" className="inline-flex items-center gap-2 text-[#0033A0] hover:text-[#4488FF] font-semibold text-sm transition-colors">
+          <Link href="/picks" className="inline-flex items-center gap-2 text-[#4488FF] hover:text-[#6699FF] font-semibold text-sm transition-colors">
             View all today's picks <ArrowRight size={14} />
           </Link>
         </div>
@@ -288,7 +290,7 @@ function TopPickCard({ pick }: { pick: any }) {
         <div className="flex items-baseline gap-3 mb-5">
           <span className="text-3xl font-black font-display text-white">{pick.pick.toUpperCase()}</span>
           {publishLine !== null && <span className="text-2xl font-bold text-white/60">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>}
-          <span className="text-2xl font-bold text-[#0033A0]">{formatOdds(publishOdds)}</span>
+          <span className="text-2xl font-bold text-[#4488FF]">{formatOdds(publishOdds)}</span>
         </div>
 
         <div className="grid grid-cols-3 gap-4 pt-4 border-t border-[#1A3066]">
@@ -334,7 +336,7 @@ function HowItWorks() {
       <div className="max-w-7xl mx-auto px-6">
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           <div>
-            <div className="text-[#0033A0] text-xs font-bold tracking-widest uppercase mb-3">Process</div>
+            <div className="text-[#4488FF] text-xs font-bold tracking-widest uppercase mb-3">Process</div>
             <h2 className="text-4xl font-black font-display text-white mb-4 leading-tight">
               How SportsMVP Works
             </h2>
@@ -345,7 +347,7 @@ function HowItWorks() {
             <div className="space-y-8">
               {steps.map((step) => (
                 <div key={step.num} className="flex gap-5">
-                  <div className="text-3xl font-black font-display text-[#0033A0]/40 leading-none w-10 shrink-0">{step.num}</div>
+                  <div className="text-3xl font-black font-display text-[#4488FF]/40 leading-none w-10 shrink-0">{step.num}</div>
                   <div>
                     <div className="text-white font-bold mb-1">{step.title}</div>
                     <div className="text-white/50 text-sm leading-relaxed">{step.desc}</div>
@@ -401,15 +403,15 @@ function FeaturesSection() {
     <section id="features" className="py-24 bg-[#060D1F]">
       <div className="max-w-7xl mx-auto px-6">
         <div className="text-center mb-14">
-          <div className="text-[#0033A0] text-xs font-bold tracking-widest uppercase mb-3">What You Get</div>
+          <div className="text-[#4488FF] text-xs font-bold tracking-widest uppercase mb-3">What You Get</div>
           <h2 className="text-4xl font-black font-display text-white">Built for Serious Bettors</h2>
           <p className="text-white/50 mt-3 max-w-xl mx-auto">Every feature is designed around the principle that you deserve to see the math, not just the pick.</p>
         </div>
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {FEATURES.map((f) => (
-            <div key={f.title} className="bg-[#0D1B3E] border border-[#1A3066] rounded-2xl p-6 hover:border-[#0033A0]/50 transition-colors group">
-              <div className="w-10 h-10 rounded-xl bg-[#0033A0]/20 flex items-center justify-center mb-4 group-hover:bg-[#0033A0]/30 transition-colors">
-                <f.icon size={20} className="text-[#0033A0]" />
+            <div key={f.title} className="bg-[#0D1B3E] border border-[#1A3066] rounded-2xl p-6 hover:border-[#4488FF]/30 transition-colors group">
+              <div className="w-10 h-10 rounded-xl bg-[#4488FF]/10 flex items-center justify-center mb-4 group-hover:bg-[#4488FF]/20 transition-colors">
+                <f.icon size={20} className="text-[#4488FF]" />
               </div>
               <h3 className="text-white font-bold mb-2">{f.title}</h3>
               <p className="text-white/50 text-sm leading-relaxed">{f.desc}</p>

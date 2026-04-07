@@ -103,7 +103,7 @@ export function Privacy() {
         </div>
 
         <div className="mt-12 pt-8 border-t border-[#1A3066] flex gap-6">
-          <Link href="/terms" className="text-[#0033A0] hover:text-[#4488FF] text-sm transition-colors">Terms of Service</Link>
+          <Link href="/terms" className="text-[#4488FF] hover:text-[#6699FF] text-sm transition-colors">Terms of Service</Link>
           <Link href="/" className="text-white/40 hover:text-white/70 text-sm transition-colors">Back to Home</Link>
         </div>
       </div>

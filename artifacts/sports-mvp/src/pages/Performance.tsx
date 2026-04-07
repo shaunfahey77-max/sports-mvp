@@ -44,7 +44,7 @@ function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void })
           </div>
           <div>
             <div className="text-white font-bold font-display mb-1 uppercase text-xs tracking-wider">4. Tier Assignment</div>
-            <p>The top-ranked picks above minimum thresholds are assigned tiers: <strong className="text-[#FFC107]">A ≥ 0.65</strong>, <strong className="text-[#0033A0]">B ≥ 0.50</strong>, <strong className="text-[#424242]">C ≥ 0.35</strong>. Below 0.35 is a PASS. Only tiers A–C are published.</p>
+            <p>The top-ranked picks above minimum thresholds are assigned tiers: <strong className="text-[#FFC107]">A ≥ 0.65</strong>, <strong className="text-[#4488FF]">B ≥ 0.50</strong>, <strong className="text-[#424242]">C ≥ 0.35</strong>. Below 0.35 is a PASS. Only tiers A–C are published.</p>
           </div>
         </div>
       )}
