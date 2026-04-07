@@ -266,15 +266,15 @@ function TopPickCard({ pick }: { pick: any }) {
       <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
         style={{ backgroundImage: "repeating-linear-gradient(45deg,#FFC107 0,#FFC107 1px,transparent 0,transparent 50%)", backgroundSize: "12px 12px" }}
       />
-      <div className="relative">
-        <div className="flex items-center gap-2 mb-4">
+      <div className="relative text-center">
+        <div className="flex items-center justify-center gap-2 mb-4">
           <Star size={13} className="text-[#FFC107] fill-[#FFC107]" />
           <span className="text-[#FFC107] text-xs font-bold tracking-widest uppercase">Top Pick of the Day</span>
           <span className="bg-[#FFC107] text-[#060D1F] text-[10px] font-black px-1.5 py-0.5 rounded font-display">TIER {pick.tier}</span>
         </div>
 
         {matchup && (
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center justify-center gap-3 mb-3">
             <div className="flex items-center gap-1.5">
               <img src={getTeamLogoUrl(pick.league, matchup.awayAbbrev) ?? undefined} className="h-9 w-9 object-contain drop-shadow" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} alt="" />
               <span className={`text-lg font-black font-display ${pick.pick === 'away' ? 'text-white' : 'text-white/40'}`}>{matchup.awayAbbrev.toUpperCase()}</span>
@@ -287,7 +287,7 @@ function TopPickCard({ pick }: { pick: any }) {
           </div>
         )}
 
-        <div className="flex items-baseline gap-3 mb-5">
+        <div className="flex items-baseline justify-center gap-3 mb-5">
           <span className="text-3xl font-black font-display text-white">{pick.pick.toUpperCase()}</span>
           {publishLine !== null && <span className="text-2xl font-bold text-white/60">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>}
           <span className="text-2xl font-bold text-[#4488FF]">{formatOdds(publishOdds)}</span>
