@@ -1,0 +1,31 @@
+kind = "slides"
+previewPath = "/competitive-analysis/"
+title = "SportsMVP Competitive Analysis"
+version = "1.0.0"
+id = "artifacts/competitive-analysis"
+router = "path"
+
+[[integratedSkills]]
+name = "slides"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/competitive-analysis/" ]
+localPort = 20469
+
+[services.development]
+run = "pnpm --filter @workspace/competitive-analysis run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/competitive-analysis", "run", "build" ]
+publicDir = "artifacts/competitive-analysis/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20469"
+BASE_PATH = "/competitive-analysis/"

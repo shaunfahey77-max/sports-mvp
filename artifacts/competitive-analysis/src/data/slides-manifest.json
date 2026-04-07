@@ -1,0 +1,58 @@
+[
+  {
+    "id": "c1a2b3d4-0001-4abc-8def-111111111111",
+    "position": 1,
+    "filepath": "src/pages/slides/Slide01Title.tsx",
+    "title": "Title — Competitive Analysis",
+    "description": "SportsMVP vs. the AI sports picks landscape",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c1a2b3d4-0002-4abc-8def-222222222222",
+    "position": 2,
+    "filepath": "src/pages/slides/Slide02Landscape.tsx",
+    "title": "Competitive Landscape",
+    "description": "The five categories of competitors",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c1a2b3d4-0003-4abc-8def-333333333333",
+    "position": 3,
+    "filepath": "src/pages/slides/Slide03FeatureMatrix.tsx",
+    "title": "Feature Matrix",
+    "description": "Head-to-head feature comparison across 6 competitors",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c1a2b3d4-0004-4abc-8def-444444444444",
+    "position": 4,
+    "filepath": "src/pages/slides/Slide04Positioning.tsx",
+    "title": "Positioning Map",
+    "description": "Transparency vs. Breadth — where SportsMVP wins",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c1a2b3d4-0005-4abc-8def-555555555555",
+    "position": 5,
+    "filepath": "src/pages/slides/Slide05WhiteSpace.tsx",
+    "title": "White Space & Opportunities",
+    "description": "The gaps no competitor fills well",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c1a2b3d4-0006-4abc-8def-666666666666",
+    "position": 6,
+    "filepath": "src/pages/slides/Slide06Pricing.tsx",
+    "title": "Pricing Comparison",
+    "description": "SportsMVP pricing vs. the market",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c1a2b3d4-0007-4abc-8def-777777777777",
+    "position": 7,
+    "filepath": "src/pages/slides/Slide07ActionPlan.tsx",
+    "title": "Strategic Recommendations",
+    "description": "Three specific actions to win",
+    "speakerNotes": ""
+  }
+]
