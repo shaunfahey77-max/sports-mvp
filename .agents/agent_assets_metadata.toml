@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "vNJWiaeHfGNIJXh_YSrJZ"
+uri = "file://competitive-analysis.md"
+type = "text"
+title = "SportsMVP Competitive Analysis — Pricing & Feature Comparison"

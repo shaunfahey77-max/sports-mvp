@@ -1,7 +1,6 @@
 import { getTeamAbbrev } from "./teamAbbreviations";
 
 const BASE = "https://api.the-odds-api.com/v4";
-const BOOK_PRIORITY = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus", "williamhill_us", "bovada"];
 
 export const SPORT_KEYS: Record<string, string> = {
   nba: "basketball_nba",
@@ -100,8 +99,170 @@ export async function fetchScores(sportKey: string, daysFrom: number): Promise<F
   });
 }
 
-/** Pick the best bookmaker line from priority list, falling back to first available */
+// ---------------------------------------------------------------------------
+// Best-Line Shopping: picks the best available price / line across ALL books
+// ---------------------------------------------------------------------------
+
+interface BestH2H {
+  homeOdds: number;
+  awayOdds: number;
+  homeBook: string;
+  awayBook: string;
+}
+
+interface BestSpread {
+  homePoint: number;
+  homeOdds: number;
+  awayPoint: number;
+  awayOdds: number;
+  homeBook: string;
+  awayBook: string;
+}
+
+interface BestTotal {
+  overPoint: number;
+  overOdds: number;
+  underPoint: number;
+  underOdds: number;
+  overBook: string;
+  underBook: string;
+}
+
+export interface BestLines {
+  h2h: BestH2H | null;
+  spread: BestSpread | null;
+  total: BestTotal | null;
+}
+
+/**
+ * Converts American odds to decimal for comparison purposes.
+ * Higher decimal = better payout for the bettor.
+ */
+function americanToDecimal(american: number): number {
+  if (american >= 100) return american / 100 + 1;
+  return 100 / Math.abs(american) + 1;
+}
+
+/**
+ * For spread shopping: compute a score for a home side (point, price) combination.
+ * Lower point spread (e.g., -1.5 vs -3.5) at similar juice is better for home.
+ * We score as: decimal_odds * spread_adjustment_factor
+ */
+function spreadHomeScore(point: number, price: number): number {
+  const decimal = americanToDecimal(price);
+  // Every 0.5 points of spread is worth roughly 2% probability
+  const spreadAdj = Math.exp(point * 0.04); // higher point = better for home (less negative)
+  return decimal * spreadAdj;
+}
+
+/**
+ * Scan all bookmakers and pick the best available line for each market/side.
+ */
+export function pickBestLines(bookmakers: OddsBookmaker[], homeTeam: string, awayTeam: string): BestLines {
+  let bestHome: { odds: number; book: string } | null = null;
+  let bestAway: { odds: number; book: string } | null = null;
+  let bestSpreadHome: { point: number; odds: number; book: string; score: number } | null = null;
+  let bestSpreadAway: { point: number; odds: number; book: string; score: number } | null = null;
+  let bestOver: { point: number; odds: number; book: string } | null = null;
+  let bestUnder: { point: number; odds: number; book: string } | null = null;
+
+  for (const bk of bookmakers) {
+    // --- Moneyline (h2h) ---
+    const h2h = bk.markets.find((m) => m.key === "h2h");
+    if (h2h) {
+      const homeOut = h2h.outcomes.find((o) => o.name === homeTeam);
+      const awayOut = h2h.outcomes.find((o) => o.name === awayTeam);
+      if (homeOut) {
+        const homeDecimal = americanToDecimal(homeOut.price);
+        if (!bestHome || homeDecimal > americanToDecimal(bestHome.odds)) {
+          bestHome = { odds: homeOut.price, book: bk.key };
+        }
+      }
+      if (awayOut) {
+        const awayDecimal = americanToDecimal(awayOut.price);
+        if (!bestAway || awayDecimal > americanToDecimal(bestAway.odds)) {
+          bestAway = { odds: awayOut.price, book: bk.key };
+        }
+      }
+    }
+
+    // --- Spreads ---
+    const spreads = bk.markets.find((m) => m.key === "spreads");
+    if (spreads) {
+      const homeOut = spreads.outcomes.find((o) => o.name === homeTeam);
+      const awayOut = spreads.outcomes.find((o) => o.name === awayTeam);
+      if (homeOut?.point != null) {
+        const score = spreadHomeScore(homeOut.point, homeOut.price);
+        if (!bestSpreadHome || score > bestSpreadHome.score) {
+          bestSpreadHome = { point: homeOut.point, odds: homeOut.price, book: bk.key, score };
+        }
+      }
+      if (awayOut?.point != null) {
+        // Away score: higher point (less negative) is better; mirror of home
+        const score = spreadHomeScore(-awayOut.point, awayOut.price);
+        if (!bestSpreadAway || score > bestSpreadAway.score) {
+          bestSpreadAway = { point: awayOut.point, odds: awayOut.price, book: bk.key, score };
+        }
+      }
+    }
+
+    // --- Totals ---
+    const totals = bk.markets.find((m) => m.key === "totals");
+    if (totals) {
+      const overOut = totals.outcomes.find((o) => o.name === "Over");
+      const underOut = totals.outcomes.find((o) => o.name === "Under");
+      if (overOut?.point != null) {
+        // For over: lower total + better price is more favorable
+        const overScore = americanToDecimal(overOut.price) * Math.exp(-overOut.point * 0.02);
+        const prevScore = bestOver ? americanToDecimal(bestOver.odds) * Math.exp(-bestOver.point * 0.02) : -Infinity;
+        if (overScore > prevScore) {
+          bestOver = { point: overOut.point, odds: overOut.price, book: bk.key };
+        }
+      }
+      if (underOut?.point != null) {
+        // For under: higher total + better price is more favorable
+        const underScore = americanToDecimal(underOut.price) * Math.exp(underOut.point * 0.02);
+        const prevScore = bestUnder ? americanToDecimal(bestUnder.odds) * Math.exp(bestUnder.point * 0.02) : -Infinity;
+        if (underScore > prevScore) {
+          bestUnder = { point: underOut.point, odds: underOut.price, book: bk.key };
+        }
+      }
+    }
+  }
+
+  return {
+    h2h:
+      bestHome && bestAway
+        ? { homeOdds: bestHome.odds, awayOdds: bestAway.odds, homeBook: bestHome.book, awayBook: bestAway.book }
+        : null,
+    spread:
+      bestSpreadHome && bestSpreadAway
+        ? {
+            homePoint: bestSpreadHome.point,
+            homeOdds: bestSpreadHome.odds,
+            awayPoint: bestSpreadAway.point,
+            awayOdds: bestSpreadAway.odds,
+            homeBook: bestSpreadHome.book,
+            awayBook: bestSpreadAway.book,
+          }
+        : null,
+    total:
+      bestOver && bestUnder
+        ? {
+            overPoint: bestOver.point,
+            overOdds: bestOver.odds,
+            underPoint: bestUnder.point,
+            underOdds: bestUnder.odds,
+            overBook: bestOver.book,
+            underBook: bestUnder.book,
+          }
+        : null,
+  };
+}
+
+/** @deprecated Use pickBestLines instead */
 export function pickBestBookmaker(bookmakers: OddsBookmaker[], marketKey: string): OddsMarket | null {
+  const BOOK_PRIORITY = ["draftkings", "fanduel", "betmgm", "caesars", "pointsbetus", "williamhill_us", "bovada"];
   for (const bk of BOOK_PRIORITY) {
     const found = bookmakers.find((b) => b.key === bk);
     if (found) {
@@ -109,7 +270,6 @@ export function pickBestBookmaker(bookmakers: OddsBookmaker[], marketKey: string
       if (mkt && mkt.outcomes.length > 0) return mkt;
     }
   }
-  // Fallback: first bookmaker that has this market
   for (const bk of bookmakers) {
     const mkt = bk.markets.find((m) => m.key === marketKey);
     if (mkt && mkt.outcomes.length > 0) return mkt;
@@ -131,40 +291,23 @@ export interface TransformedSnapshot {
   publishOverLine: number | null;
   publishUnderLine: number | null;
   snapshotDate: string;
+  bestBooks: {
+    moneylineHome?: string;
+    moneylineAway?: string;
+    spreadHome?: string;
+    spreadAway?: string;
+    totalOver?: string;
+    totalUnder?: string;
+  };
 }
 
+/**
+ * Transform a raw OddsGame into our internal snapshot format,
+ * using best available line across ALL bookmakers.
+ */
 export function transformGame(game: OddsGame, league: string): TransformedSnapshot | null {
-  const h2h = pickBestBookmaker(game.bookmakers, "h2h");
-  if (!h2h) return null;
-
-  const homeH2h = h2h.outcomes.find((o) => o.name === game.home_team);
-  const awayH2h = h2h.outcomes.find((o) => o.name === game.away_team);
-  if (!homeH2h || !awayH2h) return null;
-
-  const spreads = pickBestBookmaker(game.bookmakers, "spreads");
-  let publishSpread: number | null = null;
-  let publishSpreadLine: number | null = null;
-  if (spreads) {
-    const homeSpread = spreads.outcomes.find((o) => o.name === game.home_team);
-    if (homeSpread?.point != null) {
-      publishSpread = homeSpread.point;
-      publishSpreadLine = homeSpread.price;
-    }
-  }
-
-  const totals = pickBestBookmaker(game.bookmakers, "totals");
-  let publishTotal: number | null = null;
-  let publishOverLine: number | null = null;
-  let publishUnderLine: number | null = null;
-  if (totals) {
-    const over = totals.outcomes.find((o) => o.name === "Over");
-    const under = totals.outcomes.find((o) => o.name === "Under");
-    if (over?.point != null) {
-      publishTotal = over.point;
-      publishOverLine = over.price;
-      publishUnderLine = under?.price ?? over.price;
-    }
-  }
+  const best = pickBestLines(game.bookmakers, game.home_team, game.away_team);
+  if (!best.h2h) return null;
 
   const date = game.commence_time.split("T")[0];
   const awayAbbrev = getTeamAbbrev(game.away_team, league);
@@ -177,13 +320,21 @@ export function transformGame(game: OddsGame, league: string): TransformedSnapsh
     eventStart: game.commence_time,
     homeTeam: game.home_team,
     awayTeam: game.away_team,
-    homePublishMl: homeH2h.price,
-    awayPublishMl: awayH2h.price,
-    publishSpread,
-    publishSpreadLine,
-    publishTotal,
-    publishOverLine,
-    publishUnderLine,
+    homePublishMl: best.h2h.homeOdds,
+    awayPublishMl: best.h2h.awayOdds,
+    publishSpread: best.spread?.homePoint ?? null,
+    publishSpreadLine: best.spread?.homeOdds ?? null,
+    publishTotal: best.total?.overPoint ?? null,
+    publishOverLine: best.total?.overOdds ?? null,
+    publishUnderLine: best.total?.underOdds ?? null,
     snapshotDate: date,
+    bestBooks: {
+      moneylineHome: best.h2h.homeBook,
+      moneylineAway: best.h2h.awayBook,
+      spreadHome: best.spread?.homeBook,
+      spreadAway: best.spread?.awayBook,
+      totalOver: best.total?.overBook,
+      totalUnder: best.total?.underBook,
+    },
   };
 }
