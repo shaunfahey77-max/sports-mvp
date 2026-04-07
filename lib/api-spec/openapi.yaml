@@ -3,20 +3,27 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Sports prediction engine API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: snapshots
+    description: Game snapshot management
+  - name: picks
+    description: Prediction picks and scoring
+  - name: performance
+    description: Validation and performance metrics
+  - name: simulation
+    description: 45-day simulation engine
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +31,296 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /snapshots:
+    get:
+      operationId: listSnapshots
+      tags: [snapshots]
+      summary: List game snapshots
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            description: YYYY-MM-DD
+        - name: league
+          in: query
+          schema:
+            $ref: "#/components/schemas/League"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/GameStatus"
+      responses:
+        "200":
+          description: List of snapshots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GameSnapshot"
+
+  /snapshots/generate:
+    post:
+      operationId: generateSnapshots
+      tags: [snapshots]
+      summary: Generate game snapshots for a date
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateSnapshotsRequest"
+      responses:
+        "200":
+          description: Generation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineResult"
+
+  /snapshots/finalize:
+    post:
+      operationId: finalizeCloses
+      tags: [snapshots]
+      summary: Finalize closing lines for a date
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinalizeDateRequest"
+      responses:
+        "200":
+          description: Finalization result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineResult"
+
+  /picks:
+    get:
+      operationId: listPicks
+      tags: [picks]
+      summary: List scored picks with filters
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+        - name: league
+          in: query
+          schema:
+            $ref: "#/components/schemas/League"
+        - name: market
+          in: query
+          schema:
+            $ref: "#/components/schemas/MarketType"
+        - name: tier
+          in: query
+          schema:
+            $ref: "#/components/schemas/Tier"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: List of picks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListPicksResponse"
+
+  /picks/candidates:
+    get:
+      operationId: listCandidates
+      tags: [picks]
+      summary: List candidate bets (pre-scored)
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+        - name: league
+          in: query
+          schema:
+            $ref: "#/components/schemas/League"
+        - name: market
+          in: query
+          schema:
+            $ref: "#/components/schemas/MarketType"
+        - name: tier
+          in: query
+          schema:
+            $ref: "#/components/schemas/Tier"
+      responses:
+        "200":
+          description: List of candidates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CandidateBet"
+
+  /picks/score:
+    post:
+      operationId: scoreDate
+      tags: [picks]
+      summary: Run the full prediction and scoring pipeline for a date
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScoreDateRequest"
+      responses:
+        "200":
+          description: Scoring result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScoreDateResult"
+
+  /picks/validate:
+    post:
+      operationId: validatePicks
+      tags: [picks]
+      summary: Score outcomes for finalized picks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FinalizeDateRequest"
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineResult"
+
+  /performance:
+    get:
+      operationId: getPerformance
+      tags: [performance]
+      summary: Get rolling performance metrics
+      parameters:
+        - name: league
+          in: query
+          schema:
+            $ref: "#/components/schemas/League"
+        - name: market
+          in: query
+          schema:
+            $ref: "#/components/schemas/MarketType"
+        - name: window
+          in: query
+          schema:
+            type: integer
+            enum: [14, 30, 45]
+            default: 30
+      responses:
+        "200":
+          description: Performance metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PerformanceMetrics"
+
+  /performance/history:
+    get:
+      operationId: getPerformanceHistory
+      tags: [performance]
+      summary: Get performance metric history
+      parameters:
+        - name: league
+          in: query
+          schema:
+            $ref: "#/components/schemas/League"
+        - name: market
+          in: query
+          schema:
+            $ref: "#/components/schemas/MarketType"
+        - name: days
+          in: query
+          schema:
+            type: integer
+            default: 45
+      responses:
+        "200":
+          description: Historical performance records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ValidationMetricRecord"
+
+  /simulate:
+    post:
+      operationId: startSimulation
+      tags: [simulation]
+      summary: Start a 45-day simulation run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SimulationRequest"
+      responses:
+        "201":
+          description: Simulation started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulationRun"
+
+  /simulate/{runId}:
+    get:
+      operationId: getSimulation
+      tags: [simulation]
+      summary: Get simulation run status and results
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Simulation run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulationRun"
+        "404":
+          description: Not found
+
+  /simulate/list:
+    get:
+      operationId: listSimulations
+      tags: [simulation]
+      summary: List all simulation runs
+      responses:
+        "200":
+          description: List of simulation runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SimulationRun"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +331,655 @@ components:
       required:
         - status
 
+    League:
+      type: string
+      enum: [nba, ncaam, nhl]
+
+    MarketType:
+      type: string
+      enum: [moneyline, spread, total]
+
+    Side:
+      type: string
+      enum: [home, away, over, under]
+
+    Tier:
+      type: string
+      enum: [A, B, C, PASS]
+
+    CalibrationMethod:
+      type: string
+      enum: [sigmoid, isotonic, none]
+
+    GameStatus:
+      type: string
+      enum: [scheduled, in_progress, final, cancelled]
+
+    PickResult:
+      type: string
+      enum: [win, loss, push, pending]
+
+    GameSnapshot:
+      type: object
+      properties:
+        id:
+          type: integer
+        gameKey:
+          type: string
+        league:
+          $ref: "#/components/schemas/League"
+        eventStart:
+          type: string
+          format: date-time
+        homeTeam:
+          type: string
+        awayTeam:
+          type: string
+        homePublishMl:
+          type: number
+        awayPublishMl:
+          type: number
+        homeCloseMl:
+          type: number
+          nullable: true
+        awayCloseMl:
+          type: number
+          nullable: true
+        publishSpread:
+          type: number
+          nullable: true
+        publishSpreadLine:
+          type: number
+          nullable: true
+        closeSpread:
+          type: number
+          nullable: true
+        closeSpreadLine:
+          type: number
+          nullable: true
+        publishTotal:
+          type: number
+          nullable: true
+        publishOverLine:
+          type: number
+          nullable: true
+        publishUnderLine:
+          type: number
+          nullable: true
+        closeTotal:
+          type: number
+          nullable: true
+        closeOverLine:
+          type: number
+          nullable: true
+        closeUnderLine:
+          type: number
+          nullable: true
+        homeScore:
+          type: integer
+          nullable: true
+        awayScore:
+          type: integer
+          nullable: true
+        status:
+          $ref: "#/components/schemas/GameStatus"
+        snapshotDate:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - gameKey
+        - league
+        - eventStart
+        - homeTeam
+        - awayTeam
+        - homePublishMl
+        - awayPublishMl
+        - status
+        - snapshotDate
+        - createdAt
+
+    CandidateBet:
+      type: object
+      properties:
+        id:
+          type: integer
+        gameKey:
+          type: string
+        league:
+          $ref: "#/components/schemas/League"
+        marketType:
+          $ref: "#/components/schemas/MarketType"
+        side:
+          $ref: "#/components/schemas/Side"
+        eventStart:
+          type: string
+          format: date-time
+        publishOdds:
+          type: number
+        publishLine:
+          type: number
+          nullable: true
+        modelProbRaw:
+          type: number
+        modelProbCalibrated:
+          type: number
+        marketProbFair:
+          type: number
+        edge:
+          type: number
+        ev:
+          type: number
+        rankScore:
+          type: number
+        tier:
+          $ref: "#/components/schemas/Tier"
+        calibrationMethod:
+          $ref: "#/components/schemas/CalibrationMethod"
+        calibrationVersion:
+          type: string
+        marketQuality:
+          type: number
+        selectionReason:
+          type: string
+          nullable: true
+        snapshotDate:
+          type: string
+        modelVersion:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - gameKey
+        - league
+        - marketType
+        - side
+        - eventStart
+        - publishOdds
+        - modelProbRaw
+        - modelProbCalibrated
+        - marketProbFair
+        - edge
+        - ev
+        - rankScore
+        - tier
+        - calibrationMethod
+        - calibrationVersion
+        - marketQuality
+        - snapshotDate
+        - modelVersion
+        - createdAt
+
+    ScoredPick:
+      type: object
+      properties:
+        id:
+          type: integer
+        date:
+          type: string
+        gameKey:
+          type: string
+        league:
+          $ref: "#/components/schemas/League"
+        market:
+          $ref: "#/components/schemas/MarketType"
+        pick:
+          type: string
+        result:
+          $ref: "#/components/schemas/PickResult"
+        publishOdds:
+          type: number
+        publishLine:
+          type: number
+          nullable: true
+        closeOdds:
+          type: number
+          nullable: true
+        closeLine:
+          type: number
+          nullable: true
+        modelProbRaw:
+          type: number
+        modelProbCalibrated:
+          type: number
+        marketProbFair:
+          type: number
+        edge:
+          type: number
+        ev:
+          type: number
+        rankScore:
+          type: number
+        tier:
+          $ref: "#/components/schemas/Tier"
+        clvLineDelta:
+          type: number
+          nullable: true
+        clvImpliedDelta:
+          type: number
+          nullable: true
+        modelVersion:
+          type: string
+        scoringVersion:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - date
+        - gameKey
+        - league
+        - market
+        - pick
+        - result
+        - publishOdds
+        - modelProbRaw
+        - modelProbCalibrated
+        - marketProbFair
+        - edge
+        - ev
+        - rankScore
+        - tier
+        - modelVersion
+        - scoringVersion
+        - createdAt
+
+    PerformanceMetrics:
+      type: object
+      properties:
+        windowDays:
+          type: integer
+        league:
+          type: string
+          nullable: true
+        market:
+          type: string
+          nullable: true
+        totalPicks:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        pushes:
+          type: integer
+        roi:
+          type: number
+        winRate:
+          type: number
+        unitsWon:
+          type: number
+        maxDrawdown:
+          type: number
+        avgEv:
+          type: number
+        avgEdge:
+          type: number
+        clvHitRate:
+          type: number
+        avgClv:
+          type: number
+        brierScore:
+          type: number
+        logLoss:
+          type: number
+        passRate:
+          type: number
+        picksPerDay:
+          type: number
+        tierBreakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        leagueBreakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        marketBreakdown:
+          type: object
+          additionalProperties:
+            type: integer
+      required:
+        - windowDays
+        - totalPicks
+        - wins
+        - losses
+        - pushes
+        - roi
+        - winRate
+        - unitsWon
+        - maxDrawdown
+        - avgEv
+        - avgEdge
+        - clvHitRate
+        - avgClv
+        - brierScore
+        - logLoss
+        - passRate
+        - picksPerDay
+        - tierBreakdown
+        - leagueBreakdown
+        - marketBreakdown
+
+    ValidationMetricRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+        runDate:
+          type: string
+        league:
+          type: string
+          nullable: true
+        market:
+          type: string
+          nullable: true
+        windowDays:
+          type: integer
+        totalPicks:
+          type: integer
+        roi:
+          type: number
+        winRate:
+          type: number
+        avgEv:
+          type: number
+        clvHitRate:
+          type: number
+        modelVersion:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - runDate
+        - windowDays
+        - totalPicks
+        - roi
+        - winRate
+        - avgEv
+        - clvHitRate
+        - modelVersion
+        - createdAt
+
+    SimulationRequest:
+      type: object
+      properties:
+        startDate:
+          type: string
+          description: YYYY-MM-DD
+        days:
+          type: integer
+          default: 45
+        leagues:
+          type: array
+          items:
+            $ref: "#/components/schemas/League"
+          default: [nba, nhl, ncaam]
+        markets:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketType"
+          default: [moneyline, spread, total]
+        modelVersion:
+          type: string
+          default: v1
+        scoringVersion:
+          type: string
+          default: v1
+        calibrationVersion:
+          type: string
+          default: v1
+      required:
+        - startDate
+
+    SimulationRun:
+      type: object
+      properties:
+        id:
+          type: integer
+        runId:
+          type: string
+        startDate:
+          type: string
+        endDate:
+          type: string
+        days:
+          type: integer
+        leagues:
+          type: array
+          items:
+            type: string
+        markets:
+          type: array
+          items:
+            type: string
+        modelVersion:
+          type: string
+        scoringVersion:
+          type: string
+        calibrationVersion:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, complete, failed]
+        totalPicks:
+          type: integer
+          nullable: true
+        picksPerDay:
+          type: number
+          nullable: true
+        roi:
+          type: number
+          nullable: true
+        winRate:
+          type: number
+          nullable: true
+        unitsWon:
+          type: number
+          nullable: true
+        avgEv:
+          type: number
+          nullable: true
+        avgEdge:
+          type: number
+          nullable: true
+        avgClv:
+          type: number
+          nullable: true
+        clvHitRate:
+          type: number
+          nullable: true
+        maxDrawdown:
+          type: number
+          nullable: true
+        results:
+          type: object
+          nullable: true
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - runId
+        - startDate
+        - endDate
+        - days
+        - leagues
+        - markets
+        - modelVersion
+        - scoringVersion
+        - calibrationVersion
+        - status
+        - createdAt
+
+    GenerateSnapshotsRequest:
+      type: object
+      properties:
+        date:
+          type: string
+          description: YYYY-MM-DD
+        leagues:
+          type: array
+          items:
+            $ref: "#/components/schemas/League"
+          default: [nba, nhl, ncaam]
+        games:
+          type: array
+          items:
+            $ref: "#/components/schemas/GameSnapshotInput"
+      required:
+        - date
+
+    GameSnapshotInput:
+      type: object
+      properties:
+        gameKey:
+          type: string
+        league:
+          $ref: "#/components/schemas/League"
+        eventStart:
+          type: string
+          format: date-time
+        homeTeam:
+          type: string
+        awayTeam:
+          type: string
+        homePublishMl:
+          type: number
+        awayPublishMl:
+          type: number
+        publishSpread:
+          type: number
+          nullable: true
+        publishSpreadLine:
+          type: number
+          nullable: true
+        publishTotal:
+          type: number
+          nullable: true
+        publishOverLine:
+          type: number
+          nullable: true
+        publishUnderLine:
+          type: number
+          nullable: true
+      required:
+        - gameKey
+        - league
+        - eventStart
+        - homeTeam
+        - awayTeam
+        - homePublishMl
+        - awayPublishMl
+
+    FinalizeDateRequest:
+      type: object
+      properties:
+        date:
+          type: string
+          description: YYYY-MM-DD
+      required:
+        - date
+
+    ScoreDateRequest:
+      type: object
+      properties:
+        date:
+          type: string
+          description: YYYY-MM-DD
+        leagues:
+          type: array
+          items:
+            $ref: "#/components/schemas/League"
+          default: [nba, nhl, ncaam]
+        markets:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketType"
+          default: [moneyline, spread, total]
+        modelVersion:
+          type: string
+          default: v1
+        scoringVersion:
+          type: string
+          default: v1
+      required:
+        - date
+
+    ScoreDateResult:
+      type: object
+      properties:
+        date:
+          type: string
+        totalCandidates:
+          type: integer
+        picksGenerated:
+          type: integer
+        tierBreakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        leagueBreakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/CandidateBet"
+      required:
+        - date
+        - totalCandidates
+        - picksGenerated
+        - tierBreakdown
+        - leagueBreakdown
+        - candidates
+
+    ListPicksResponse:
+      type: object
+      properties:
+        picks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScoredPick"
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+      required:
+        - picks
+        - total
+        - offset
+        - limit
+
+    PipelineResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        count:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+      required:
+        - success
+        - message
+        - count

@@ -2,7 +2,7 @@
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+Premium sports prediction and scoring engine for NBA, NCAAM, and NHL betting markets. Supports moneyline, spread, and total markets for all three leagues. Built on a pnpm workspace monorepo.
 
 ## Stack
 
@@ -23,5 +23,80 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
+
+## Architecture
+
+### Prediction Layer (`artifacts/api-server/src/prediction/`)
+
+Nine model modules — one per league/market combination:
+
+| League | Moneyline | Spread | Total |
+|--------|-----------|--------|-------|
+| NBA    | nbaMoneylineModel.ts | nbaSpreadModel.ts | nbaTotalModel.ts |
+| NCAAM  | ncaamMoneylineModel.ts | ncaamSpreadModel.ts | ncaamTotalModel.ts |
+| NHL    | nhlMoneylineModel.ts | nhlSpreadModel.ts | nhlTotalModel.ts |
+
+Each model exports a `predict(game: GameMarketInput): Promise<ModelOutput>` function returning raw probabilities.
+
+### Scoring Layer (`artifacts/api-server/src/scoring/`)
+
+| File | Responsibility |
+|------|----------------|
+| `marketProb.ts` | American odds → implied probability → vig removal → fair probability |
+| `calibration.ts` | Sigmoid/isotonic calibration on raw model probabilities |
+| `expectedValue.ts` | EV = p*(d-1) - (1-p), edge = calibrated_prob - fair_market_prob, CLV |
+| `rankBets.ts` | rank_score = 0.50*ev + 0.25*edge + 0.15*calib_conf + 0.10*mkt_quality |
+| `assignTiers.ts` | Tier A/B/C/PASS assignment from score bands + risk controls |
+| `scorePicks.ts` | Pipeline orchestrator connecting model → calibration → scoring → ranking |
+| `validatePicks.ts` | Outcome scoring, ROI, Brier score, log loss, CLV metrics |
+
+### Configuration (`artifacts/api-server/src/config/scoringModelConfig.ts`)
+
+Central config for all scoring parameters: rank weights, tier thresholds, home advantage by league, calibration method selection.
+
+### Simulation Engine (`artifacts/api-server/src/simulation/simulate45Days.ts`)
+
+On-demand 45-day backtester. Inputs: startDate, days, leagues, markets, model/scoring/calibration versions. Outputs: ROI, win rate, CLV hit rate, Brier score, log loss, drawdown, per-day breakdown.
+
+### Database Schema (`lib/db/src/schema/`)
+
+| Table | Purpose |
+|-------|---------|
+| `game_snapshots` | Raw game/market data with publish and close lines |
+| `candidate_bets` | All evaluated bets with full scoring metadata |
+| `scored_picks` | Final picks (non-PASS) with outcomes |
+| `validation_metrics` | Rolling 14/30/45-day performance snapshots |
+| `simulation_runs` | 45-day simulator runs with results |
+
+### API Routes
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/snapshots` | List game snapshots |
+| POST | `/api/snapshots/generate` | Ingest game data (publish lines) |
+| POST | `/api/snapshots/finalize` | Mark closing lines |
+| GET | `/api/picks` | List scored picks (filterable) |
+| GET | `/api/picks/candidates` | List all candidates including PASS |
+| POST | `/api/picks/score` | Run full prediction pipeline for a date |
+| POST | `/api/picks/validate` | Score outcomes for finalized games |
+| GET | `/api/performance` | Rolling performance metrics |
+| GET | `/api/performance/history` | Historical metric records |
+| POST | `/api/simulate` | Start a 45-day simulation run |
+| GET | `/api/simulate/{runId}` | Get simulation results |
+| GET | `/api/simulate/list` | List all simulation runs |
+
+## Key Formulas
+
+- **Edge**: `model_prob_calibrated - market_prob_fair`
+- **EV**: `p * (decimal_odds - 1) - (1 - p)`
+- **Rank Score**: `0.50 * norm_ev + 0.25 * norm_edge + 0.15 * calib_conf + 0.10 * mkt_quality`
+- **Tier A**: rank_score ≥ 0.65 | **Tier B**: ≥ 0.50 | **Tier C**: ≥ 0.35 | **PASS**: < 0.35
+
+## Operational Flow
+
+1. **Generate Snapshots** — POST `/api/snapshots/generate` with game/market data
+2. **Score** — POST `/api/picks/score` to run prediction models and persist candidates
+3. **Finalize Closes** — POST `/api/snapshots/finalize` after games are over
+4. **Validate** — POST `/api/picks/validate` to score outcomes and compute CLV
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.

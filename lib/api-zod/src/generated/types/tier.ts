@@ -6,6 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
-}
+export type Tier = (typeof Tier)[keyof typeof Tier];
+
+export const Tier = {
+  A: "A",
+  B: "B",
+  C: "C",
+  PASS: "PASS",
+} as const;
