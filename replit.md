@@ -4,6 +4,9 @@
 
 Premium sports prediction and scoring engine for NBA, NCAAM, and NHL betting markets. Supports moneyline, spread, and total markets for all three leagues. Built on a pnpm workspace monorepo.
 
+**Brand**: SportsMVP — "Bet Like an MVP."
+**Brand Guidelines**: See `.local/brand-guidelines.md` — must be followed for ALL frontend work.
+
 ## Stack
 
 - **Monorepo tool**: pnpm workspaces
@@ -23,6 +26,23 @@ Premium sports prediction and scoring engine for NBA, NCAAM, and NHL betting mar
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
+
+## Brand Quick Reference
+
+**Fonts**: Montserrat (headings, bold) + Roboto (body) from Google Fonts
+**Primary Colors**: MVP Blue `#0033A0` | Victory Red `#D32F2F`
+**Secondary Colors**: Action Green `#388E3C` | Highlight Yellow `#FFC107`
+**Neutral**: Slate Gray `#424242` | White `#FFFFFF`
+**Dark Surfaces**: Page BG `#060D1F` | Card `#0D1B3E` | Elevated `#112454` | Border `#1A3066`
+
+**Logos (copy to frontend public/ before use)**:
+- Primary shield: `attached_assets/sports-mvp-logo_-_Edited_1775577729533.png`
+- Horizontal lockup: `attached_assets/Sport-MVP-alternate-logo-transparent_1775577748977.png`
+
+**Tier badges**: A=gold(`#FFC107`), B=MVP Blue(`#0033A0`), C=slate(`#424242`), PASS=dimmed
+**Results**: Win=green(`#388E3C`), Loss=red(`#D32F2F`), Push=yellow(`#FFC107`)
+
+Full brand details: `.local/brand-guidelines.md`
 
 ## Architecture
 

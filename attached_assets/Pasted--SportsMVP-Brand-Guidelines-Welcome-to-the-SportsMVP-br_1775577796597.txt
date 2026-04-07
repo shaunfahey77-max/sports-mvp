@@ -1,0 +1,64 @@
+# SportsMVP Brand Guidelines
+
+Welcome to the SportsMVP brand guidelines. This document serves as a comprehensive guide to maintaining the integrity and consistency of the SportsMVP brand across all platforms and communications.
+
+## Logo
+
+The SportsMVP logo is the cornerstone of our brand identity. It should be used consistently to ensure brand recognition.
+
+- **Primary Logo**: The primary logo should be used on all official communications and is best presented with our primary color palette.
+- **Clear Space**: Ensure there is sufficient space around the logo to maintain its impact and legibility. The minimum clear space should be equal to the height of the "S" in SportsMVP.
+- **Minimum Size**: To ensure legibility, the logo should never be reproduced smaller than 1 inch in width for print or 72 pixels for digital formats.
+
+## Color Palette
+
+The SportsMVP color palette is designed to convey energy, passion, and reliability.
+
+- **Primary Colors**:
+  - **MVP Blue**: #0033A0
+  - **Victory Red**: #D32F2F
+- **Secondary Colors**:
+  - **Action Green**: #388E3C
+  - **Highlight Yellow**: #FFC107
+- **Neutral Colors**:
+  - **Slate Gray**: #424242
+  - **Clean White**: #FFFFFF
+
+## Typography
+
+Consistent typography is crucial for brand recognition. The following fonts have been selected to reflect the dynamic and energetic nature of SportsMVP.
+
+- **Primary Typeface**: *Montserrat*
+  - Use for headings and prominent text.
+- **Secondary Typeface**: *Roboto*
+  - Use for body copy and supplementary text.
+
+### Typography Guidelines
+
+- **Headings**: Bold, size 24-36pt
+- **Subheadings**: Bold, size 18-24pt
+- **Body Text**: Regular, size 12-16pt
+
+## Recommended Stock Photography
+
+Photography used in SportsMVP materials should capture the essence of sportsmanship, energy, and empowerment. Consider the following guidelines:
+
+- **Action Shots**: Images should depict athletes in motion, showcasing strength and determination.
+- **Diversity**: Ensure a diverse representation of athletes in terms of gender, ethnicity, and sports disciplines.
+- **Vibrant and Dynamic**: Photos should be high-resolution, vibrant, and convey a sense of movement and excitement.
+
+## Usage Examples
+
+### Do's
+
+- Use the primary logo on white or neutral backgrounds.
+- Maintain the integrity of the logo by using approved color palettes.
+- Employ the primary and secondary typefaces in all branded materials.
+
+### Don'ts
+
+- Do not alter the logo colors outside the approved palette.
+- Never stretch or distort the logo.
+- Avoid cluttering the space around the logo with text or other graphics.
+
+By adhering to these guidelines, we ensure that the SportsMVP brand remains strong, recognizable, and consistent across all platforms. Thank you for being a part of our team and helping to uphold the SportsMVP identity.
