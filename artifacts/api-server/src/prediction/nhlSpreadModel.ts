@@ -17,7 +17,9 @@ export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   const { fairA: fairHome } = removeTwoSidedVig(game.homePublishMl, game.awayPublishMl);
   const expectedMargin = probToMargin(fairHome, MARGIN_STD_DEV) + HOME_ADVANTAGE[LEAGUE] * 2;
 
-  const spread = game.publishSpread;
+  // Negate the spread: puck line publishSpread = -1.5 means home must win by 2+.
+  // Home covers if actual_margin > 1.5, i.e. margin > -publishSpread.
+  const spread = -(game.publishSpread ?? -1.5);
   const probHomeCovers = normalCdf((expectedMargin - spread) / MARGIN_STD_DEV);
   const probAwayCovers = 1 - probHomeCovers;
   const noise = modelNoise(game.gameKey, "spread");

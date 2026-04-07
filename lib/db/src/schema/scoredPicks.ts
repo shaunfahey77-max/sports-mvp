@@ -7,6 +7,7 @@ import {
   date,
   jsonb,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -46,6 +47,7 @@ export const scoredPicksTable = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [
+    uniqueIndex("scored_picks_unique_pick_idx").on(t.date, t.gameKey, t.market, t.pick),
     index("scored_picks_date_idx").on(t.date),
     index("scored_picks_league_idx").on(t.league),
     index("scored_picks_market_idx").on(t.market),

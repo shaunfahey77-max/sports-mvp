@@ -40,5 +40,5 @@ function modelNoise(gameKey: string, suffix: string): number {
   for (let i = 0; i < str.length; i++) {
     hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
   }
-  return ((hash % 1000) / 1000 - 0.5) * 0.03;
+  return ((hash % 1000) / 1000 - 0.5) * 0.06;
 }

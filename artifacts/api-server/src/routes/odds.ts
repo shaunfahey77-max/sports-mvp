@@ -127,10 +127,9 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
 
         const picks = candidates.filter((c) => c.tier !== "PASS");
         if (picks.length > 0) {
-          const date = snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0];
           await db.insert(scoredPicksTable).values(
             picks.map((c) => ({
-              date,
+              date: c.snapshotDate,
               gameKey: c.gameKey,
               league: c.league,
               market: c.marketType,

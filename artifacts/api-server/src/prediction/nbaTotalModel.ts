@@ -18,7 +18,7 @@ export async function predict(game: GameMarketInput): Promise<ModelOutput> {
 
   const baseTotal = game.publishTotal;
   const noise = modelNoise(game.gameKey, "total");
-  const expectedTotal = baseTotal + noise * 4;
+  const expectedTotal = baseTotal + noise * 8;
 
   const probOver = normalCdf((expectedTotal - baseTotal) / TOTAL_STD_DEV);
   const probUnder = 1 - probOver;

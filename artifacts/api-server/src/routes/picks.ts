@@ -18,7 +18,7 @@ const router: IRouter = Router();
 
 router.get("/picks", async (req, res): Promise<void> => {
   const { date, league, market, tier } = req.query as Record<string, string | undefined>;
-  const limit = parseInt((req.query.limit as string) ?? "50");
+  const limit = parseInt((req.query.limit as string) ?? "200");
   const offset = parseInt((req.query.offset as string) ?? "0");
 
   const conditions = [];

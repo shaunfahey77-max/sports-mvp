@@ -159,7 +159,7 @@ async function runOddsIngest(): Promise<void> {
           .insert(scoredPicksTable)
           .values(
             picks.map((c) => ({
-              date,
+              date: c.snapshotDate,
               gameKey: c.gameKey,
               league: c.league,
               market: c.marketType,

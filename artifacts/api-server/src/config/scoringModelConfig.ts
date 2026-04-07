@@ -15,8 +15,8 @@ export const TIER_THRESHOLDS = {
   C: 0.35,
 } as const;
 
-export const MIN_EDGE_TO_CANDIDATE = 0.02;
-export const MIN_EV_TO_CANDIDATE = 0.01;
+export const MIN_EDGE_TO_CANDIDATE = 0.015;
+export const MIN_EV_TO_CANDIDATE = 0.005;
 export const MIN_MARKET_QUALITY = 0.3;
 
 export const CALIBRATION_CONFIG: Record<string, Record<string, "sigmoid" | "isotonic" | "none">> = {
