@@ -6,9 +6,12 @@ import NotFound from "@/pages/not-found";
 import axios from "axios";
 
 // Pages
+import { Landing } from "./pages/Landing";
 import { Dashboard } from "./pages/Dashboard";
 import { Performance } from "./pages/Performance";
 import { History } from "./pages/History";
+import { Privacy } from "./pages/Privacy";
+import { Terms } from "./pages/Terms";
 
 // Configure axios base URL for generated orval hooks
 axios.defaults.baseURL = `${import.meta.env.BASE_URL.replace(/\/+$/, '')}/api`;
@@ -25,9 +28,12 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/" component={Landing} />
+      <Route path="/picks" component={Dashboard} />
       <Route path="/performance" component={Performance} />
       <Route path="/history" component={History} />
+      <Route path="/privacy" component={Privacy} />
+      <Route path="/terms" component={Terms} />
       <Route component={NotFound} />
     </Switch>
   );
