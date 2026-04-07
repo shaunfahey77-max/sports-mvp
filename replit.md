@@ -2,7 +2,7 @@
 
 ## Overview
 
-Premium sports prediction and scoring engine for NBA, NCAAM, and NHL betting markets. Supports moneyline, spread, and total markets for all three leagues. Built on a pnpm workspace monorepo.
+Premium sports prediction and scoring engine for **NBA and NHL** betting markets (NCAAM removed — out of season). Supports moneyline, spread, and total markets. Live game odds are pulled from **The Odds API** (ODDS_API_KEY secret). Built on a pnpm workspace monorepo.
 
 **Brand**: SportsMVP — "Bet Like an MVP."
 **Brand Guidelines**: See `.local/brand-guidelines.md` — must be followed for ALL frontend work.

@@ -4,6 +4,7 @@ import snapshotsRouter from "./snapshots";
 import picksRouter from "./picks";
 import performanceRouter from "./performance";
 import simulationRouter from "./simulation";
+import oddsRouter from "./odds";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(snapshotsRouter);
 router.use(picksRouter);
 router.use(performanceRouter);
 router.use(simulationRouter);
+router.use(oddsRouter);
 
 export default router;
