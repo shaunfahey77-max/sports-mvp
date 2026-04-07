@@ -5,6 +5,8 @@ import picksRouter from "./picks";
 import performanceRouter from "./performance";
 import simulationRouter from "./simulation";
 import oddsRouter from "./odds";
+import userRouter from "./user";
+import stripeRouter from "./stripe";
 
 const router: IRouter = Router();
 
@@ -14,5 +16,7 @@ router.use(picksRouter);
 router.use(performanceRouter);
 router.use(simulationRouter);
 router.use(oddsRouter);
+router.use(userRouter);
+router.use(stripeRouter);
 
 export default router;

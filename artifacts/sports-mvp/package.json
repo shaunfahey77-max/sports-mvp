@@ -75,6 +75,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@clerk/react": "^6.1.4",
     "axios": "^1.14.0"
   }
 }
