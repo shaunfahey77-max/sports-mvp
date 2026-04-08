@@ -1,8 +1,18 @@
 import Stripe from 'stripe';
 
-let connectionSettings: any;
+const CACHE_TTL_MS = 4 * 60 * 1000;
+
+let credentialsCache: {
+  publishableKey: string;
+  secretKey: string;
+  cachedAt: number;
+} | null = null;
 
 async function getCredentials() {
+  if (credentialsCache && Date.now() - credentialsCache.cachedAt < CACHE_TTL_MS) {
+    return credentialsCache;
+  }
+
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
     ? 'repl ' + process.env.REPL_IDENTITY
@@ -31,16 +41,19 @@ async function getCredentials() {
   });
 
   const data = await response.json();
-  connectionSettings = data.items?.[0];
+  const connectionSettings = data.items?.[0];
 
   if (!connectionSettings || (!connectionSettings.settings.publishable || !connectionSettings.settings.secret)) {
     throw new Error(`Stripe ${targetEnvironment} connection not found`);
   }
 
-  return {
+  credentialsCache = {
     publishableKey: connectionSettings.settings.publishable,
     secretKey: connectionSettings.settings.secret,
+    cachedAt: Date.now(),
   };
+
+  return credentialsCache;
 }
 
 export async function getUncachableStripeClient() {

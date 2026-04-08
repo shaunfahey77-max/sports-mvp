@@ -6,3 +6,9 @@ id = "vNJWiaeHfGNIJXh_YSrJZ"
 uri = "file://competitive-analysis.md"
 type = "text"
 title = "SportsMVP Competitive Analysis — Pricing & Feature Comparison"
+
+[[outputs]]
+id = "59YIrExToFz9BV1s4Uhei"
+uri = "file://sportsmvp-export.tar.gz"
+type = "unspecified"
+title = "SportsMVP — Full Source Code Export"

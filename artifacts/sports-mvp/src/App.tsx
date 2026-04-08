@@ -37,18 +37,24 @@ const queryClient = new QueryClient({
 });
 
 function ClerkAxiosInterceptor() {
-  const { getToken } = useAuth();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
   useEffect(() => {
     const id = axios.interceptors.request.use(async (config) => {
-      const token = await getToken();
-      if (token) {
-        config.headers = config.headers ?? {};
-        config.headers.Authorization = `Bearer ${token}`;
+      if (isLoaded && isSignedIn) {
+        try {
+          const token = await getToken();
+          if (token) {
+            config.headers = config.headers ?? {};
+            config.headers.Authorization = `Bearer ${token}`;
+          }
+        } catch {
+          // Non-blocking — proceed without token
+        }
       }
       return config;
     });
     return () => axios.interceptors.request.eject(id);
-  }, [getToken]);
+  }, [getToken, isLoaded, isSignedIn]);
   return null;
 }
 
