@@ -3,6 +3,7 @@ import { CandidateBet } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
+import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
 import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, cn } from "@/lib/utils";
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
@@ -127,6 +128,22 @@ export function CandidateCard({ bet, highlight = false }: { bet: CandidateBet; h
             {formatPercentage(Number(bet.ev))}
           </div>
         </div>
+      </div>
+
+      <div className="pt-1">
+        <WhyThisPickPopover input={{
+          modelProb: Number(bet.modelProbCalibrated),
+          marketProb: Number(bet.marketProbFair),
+          edge: Number(bet.edge),
+          ev: Number(bet.ev),
+          tier: bet.tier,
+          rankScore: Number(bet.rankScore),
+          market: bet.marketType,
+          league: bet.league,
+          pick: bet.side,
+          publishOdds: Number(bet.publishOdds),
+          publishLine: bet.publishLine !== null && bet.publishLine !== undefined ? Number(bet.publishLine) : null,
+        }} />
       </div>
     </Card>
   );

@@ -5,6 +5,7 @@ import axios from "axios";
 import { Star, TrendingUp, Shield, Zap, BarChart2, Clock, BookOpen, CheckCircle, ChevronRight, ArrowRight } from "lucide-react";
 import { parseGameMatchup, getTeamLogoUrl } from "@/lib/teamLogos";
 import { formatOdds } from "@/lib/utils";
+import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
 
 const STAT_WINDOW = 47;
 
@@ -367,6 +368,22 @@ function TopPickCard({ pick }: { pick: any }) {
             <div className="text-[10px] uppercase text-white/40 tracking-wider mb-1">League</div>
             <div className="text-xl font-black font-display text-white">{pick.league.toUpperCase()}</div>
           </div>
+        </div>
+
+        <div className="flex justify-center mt-4 pt-3 border-t border-[#1A3066]">
+          <WhyThisPickPopover input={{
+            modelProb: parseFloat(pick.modelProbCalibrated ?? "0.5"),
+            marketProb: parseFloat(pick.marketProbFair ?? "0.5"),
+            edge,
+            ev,
+            tier: pick.tier ?? "A",
+            rankScore: parseFloat(pick.rankScore ?? "0.8"),
+            market: pick.market ?? "total",
+            league: pick.league ?? "nhl",
+            pick: pick.pick ?? "under",
+            publishOdds,
+            publishLine,
+          }} />
         </div>
       </div>
     </div>

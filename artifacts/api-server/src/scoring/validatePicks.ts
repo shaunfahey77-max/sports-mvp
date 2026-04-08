@@ -94,7 +94,7 @@ export function computeValidationMetrics(picks: PickWithFullData[], days: number
   const losses = resolved.filter((p) => p.result === "loss").length;
   const pushes = resolved.filter((p) => p.result === "push").length;
 
-  const winRate = resolved.length > 0 ? wins / resolved.length : 0;
+  const winRate = (wins + losses) > 0 ? wins / (wins + losses) : 0;
 
   let totalUnits = 0;
   let runningUnits = 0;

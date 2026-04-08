@@ -3,6 +3,7 @@ import { ScoredPick } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
+import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
 import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, getResultColorClass, cn } from "@/lib/utils";
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
@@ -143,6 +144,25 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
           <InfoTooltip content="Closing Line Value — how much the market moved in our favor after we published the pick. Positive CLV = we beat the closing line." />
         </div>
       )}
+
+      {pick.result === 'pending' && Number(pick.edge) > 0 && (
+        <div className="pt-1">
+          <WhyThisPickPopover input={{
+            modelProb: Number(pick.modelProbCalibrated),
+            marketProb: Number(pick.marketProbFair),
+            edge: Number(pick.edge),
+            ev: Number(pick.ev),
+            tier: pick.tier,
+            rankScore: Number(pick.rankScore),
+            market: pick.market,
+            league: pick.league,
+            pick: pick.pick,
+            publishOdds: Number(pick.publishOdds),
+            publishLine: pick.publishLine !== null && pick.publishLine !== undefined ? Number(pick.publishLine) : null,
+          }} />
+        </div>
+      )}
+
       {onLogPick && (
         <button
           onClick={onLogPick}
