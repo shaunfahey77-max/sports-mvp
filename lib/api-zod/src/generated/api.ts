@@ -114,6 +114,7 @@ export const ListPicksQueryParams = zod.object({
   league: zod.enum(["nba", "ncaam", "nhl"]).optional(),
   market: zod.enum(["moneyline", "spread", "total"]).optional(),
   tier: zod.enum(["A", "B", "C", "PASS"]).optional(),
+  result: zod.enum(["win", "loss", "push", "pending"]).optional(),
   limit: zod.coerce.number().default(listPicksQueryLimitDefault),
   offset: zod.coerce.number().default(listPicksQueryOffsetDefault),
 });

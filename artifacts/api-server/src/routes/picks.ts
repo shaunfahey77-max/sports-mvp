@@ -17,7 +17,7 @@ import type { League, MarketType } from "../config/scoringModelConfig";
 const router: IRouter = Router();
 
 router.get("/picks", async (req, res): Promise<void> => {
-  const { date, league, market, tier } = req.query as Record<string, string | undefined>;
+  const { date, league, market, tier, result } = req.query as Record<string, string | undefined>;
   const limit = parseInt((req.query.limit as string) ?? "200");
   const offset = parseInt((req.query.offset as string) ?? "0");
 
@@ -26,6 +26,7 @@ router.get("/picks", async (req, res): Promise<void> => {
   if (league) conditions.push(eq(scoredPicksTable.league, league));
   if (market) conditions.push(eq(scoredPicksTable.market, market));
   if (tier) conditions.push(eq(scoredPicksTable.tier, tier));
+  if (result) conditions.push(eq(scoredPicksTable.result, result));
 
   const picks =
     conditions.length > 0

@@ -322,9 +322,20 @@ export type ListPicksParams = {
   league?: League;
   market?: MarketType;
   tier?: Tier;
+  result?: ListPicksResult;
   limit?: number;
   offset?: number;
 };
+
+export type ListPicksResult =
+  (typeof ListPicksResult)[keyof typeof ListPicksResult];
+
+export const ListPicksResult = {
+  win: "win",
+  loss: "loss",
+  push: "push",
+  pending: "pending",
+} as const;
 
 export type ListCandidatesParams = {
   date?: string;

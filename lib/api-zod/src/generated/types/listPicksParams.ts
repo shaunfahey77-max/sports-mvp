@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { League } from "./league";
+import type { ListPicksResult } from "./listPicksResult";
 import type { MarketType } from "./marketType";
 import type { Tier } from "./tier";
 
@@ -14,6 +15,7 @@ export type ListPicksParams = {
   league?: League;
   market?: MarketType;
   tier?: Tier;
+  result?: ListPicksResult;
   limit?: number;
   offset?: number;
 };

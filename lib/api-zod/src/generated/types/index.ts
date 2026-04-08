@@ -21,6 +21,7 @@ export * from "./league";
 export * from "./listCandidatesParams";
 export * from "./listPicksParams";
 export * from "./listPicksResponse";
+export * from "./listPicksResult";
 export * from "./listSnapshotsParams";
 export * from "./marketType";
 export * from "./performanceMetrics";

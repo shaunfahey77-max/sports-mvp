@@ -145,9 +145,10 @@ export function Dashboard() {
     setPanelOpen(true);
   }
 
+  const picksParams = { date: todayStr, result: 'pending' as const };
   const { data: scoredPicksData, isLoading: loadingPicks } = useListPicks(
-    { date: todayStr },
-    { query: { queryKey: getListPicksQueryKey({ date: todayStr }) } }
+    picksParams,
+    { query: { queryKey: getListPicksQueryKey(picksParams) } }
   );
 
   const { data: candidatesData, isLoading: loadingCandidates } = useListCandidates(

@@ -121,6 +121,11 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/Tier"
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum: [win, loss, push, pending]
         - name: limit
           in: query
           schema:

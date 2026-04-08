@@ -343,9 +343,10 @@ export function ParlayGenerator() {
   const [parlayPanelOpen, setParlayPanelOpen] = useState(false);
   const [parlayLogData, setParlayLogData] = useState<LogPickData | undefined>(undefined);
 
+  const picksParams = { date: todayStr, result: 'pending' as const };
   const { data, isLoading } = useListPicks(
-    { date: todayStr },
-    { query: { queryKey: getListPicksQueryKey({ date: todayStr }) } }
+    picksParams,
+    { query: { queryKey: getListPicksQueryKey(picksParams) } }
   );
   const picks = useMemo(() => data?.picks || [], [data]);
 
