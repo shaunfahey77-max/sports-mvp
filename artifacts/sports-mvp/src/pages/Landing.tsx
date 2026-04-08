@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
@@ -5,12 +6,37 @@ import { Star, TrendingUp, Shield, Zap, BarChart2, Clock, BookOpen, CheckCircle,
 import { parseGameMatchup, getTeamLogoUrl } from "@/lib/teamLogos";
 import { formatOdds } from "@/lib/utils";
 
-const STATS = [
-  { label: "Win Rate", value: "55.8%", color: "#388E3C" },
-  { label: "ROI (45 Days)", value: "+22.9%", color: "#388E3C" },
-  { label: "Units Won", value: "+84.5U", color: "#388E3C" },
-  { label: "CLV Hit Rate", value: "54.7%", color: "#FFC107" },
-];
+const STAT_WINDOW = 47;
+
+function useLandingStats() {
+  return useQuery({
+    queryKey: ["landing-perf-stats"],
+    queryFn: async () => {
+      const res = await axios.get(`/performance?window=${STAT_WINDOW}`);
+      return res.data;
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
+function buildStats(perf: any) {
+  if (!perf) return [
+    { label: "Win Rate", value: "—", color: "#388E3C" },
+    { label: "ROI (45 Days)", value: "—", color: "#388E3C" },
+    { label: "Units Won", value: "—", color: "#388E3C" },
+    { label: "CLV Hit Rate", value: "—", color: "#FFC107" },
+  ];
+  const winRate = perf.wins / Math.max(1, perf.wins + perf.losses);
+  const roi = perf.roi ?? 0;
+  const units = perf.unitsWon ?? 0;
+  const clv = perf.clvHitRate ?? 0;
+  return [
+    { label: "Win Rate", value: `${(winRate * 100).toFixed(1)}%`, color: "#388E3C" },
+    { label: `ROI (${STAT_WINDOW} Days)`, value: `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%`, color: "#388E3C" },
+    { label: "Units Won", value: `${units >= 0 ? "+" : ""}${units.toFixed(0)}U`, color: "#388E3C" },
+    { label: "CLV Hit Rate", value: `${(clv * 100).toFixed(1)}%`, color: "#FFC107" },
+  ];
+}
 
 const FEATURES = [
   {
@@ -125,7 +151,7 @@ function LandingNav() {
   );
 }
 
-function HeroSection() {
+function HeroSection({ stats, picksTracked }: { stats: ReturnType<typeof buildStats>; picksTracked: number }) {
   return (
     <section className="relative overflow-hidden py-20 lg:py-28">
       {/* Sportsbook background image */}
@@ -175,15 +201,15 @@ function HeroSection() {
 
         {/* Right: floating stats */}
         <div className="hidden lg:grid grid-cols-2 gap-4">
-          {STATS.map((s) => (
+          {stats.map((s) => (
             <div key={s.label} className="bg-[#0D1B3E]/80 backdrop-blur border border-[#1A3066] rounded-2xl p-5 text-center">
               <div className="text-3xl font-black font-display mb-1" style={{ color: s.color }}>{s.value}</div>
               <div className="text-white/50 text-xs font-medium uppercase tracking-wider">{s.label}</div>
             </div>
           ))}
           <div className="col-span-2 bg-[#0D1B3E]/80 backdrop-blur border border-[#1A3066] rounded-2xl p-4 text-center">
-            <div className="text-white/40 text-xs uppercase tracking-wider mb-1">Live Track Record · 45 Days</div>
-            <div className="text-white text-sm font-medium">418 picks tracked · Updated daily</div>
+            <div className="text-white/40 text-xs uppercase tracking-wider mb-1">Live Track Record · {STAT_WINDOW} Days</div>
+            <div className="text-white text-sm font-medium">{picksTracked > 0 ? `${picksTracked} picks tracked` : "Loading..."} · Updated daily</div>
           </div>
         </div>
       </div>
@@ -191,11 +217,11 @@ function HeroSection() {
   );
 }
 
-function StatsMobileBar() {
+function StatsMobileBar({ stats }: { stats: ReturnType<typeof buildStats> }) {
   return (
     <section className="lg:hidden bg-[#0D1B3E] border-y border-[#1A3066]">
       <div className="max-w-7xl mx-auto px-6 py-6 grid grid-cols-2 gap-4">
-        {STATS.map((s) => (
+        {stats.map((s) => (
           <div key={s.label} className="text-center">
             <div className="text-2xl font-black font-display" style={{ color: s.color }}>{s.value}</div>
             <div className="text-white/50 text-xs font-medium uppercase tracking-wider mt-0.5">{s.label}</div>
@@ -257,6 +283,48 @@ function TodaysTopPick() {
   );
 }
 
+function TeamLogoWithFallback({ league, abbrev, size = 36 }: { league: string; abbrev: string; size?: number }) {
+  const [imgError, setImgError] = useState(false);
+  const src = getTeamLogoUrl(league, abbrev);
+
+  if (src && !imgError) {
+    return (
+      <img
+        src={src}
+        alt={abbrev}
+        width={size}
+        height={size}
+        className="object-contain drop-shadow"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+  return (
+    <div
+      className="flex items-center justify-center rounded text-[11px] font-black font-display text-white bg-[#0033A0]"
+      style={{ width: size, height: size }}
+    >
+      {abbrev.slice(0, 3).toUpperCase()}
+    </div>
+  );
+}
+
+function MatchupLogos({ pick, matchup }: { pick: any; matchup: any }) {
+  return (
+    <div className="flex items-center justify-center gap-3 mb-3">
+      <div className="flex items-center gap-1.5">
+        <TeamLogoWithFallback league={pick.league} abbrev={matchup.awayAbbrev} size={36} />
+        <span className={`text-lg font-black font-display ${pick.pick === 'away' ? 'text-white' : 'text-white/40'}`}>{matchup.awayAbbrev.toUpperCase()}</span>
+      </div>
+      <span className="text-white/30 text-sm">@</span>
+      <div className="flex items-center gap-1.5">
+        <TeamLogoWithFallback league={pick.league} abbrev={matchup.homeAbbrev} size={36} />
+        <span className={`text-lg font-black font-display ${pick.pick === 'home' ? 'text-white' : 'text-white/40'}`}>{matchup.homeAbbrev.toUpperCase()}</span>
+      </div>
+    </div>
+  );
+}
+
 function TopPickCard({ pick }: { pick: any }) {
   const matchup = parseGameMatchup(pick.gameKey, pick.league);
   const edge = parseFloat(pick.edge ?? "0");
@@ -277,17 +345,7 @@ function TopPickCard({ pick }: { pick: any }) {
         </div>
 
         {matchup && (
-          <div className="flex items-center justify-center gap-3 mb-3">
-            <div className="flex items-center gap-1.5">
-              <img src={getTeamLogoUrl(pick.league, matchup.awayAbbrev) ?? undefined} className="h-9 w-9 object-contain drop-shadow" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} alt="" />
-              <span className={`text-lg font-black font-display ${pick.pick === 'away' ? 'text-white' : 'text-white/40'}`}>{matchup.awayAbbrev.toUpperCase()}</span>
-            </div>
-            <span className="text-white/30 text-sm">@</span>
-            <div className="flex items-center gap-1.5">
-              <img src={getTeamLogoUrl(pick.league, matchup.homeAbbrev) ?? undefined} className="h-9 w-9 object-contain drop-shadow" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} alt="" />
-              <span className={`text-lg font-black font-display ${pick.pick === 'home' ? 'text-white' : 'text-white/40'}`}>{matchup.homeAbbrev.toUpperCase()}</span>
-            </div>
-          </div>
+          <MatchupLogos pick={pick} matchup={matchup} />
         )}
 
         <div className="flex items-baseline justify-center gap-3 mb-5">
@@ -582,11 +640,15 @@ function LandingFooter() {
 }
 
 export function Landing() {
+  const { data: perf } = useLandingStats();
+  const stats = buildStats(perf);
+  const picksTracked = perf ? (perf.wins ?? 0) + (perf.losses ?? 0) + (perf.pushes ?? 0) : 0;
+
   return (
     <div className="min-h-screen bg-[#060D1F] text-white">
       <LandingNav />
-      <HeroSection />
-      <StatsMobileBar />
+      <HeroSection stats={stats} picksTracked={picksTracked} />
+      <StatsMobileBar stats={stats} />
       <TodaysTopPick />
       <HowItWorks />
       <FeaturesSection />

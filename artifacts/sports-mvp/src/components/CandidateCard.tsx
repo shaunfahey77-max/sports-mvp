@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CandidateBet } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,7 +7,9 @@ import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getT
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
 function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: string; size?: number }) {
-  if (src) {
+  const [imgError, setImgError] = useState(false);
+
+  if (src && !imgError) {
     return (
       <img
         src={src}
@@ -14,7 +17,7 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
         width={size}
         height={size}
         className="object-contain drop-shadow"
-        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+        onError={() => setImgError(true)}
       />
     );
   }
