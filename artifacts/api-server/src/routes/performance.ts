@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { scoredPicksTable, validationMetricsTable } from "@workspace/db";
-import { eq, and, gte, desc } from "drizzle-orm";
+import { scoredPicksTable, validationMetricsTable, candidateBetsTable } from "@workspace/db";
+import { eq, and, gte, desc, ne, count } from "drizzle-orm";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { americanToDecimal } from "../scoring/marketProb";
 
@@ -23,6 +23,27 @@ router.get("/performance", async (req, res): Promise<void> => {
     .select()
     .from(scoredPicksTable)
     .where(and(...conditions));
+
+  const candidateConditions = [gte(candidateBetsTable.snapshotDate, cutoff)];
+  if (league) candidateConditions.push(eq(candidateBetsTable.league, league));
+  if (market) candidateConditions.push(eq(candidateBetsTable.marketType, market));
+
+  const [totalCandidatesRow, publishedCandidatesRow] = await Promise.all([
+    db
+      .select({ total: count() })
+      .from(candidateBetsTable)
+      .where(and(...candidateConditions))
+      .then((r) => r[0]),
+    db
+      .select({ total: count() })
+      .from(candidateBetsTable)
+      .where(and(...candidateConditions, ne(candidateBetsTable.tier, "PASS")))
+      .then((r) => r[0]),
+  ]);
+
+  const totalCandidates = totalCandidatesRow?.total ?? 0;
+  const publishedCandidates = publishedCandidatesRow?.total ?? 0;
+  const passRate = totalCandidates > 0 ? publishedCandidates / totalCandidates : 0;
 
   const picksForValidation: PickWithFullData[] = picks.map((p) => ({
     id: p.id,
@@ -48,6 +69,7 @@ router.get("/performance", async (req, res): Promise<void> => {
     league: league ?? null,
     market: market ?? null,
     ...metrics,
+    passRate,
   });
 });
 
