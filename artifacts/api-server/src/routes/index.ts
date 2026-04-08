@@ -7,6 +7,7 @@ import simulationRouter from "./simulation";
 import oddsRouter from "./odds";
 import userRouter from "./user";
 import stripeRouter from "./stripe";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(simulationRouter);
 router.use(oddsRouter);
 router.use(userRouter);
 router.use(stripeRouter);
+router.use(adminRouter);
 
 export default router;
