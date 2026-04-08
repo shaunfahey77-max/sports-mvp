@@ -211,7 +211,7 @@ function TodaysTopPick() {
   const { data, isLoading } = useQuery({
     queryKey: ["landing-top-pick", today],
     queryFn: async () => {
-      const res = await axios.get(`/picks?date=${today}&tier=A&limit=1`);
+      const res = await axios.get(`/picks?date=${today}&tier=A&result=pending&limit=1`);
       return res.data;
     },
     staleTime: 5 * 60 * 1000,

@@ -338,7 +338,14 @@ export const ListPicksResult = {
 } as const;
 
 export type ListCandidatesParams = {
+  /**
+   * Filter by snapshotDate (legacy)
+   */
   date?: string;
+  /**
+   * Filter by the game date embedded in gameKey (YYYY-MM-DD)
+   */
+  gameDate?: string;
   league?: League;
   market?: MarketType;
   tier?: Tier;

@@ -156,7 +156,14 @@ export const ListPicksResponse = zod.object({
  * @summary List candidate bets (pre-scored)
  */
 export const ListCandidatesQueryParams = zod.object({
-  date: zod.coerce.string().optional(),
+  date: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by snapshotDate (legacy)"),
+  gameDate: zod.coerce
+    .string()
+    .optional()
+    .describe("Filter by the game date embedded in gameKey (YYYY-MM-DD)"),
   league: zod.enum(["nba", "ncaam", "nhl"]).optional(),
   market: zod.enum(["moneyline", "spread", "total"]).optional(),
   tier: zod.enum(["A", "B", "C", "PASS"]).optional(),

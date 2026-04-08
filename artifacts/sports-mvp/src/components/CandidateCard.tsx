@@ -20,7 +20,7 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
   }
   return (
     <div
-      className="flex items-center justify-center rounded text-[10px] font-bold font-display text-muted-foreground bg-[#112454]"
+      className="flex items-center justify-center rounded text-[10px] font-black font-display text-white bg-[#0033A0]"
       style={{ width: size, height: size }}
     >
       {abbrev.slice(0, 3)}

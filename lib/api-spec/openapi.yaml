@@ -152,6 +152,12 @@ paths:
       parameters:
         - name: date
           in: query
+          description: Filter by snapshotDate (legacy)
+          schema:
+            type: string
+        - name: gameDate
+          in: query
+          description: Filter by the game date embedded in gameKey (YYYY-MM-DD)
           schema:
             type: string
         - name: league
@@ -168,7 +174,7 @@ paths:
             $ref: "#/components/schemas/Tier"
       responses:
         "200":
-          description: List of candidates
+          description: List of candidates (deduplicated, best EV per game/market/side)
           content:
             application/json:
               schema:

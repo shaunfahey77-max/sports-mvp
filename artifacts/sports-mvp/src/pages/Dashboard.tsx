@@ -152,8 +152,8 @@ export function Dashboard() {
   );
 
   const { data: candidatesData, isLoading: loadingCandidates } = useListCandidates(
-    { date: todayStr },
-    { query: { queryKey: getListCandidatesQueryKey({ date: todayStr }) } }
+    { gameDate: todayStr },
+    { query: { queryKey: getListCandidatesQueryKey({ gameDate: todayStr }) } }
   );
 
   const allPicks = scoredPicksData?.picks || [];

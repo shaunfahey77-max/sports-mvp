@@ -48,15 +48,20 @@ router.get("/picks", async (req, res): Promise<void> => {
 });
 
 router.get("/picks/candidates", async (req, res): Promise<void> => {
-  const { date, league, market, tier } = req.query as Record<string, string | undefined>;
+  const { date, gameDate, league, market, tier } = req.query as Record<string, string | undefined>;
 
   const conditions = [];
+  // `date` filters by snapshotDate (legacy); `gameDate` filters by the date embedded in gameKey
   if (date) conditions.push(eq(candidateBetsTable.snapshotDate, date));
+  if (gameDate) {
+    const { sql: sqlRaw } = await import("drizzle-orm");
+    conditions.push(sqlRaw`${candidateBetsTable.gameKey} LIKE ${'%_' + gameDate + '_%'}`);
+  }
   if (league) conditions.push(eq(candidateBetsTable.league, league));
   if (market) conditions.push(eq(candidateBetsTable.marketType, market));
   if (tier) conditions.push(eq(candidateBetsTable.tier, tier));
 
-  const candidates =
+  const raw =
     conditions.length > 0
       ? await db
           .select()
@@ -67,7 +72,20 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
           .select()
           .from(candidateBetsTable)
           .orderBy(desc(candidateBetsTable.rankScore))
-          .limit(100);
+          .limit(200);
+
+  // Deduplicate: keep only the highest-EV candidate per (gameKey, marketType, side)
+  const seen = new Map<string, typeof raw[0]>();
+  for (const c of raw) {
+    const key = `${c.gameKey}|${c.marketType}|${c.side}`;
+    const existing = seen.get(key);
+    if (!existing || parseFloat(c.ev) > parseFloat(existing.ev)) {
+      seen.set(key, c);
+    }
+  }
+  const candidates = Array.from(seen.values()).sort(
+    (a, b) => parseFloat(b.rankScore) - parseFloat(a.rankScore)
+  );
 
   res.json(candidates);
 });

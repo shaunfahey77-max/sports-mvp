@@ -10,7 +10,14 @@ import type { MarketType } from "./marketType";
 import type { Tier } from "./tier";
 
 export type ListCandidatesParams = {
+  /**
+   * Filter by snapshotDate (legacy)
+   */
   date?: string;
+  /**
+   * Filter by the game date embedded in gameKey (YYYY-MM-DD)
+   */
+  gameDate?: string;
   league?: League;
   market?: MarketType;
   tier?: Tier;
