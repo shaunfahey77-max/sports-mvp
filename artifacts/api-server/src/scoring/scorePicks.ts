@@ -179,6 +179,16 @@ async function scoreMarket(
         hasSpread,
         hasTotal,
       });
+      // publishSpread is the HOME team's spread (e.g. -19 for Detroit).
+      // When our pick is the AWAY team we negate it so the bettor sees the
+      // correct number (+19 for Milwaukee).
+      const pickPublishLine =
+        side === "home"
+          ? (game.publishSpread ?? null)
+          : game.publishSpread != null
+          ? -game.publishSpread
+          : null;
+
       results.push({
         gameKey: game.gameKey,
         league: game.league,
@@ -186,7 +196,7 @@ async function scoreMarket(
         side,
         eventStart: game.eventStart,
         publishOdds,
-        publishLine: game.publishSpread ?? null,
+        publishLine: pickPublishLine,
         modelProbRaw: rawProb,
         modelProbCalibrated: calibrated,
         marketProbFair,
