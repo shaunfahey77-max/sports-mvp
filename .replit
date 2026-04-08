@@ -33,3 +33,6 @@ channel = "stable-25_05"
 
 [userenv.shared]
 CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsuc3BvcnRzbXZwLm5ldCQ"
+
+[userenv.production]
+VITE_CLERK_KEY = "pk_live_Y2xlcmsuc3BvcnRzbXZwLm5ldCQ"
