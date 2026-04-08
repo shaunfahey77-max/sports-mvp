@@ -1,6 +1,6 @@
 export const MODEL_VERSION = "v1";
-export const SCORING_VERSION = "v1";
-export const CALIBRATION_VERSION = "v1";
+export const SCORING_VERSION = "v2";
+export const CALIBRATION_VERSION = "v2";
 
 export const RANK_WEIGHTS = {
   ev: 0.50,
@@ -46,8 +46,15 @@ export const HOME_ADVANTAGE = {
 export const LEAGUE_MARKET_QUALITY = {
   nba: { moneyline: 1.0, spread: 0.95, total: 0.90 },
   ncaam: { moneyline: 0.85, spread: 0.80, total: 0.75 },
-  nhl: { moneyline: 0.90, spread: 0.80, total: 0.80 },
+  // NHL spread (puck line -1.5) is penalized: ~45% of NHL games end within 1 goal,
+  // making ATS cover probability far lower than raw win probability implies.
+  nhl: { moneyline: 0.90, spread: 0.55, total: 0.80 },
 } as const;
+
+// Per-market minimum edge overrides — stricter than the global floor for high-variance markets.
+export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {
+  nhl_spread: 0.08,
+};
 
 export type League = "nba" | "ncaam" | "nhl";
 export type MarketType = "moneyline" | "spread" | "total";

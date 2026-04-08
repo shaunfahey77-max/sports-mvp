@@ -19,19 +19,22 @@ export interface CalibrationParams {
  */
 export const DEFAULT_CALIBRATION_PARAMS: Record<string, Record<string, CalibrationParams>> = {
   nba: {
-    moneyline: { method: "sigmoid", version: "v1", sigmoidA: 1.05, sigmoidB: 0.0 },
-    spread: { method: "sigmoid", version: "v1", sigmoidA: 1.02, sigmoidB: 0.0 },
-    total: { method: "isotonic", version: "v1", isotonicBuckets: defaultIsotonicBuckets() },
+    moneyline: { method: "sigmoid", version: "v2", sigmoidA: 1.05, sigmoidB: 0.0 },
+    spread: { method: "sigmoid", version: "v2", sigmoidA: 1.02, sigmoidB: 0.0 },
+    // NBA totals: compressed toward 50% — model noise alone should not generate strong edges.
+    total: { method: "isotonic", version: "v2", isotonicBuckets: nbaTotalIsotonicBuckets() },
   },
   ncaam: {
-    moneyline: { method: "sigmoid", version: "v1", sigmoidA: 1.08, sigmoidB: 0.01 },
-    spread: { method: "sigmoid", version: "v1", sigmoidA: 1.04, sigmoidB: 0.0 },
-    total: { method: "isotonic", version: "v1", isotonicBuckets: defaultIsotonicBuckets() },
+    moneyline: { method: "sigmoid", version: "v2", sigmoidA: 1.08, sigmoidB: 0.01 },
+    spread: { method: "sigmoid", version: "v2", sigmoidA: 1.04, sigmoidB: 0.0 },
+    total: { method: "isotonic", version: "v2", isotonicBuckets: defaultIsotonicBuckets() },
   },
   nhl: {
-    moneyline: { method: "sigmoid", version: "v1", sigmoidA: 1.03, sigmoidB: 0.0 },
-    spread: { method: "isotonic", version: "v1", isotonicBuckets: defaultIsotonicBuckets() },
-    total: { method: "isotonic", version: "v1", isotonicBuckets: defaultIsotonicBuckets() },
+    moneyline: { method: "sigmoid", version: "v2", sigmoidA: 1.03, sigmoidB: 0.0 },
+    // NHL spread (puck line -1.5): aggressively compressed. ~45% of NHL games end within 1 goal;
+    // a team's win probability does NOT translate cleanly to cover probability at -1.5.
+    spread: { method: "isotonic", version: "v2", isotonicBuckets: nhlSpreadIsotonicBuckets() },
+    total: { method: "isotonic", version: "v2", isotonicBuckets: defaultIsotonicBuckets() },
   },
 };
 
@@ -47,6 +50,47 @@ function defaultIsotonicBuckets(): Array<{ low: number; high: number; calibrated
     { low: 0.70, high: 0.80, calibrated: 0.73 },
     { low: 0.80, high: 0.90, calibrated: 0.83 },
     { low: 0.90, high: 1.00, calibrated: 0.93 },
+  ];
+}
+
+/**
+ * NHL spread (puck line -1.5) isotonic buckets.
+ * Aggressively compressed toward 0.50: a high raw win probability does NOT imply
+ * a high cover probability at -1.5 in a sport where ~45% of games end within 1 goal.
+ * A team modeled at 70% to win might only be ~58% to win by 2+.
+ */
+function nhlSpreadIsotonicBuckets(): Array<{ low: number; high: number; calibrated: number }> {
+  return [
+    { low: 0.00, high: 0.10, calibrated: 0.05 },
+    { low: 0.10, high: 0.20, calibrated: 0.12 },
+    { low: 0.20, high: 0.30, calibrated: 0.22 },
+    { low: 0.30, high: 0.40, calibrated: 0.33 },
+    { low: 0.40, high: 0.50, calibrated: 0.46 },
+    { low: 0.50, high: 0.60, calibrated: 0.52 },
+    { low: 0.60, high: 0.70, calibrated: 0.56 },
+    { low: 0.70, high: 0.80, calibrated: 0.61 },
+    { low: 0.80, high: 0.90, calibrated: 0.67 },
+    { low: 0.90, high: 1.00, calibrated: 0.74 },
+  ];
+}
+
+/**
+ * NBA totals isotonic buckets.
+ * Compressed in the 0.50–0.70 range: the model's total estimate is derived from
+ * the posted line ± small noise, so probabilities above ~0.57 reflect noise, not signal.
+ */
+function nbaTotalIsotonicBuckets(): Array<{ low: number; high: number; calibrated: number }> {
+  return [
+    { low: 0.00, high: 0.10, calibrated: 0.05 },
+    { low: 0.10, high: 0.20, calibrated: 0.15 },
+    { low: 0.20, high: 0.30, calibrated: 0.25 },
+    { low: 0.30, high: 0.40, calibrated: 0.35 },
+    { low: 0.40, high: 0.50, calibrated: 0.47 },
+    { low: 0.50, high: 0.60, calibrated: 0.52 },
+    { low: 0.60, high: 0.70, calibrated: 0.57 },
+    { low: 0.70, high: 0.80, calibrated: 0.64 },
+    { low: 0.80, high: 0.90, calibrated: 0.73 },
+    { low: 0.90, high: 1.00, calibrated: 0.83 },
   ];
 }
 

@@ -10,6 +10,10 @@ import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
 
 const LEAGUE = "nba";
 const TOTAL_STD_DEV = 11.5;
+// Noise multiplier reduced from 8 → 4 (v2).
+// The posted total is a well-calibrated market estimate; drifting ±4 pts from it
+// via hash noise was generating false edges. Now caps raw prob at ~0.574.
+const NOISE_MULTIPLIER = 4;
 
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   if (!game.publishTotal) {
@@ -18,7 +22,7 @@ export async function predict(game: GameMarketInput): Promise<ModelOutput> {
 
   const baseTotal = game.publishTotal;
   const noise = modelNoise(game.gameKey, "total");
-  const expectedTotal = baseTotal + noise * 8;
+  const expectedTotal = baseTotal + noise * NOISE_MULTIPLIER;
 
   const probOver = normalCdf((expectedTotal - baseTotal) / TOTAL_STD_DEV);
   const probUnder = 1 - probOver;

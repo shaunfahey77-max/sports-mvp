@@ -291,6 +291,8 @@ export async function scorePicks(
       edge: c.edge,
       ev: c.ev,
       marketQuality: c.marketQuality,
+      league: c.league,
+      marketType: c.marketType,
     });
     return { ...c, rankScore, tier, selectionReason };
   });

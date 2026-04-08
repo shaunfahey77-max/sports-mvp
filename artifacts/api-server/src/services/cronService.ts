@@ -308,7 +308,7 @@ function americanToImplied(american: number): number {
 // ---------------------------------------------------------------------------
 // Start all cron jobs
 // ---------------------------------------------------------------------------
-export { runNightlyValidation };
+export { runNightlyValidation, runOddsIngest };
 
 export function startCronJobs(): void {
   // Job 1: Every 10 minutes — ingest latest odds

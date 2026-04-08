@@ -3,14 +3,16 @@
  * Maps rank scores to tiers using explicit score bands — no scattered hard-coded gates.
  */
 
-import { TIER_THRESHOLDS, MIN_EDGE_TO_CANDIDATE, MIN_EV_TO_CANDIDATE } from "../config/scoringModelConfig";
-import type { Tier } from "../config/scoringModelConfig";
+import { TIER_THRESHOLDS, MIN_EDGE_TO_CANDIDATE, MIN_EV_TO_CANDIDATE, MARKET_MIN_EDGE } from "../config/scoringModelConfig";
+import type { Tier, League, MarketType } from "../config/scoringModelConfig";
 
 export interface TierInput {
   rankScore: number;
   edge: number;
   ev: number;
   marketQuality: number;
+  league?: League;
+  marketType?: MarketType;
 }
 
 /**
@@ -21,9 +23,14 @@ export function applyRiskControls(input: TierInput): string | null {
   if (input.marketQuality < 0.3) {
     return "market_quality_too_low";
   }
-  if (input.edge < MIN_EDGE_TO_CANDIDATE) {
+
+  // Per-market minimum edge override takes precedence over global floor.
+  const marketKey = input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
+  const minEdge = (marketKey && MARKET_MIN_EDGE[marketKey]) ?? MIN_EDGE_TO_CANDIDATE;
+  if (input.edge < minEdge) {
     return "insufficient_edge";
   }
+
   if (input.ev < MIN_EV_TO_CANDIDATE) {
     return "negative_ev";
   }
