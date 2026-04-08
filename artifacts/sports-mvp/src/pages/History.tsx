@@ -24,7 +24,7 @@ function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void })
           </div>
           <div>
             <div className="text-white font-bold font-display mb-1 uppercase text-xs tracking-wider">Reading Results</div>
-            <p><span className="text-[#388E3C] font-bold">WIN</span> and <span className="text-[#D32F2F] font-bold">LOSS</span> are settled outcomes. <span className="text-[#FFC107] font-bold">PUSH</span> means the bet was a draw and your stake was returned. <span className="text-[#424242] font-bold">PENDING</span> means the game result hasn't been finalized yet.</p>
+            <p><span className="text-[#388E3C] font-bold">WIN</span> and <span className="text-[#D32F2F] font-bold">LOSS</span> are settled outcomes. <span className="text-[#FFC107] font-bold">PUSH</span> means the bet was a draw and your stake was returned. Only completed picks appear here — today's pending picks are on the Today's Picks page.</p>
           </div>
           <div>
             <div className="text-white font-bold font-display mb-1 uppercase text-xs tracking-wider">CLV Tracking</div>
@@ -54,7 +54,7 @@ export function History() {
     { query: { queryKey: getListPicksQueryKey(params) } }
   );
 
-  const picks = data?.picks || [];
+  const picks = (data?.picks || []).filter(p => p.result !== 'pending');
 
   return (
     <PageLayout>
@@ -117,7 +117,6 @@ export function History() {
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#388E3C] inline-block" /> Wins: {picks.filter(p => p.result === 'win').length}</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#D32F2F] inline-block" /> Losses: {picks.filter(p => p.result === 'loss').length}</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#FFC107] inline-block" /> Pushes: {picks.filter(p => p.result === 'push').length}</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[#424242] inline-block" /> Pending: {picks.filter(p => p.result === 'pending').length}</span>
           </div>
         </div>
       )}
