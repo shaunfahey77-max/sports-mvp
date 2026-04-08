@@ -60,7 +60,8 @@ export class StripeService {
    */
   async syncSubscriptionTier(clerkUserId: string): Promise<'free' | 'mvp' | 'mvp_pro'> {
     const user = await storage.getUser(clerkUserId);
-    if (!user?.stripeCustomerId) return 'free';
+    // If no Stripe customer, trust the DB tier (may have been manually set)
+    if (!user?.stripeCustomerId) return (user?.tier ?? 'free') as 'free' | 'mvp' | 'mvp_pro';
 
     try {
       const stripe = await getUncachableStripeClient();
@@ -82,10 +83,8 @@ export class StripeService {
         });
         const trialSub = trialSubs.data[0];
         if (!trialSub) {
-          if (user.tier !== 'free') {
-            await storage.updateUserStripe(clerkUserId, { tier: 'free' });
-          }
-          return 'free';
+          // No active subscription — trust DB tier rather than forcing downgrade
+          return (user.tier ?? 'free') as 'free' | 'mvp' | 'mvp_pro';
         }
         return this._extractTierFromSub(clerkUserId, trialSub);
       }
