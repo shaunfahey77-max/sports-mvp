@@ -32,4 +32,4 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-CLERK_PUBLISHABLE_KEY = "pk_test_c2VjdXJlLWRvZS00Ny5jbGVyay5hY2NvdW50cy5kZXYk"
+CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsuc3BvcnRzbXZwLm5ldCQ"
