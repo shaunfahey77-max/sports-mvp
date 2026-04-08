@@ -4,6 +4,10 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
+router.get("/health", (_req, res) => {
+  res.json({ ok: true, ts: new Date().toISOString() });
+});
+
 router.post("/admin/run-validation", async (_req, res) => {
   try {
     logger.info("Manual validation triggered via API");

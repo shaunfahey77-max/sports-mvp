@@ -19,11 +19,12 @@ function formatPrice(amount: number) {
 
 function PlanCard({
   name, tierKey, description, features, monthlyPrice, yearlyPrice,
-  highlight, currentTier, onSelect, loading,
+  highlight, currentTier, onSelect, loading, pricesLoading,
 }: {
   name: string; tierKey: string; description: string; features: string[];
   monthlyPrice?: Price; yearlyPrice?: Price;
   highlight?: boolean; currentTier: string; onSelect: (priceId: string) => void; loading: string | null;
+  pricesLoading?: boolean;
 }) {
   const [interval, setInterval] = useState<'month' | 'year'>('month');
   const price = interval === 'month' ? monthlyPrice : yearlyPrice;
@@ -42,7 +43,9 @@ function PlanCard({
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
 
-      {price ? (
+      {pricesLoading && !price ? (
+        <div className="h-10 w-28 rounded bg-[#1A3066] animate-pulse" />
+      ) : price ? (
         <>
           <div className="flex items-baseline gap-1">
             <span className="text-3xl font-black font-display text-white">{formatPrice(price.unitAmount)}</span>
@@ -102,9 +105,10 @@ export function Subscribe() {
   const { tier } = useCurrentUser();
   const [loading, setLoading] = useState<string | null>(null);
 
-  const { data } = useQuery<{ products: Product[] }>({
+  const { data, isLoading: pricesLoading } = useQuery<{ products: Product[] }>({
     queryKey: ['stripe-prices'],
     queryFn: async () => (await axios.get('/stripe/prices')).data,
+    staleTime: 5 * 60 * 1000,
   });
 
   const products = data?.products ?? [];
@@ -149,6 +153,7 @@ export function Subscribe() {
           currentTier={tier}
           onSelect={handleSelect}
           loading={loading}
+          pricesLoading={pricesLoading}
         />
         <PlanCard
           name="MVP Pro"
@@ -160,6 +165,7 @@ export function Subscribe() {
           currentTier={tier}
           onSelect={handleSelect}
           loading={loading}
+          pricesLoading={pricesLoading}
         />
       </div>
     </PageLayout>

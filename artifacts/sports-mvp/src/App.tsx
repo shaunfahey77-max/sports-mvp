@@ -121,6 +121,10 @@ function ClerkProviderWithRoutes() {
       proxyUrl={clerkProxyUrl || undefined}
       routerPush={(to) => setLocation(stripBase(to))}
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
+      localization={{
+        signIn: { start: { title: "Sign in to SportsMVP", subtitle: "Welcome back. Please sign in to continue." } },
+        signUp: { start: { title: "Join SportsMVP", subtitle: "Create your account to start betting like an MVP." } },
+      }}
     >
       <QueryClientProvider client={queryClient}>
         <ClerkAxiosInterceptor />
