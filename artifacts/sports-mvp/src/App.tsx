@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Switch, Route, Redirect, Router as WouterRouter, useLocation } from "wouter";
-import { ClerkProvider, SignIn, SignUp, Show, useClerk } from "@clerk/react";
+import { ClerkProvider, SignIn, SignUp, Show, useClerk, useAuth } from "@clerk/react";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -35,6 +35,22 @@ function stripBase(path: string): string {
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
 });
+
+function ClerkAxiosInterceptor() {
+  const { getToken } = useAuth();
+  useEffect(() => {
+    const id = axios.interceptors.request.use(async (config) => {
+      const token = await getToken();
+      if (token) {
+        config.headers = config.headers ?? {};
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    });
+    return () => axios.interceptors.request.eject(id);
+  }, [getToken]);
+  return null;
+}
 
 function ClerkQueryCacheInvalidator() {
   const { addListener } = useClerk();
@@ -107,6 +123,7 @@ function ClerkProviderWithRoutes() {
       routerReplace={(to) => setLocation(stripBase(to), { replace: true })}
     >
       <QueryClientProvider client={queryClient}>
+        <ClerkAxiosInterceptor />
         <ClerkQueryCacheInvalidator />
         <TooltipProvider>
           <Router />
