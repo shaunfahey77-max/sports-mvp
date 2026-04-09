@@ -9,6 +9,9 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
+// Disable Express ETags — prevents 304 stale caching on API responses
+app.set("etag", false);
+
 app.use(
   pinoHttp({
     logger,
