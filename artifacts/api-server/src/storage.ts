@@ -37,6 +37,20 @@ export class Storage {
     const [user] = await db.select().from(users).where(eq(users.stripeCustomerId, customerId));
     return user ?? null;
   }
+
+  async getUserByEmail(email: string) {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user ?? null;
+  }
+
+  async updateUserTierByEmail(email: string, tier: 'free' | 'mvp' | 'mvp_pro') {
+    const [user] = await db
+      .update(users)
+      .set({ tier, updatedAt: new Date() })
+      .where(eq(users.email, email))
+      .returning();
+    return user ?? null;
+  }
 }
 
 export const storage = new Storage();
