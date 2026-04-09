@@ -12,3 +12,9 @@ id = "59YIrExToFz9BV1s4Uhei"
 uri = "file://sportsmvp-export.tar.gz"
 type = "unspecified"
 title = "SportsMVP — Full Source Code Export"
+
+[[outputs]]
+id = "Ttf5KTsdDtYqDp6qTK9bb"
+uri = "file://sportsmvp-redirect.zip"
+type = "unspecified"
+title = "SportsMVP Netlify Redirect"
