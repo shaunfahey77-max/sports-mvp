@@ -99,6 +99,32 @@ export async function fetchScores(sportKey: string, daysFrom: number): Promise<F
   });
 }
 
+// The historical endpoints return a wrapper object, not a raw array
+interface HistoricalResponse<T> {
+  timestamp: string;
+  previous_timestamp: string | null;
+  next_timestamp: string | null;
+  data: T;
+}
+
+export async function fetchHistoricalOdds(sportKey: string, isoDatetime: string): Promise<FetchResult<OddsGame[]>> {
+  const result = await oddsGet<HistoricalResponse<OddsGame[]>>(`/historical/sports/${sportKey}/odds`, {
+    date: isoDatetime,
+    regions: "us",
+    markets: "h2h,spreads,totals",
+    oddsFormat: "american",
+  });
+  return { data: result.data.data ?? [], headers: result.headers };
+}
+
+export async function fetchHistoricalScores(sportKey: string, isoDatetime: string): Promise<FetchResult<OddsScore[]>> {
+  const result = await oddsGet<HistoricalResponse<OddsScore[]>>(`/historical/sports/${sportKey}/scores`, {
+    date: isoDatetime,
+    daysFrom: "1",
+  });
+  return { data: result.data.data ?? [], headers: result.headers };
+}
+
 // ---------------------------------------------------------------------------
 // Best-Line Shopping: picks the best available price / line across ALL books
 // ---------------------------------------------------------------------------
