@@ -1,3 +1,4 @@
+import type Stripe from 'stripe';
 import { getUncachableStripeClient } from './stripeClient';
 
 async function createProducts() {
