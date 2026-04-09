@@ -3,6 +3,9 @@ import { runNightlyValidation, runOddsIngest } from "../services/cronService";
 import { logger } from "../lib/logger";
 import { storage } from "../storage";
 import { startHistoricalIngest, getHistoricalIngestStatus } from "../services/historicalIngest";
+import { db } from "@workspace/db";
+import { gameSnapshotsTable, candidateBetsTable, scoredPicksTable } from "@workspace/db";
+import { inArray } from "drizzle-orm";
 
 const router = Router();
 
@@ -54,6 +57,33 @@ router.post("/admin/set-tier", async (req, res) => {
     res.json({ ok: true, user });
   } catch (err) {
     logger.error({ err }, "Admin set-tier failed");
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Purge bad game keys from all three tables (scored_picks, candidate_bets, game_snapshots)
+// ---------------------------------------------------------------------------
+router.post("/admin/purge-games", async (req, res) => {
+  try {
+    const { secret, gameKeys } = req.body;
+    if (secret !== process.env.SESSION_SECRET) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+    if (!Array.isArray(gameKeys) || gameKeys.length === 0) {
+      return res.status(400).json({ ok: false, error: "gameKeys array required" });
+    }
+
+    const [sp, cb, gs] = await Promise.all([
+      db.delete(scoredPicksTable).where(inArray(scoredPicksTable.gameKey, gameKeys)).returning({ gameKey: scoredPicksTable.gameKey }),
+      db.delete(candidateBetsTable).where(inArray(candidateBetsTable.gameKey, gameKeys)).returning({ gameKey: candidateBetsTable.gameKey }),
+      db.delete(gameSnapshotsTable).where(inArray(gameSnapshotsTable.gameKey, gameKeys)).returning({ gameKey: gameSnapshotsTable.gameKey }),
+    ]);
+
+    logger.info({ gameKeys, scoredPicks: sp.length, candidateBets: cb.length, snapshots: gs.length }, "Admin purge-games complete");
+    res.json({ ok: true, deleted: { scoredPicks: sp.length, candidateBets: cb.length, snapshots: gs.length } });
+  } catch (err) {
+    logger.error({ err }, "Admin purge-games failed");
     res.status(500).json({ ok: false, error: String(err) });
   }
 });
