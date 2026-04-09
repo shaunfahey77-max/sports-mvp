@@ -33,18 +33,23 @@ router.post("/admin/run-ingest", async (_req, res) => {
 
 router.post("/admin/set-tier", async (req, res) => {
   try {
-    const { email, tier, secret } = req.body;
+    const { email, clerkUserId, tier, secret } = req.body;
     if (secret !== process.env.SESSION_SECRET) {
       return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
-    if (!email || !tier) {
-      return res.status(400).json({ ok: false, error: "email and tier required" });
+    if ((!email && !clerkUserId) || !tier) {
+      return res.status(400).json({ ok: false, error: "email or clerkUserId, and tier required" });
     }
-    const user = await storage.updateUserTierByEmail(email, tier);
+    let user;
+    if (clerkUserId) {
+      user = await storage.updateUserStripe(clerkUserId, { tier });
+    } else {
+      user = await storage.updateUserTierByEmail(email, tier);
+    }
     if (!user) {
       return res.status(404).json({ ok: false, error: "User not found" });
     }
-    logger.info({ email, tier }, "Admin set user tier");
+    logger.info({ email, clerkUserId, tier }, "Admin set user tier");
     res.json({ ok: true, user });
   } catch (err) {
     logger.error({ err }, "Admin set-tier failed");
