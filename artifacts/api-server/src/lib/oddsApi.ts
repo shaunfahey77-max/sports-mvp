@@ -335,7 +335,7 @@ export function transformGame(game: OddsGame, league: string): TransformedSnapsh
   const best = pickBestLines(game.bookmakers, game.home_team, game.away_team);
   if (!best.h2h) return null;
 
-  const date = game.commence_time.split("T")[0];
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(game.commence_time));
   const awayAbbrev = getTeamAbbrev(game.away_team, league);
   const homeAbbrev = getTeamAbbrev(game.home_team, league);
   const gameKey = `${league}_${date}_${awayAbbrev}_${homeAbbrev}`;
