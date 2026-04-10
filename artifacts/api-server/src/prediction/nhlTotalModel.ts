@@ -1,20 +1,38 @@
 /**
- * NHL Total (Over/Under) Prediction Model.
- * NHL totals are lower-scoring (~5.5–6.5 goals); std dev is ~1.5 goals.
+ * NHL Total (Over/Under) Prediction Model — v2
+ *
+ * NHL totals are lower-scoring (~5.5–6.5 goals, std dev ~1.5).
+ * Adjusts for B2B fatigue and recent over/under tendencies.
+ * Hash noise removed.
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
 
-const LEAGUE = "nhl";
 const TOTAL_STD_DEV = 1.55;
+
+// NHL B2B: ~0.4 fewer goals per tired team
+const B2B_GOAL_REDUCTION = 0.4;
+const MAX_OVER_RATE_ADJ = 0.3;
 
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   if (!game.publishTotal) return {};
 
-  const baseTotal = game.publishTotal;
-  const noise = modelNoise(game.gameKey, "total");
-  const expectedTotal = baseTotal + noise * 2.0;
+  let expectedTotal = game.publishTotal;
 
+  const f = game.features;
+  if (f) {
+    if (f.homeTeamB2B) expectedTotal -= B2B_GOAL_REDUCTION;
+    if (f.awayTeamB2B) expectedTotal -= B2B_GOAL_REDUCTION;
+
+    if (f.atsSampleSize >= 10) {
+      const homeAdj = (f.homeTeamOverRate - 0.5) * MAX_OVER_RATE_ADJ * 2;
+      const awayAdj = (f.awayTeamOverRate - 0.5) * MAX_OVER_RATE_ADJ * 2;
+      const combined = Math.max(-MAX_OVER_RATE_ADJ, Math.min(MAX_OVER_RATE_ADJ, (homeAdj + awayAdj) / 2));
+      expectedTotal += combined;
+    }
+  }
+
+  const baseTotal = game.publishTotal;
   const probOver = normalCdf((expectedTotal - baseTotal) / TOTAL_STD_DEV);
   const probUnder = 1 - probOver;
 
@@ -36,19 +54,10 @@ function erf(x: number): number {
   const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
   const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
   const t = 1.0 / (1.0 + p * x);
-  const y = 1.0 - (((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x);
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
   return sign * y;
 }
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
-}
-
-function modelNoise(gameKey: string, suffix: string): number {
-  let hash = 0;
-  const str = gameKey + suffix + LEAGUE;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
-  }
-  return ((hash % 1000) / 1000 - 0.5);
 }

@@ -4,11 +4,28 @@
  */
 
 import type { League, MarketType } from "../config/scoringModelConfig";
+import { MAX_EV_CAP } from "../config/scoringModelConfig";
 import { computeMarketProbFair, computeMarketQuality } from "./marketProb";
 import { calibrateProb, getCalibrationParams, getCalibrationConfidence } from "./calibration";
 import { computeEdge, computeEV } from "./expectedValue";
 import { rankBets } from "./rankBets";
 import { assignTier } from "./assignTiers";
+import { computeAllFeatures } from "../prediction/featureEngine";
+
+export interface GameFeatures {
+  homeTeamAbbrev: string;
+  awayTeamAbbrev: string;
+  homeTeamRestDays: number;
+  awayTeamRestDays: number;
+  homeTeamB2B: boolean;
+  awayTeamB2B: boolean;
+  homeTeamHomeATS: number;
+  awayTeamRoadATS: number;
+  homeTeamOverRate: number;
+  awayTeamOverRate: number;
+  restAdvantage: number;
+  atsSampleSize: number;
+}
 
 export interface GameMarketInput {
   gameKey: string;
@@ -20,10 +37,12 @@ export interface GameMarketInput {
   awayPublishMl: number;
   publishSpread?: number | null;
   publishSpreadLine?: number | null;
+  publishAwaySpreadLine?: number | null;
   publishTotal?: number | null;
   publishOverLine?: number | null;
   publishUnderLine?: number | null;
   snapshotDate: string;
+  features?: GameFeatures;
 }
 
 export interface CandidateOutput {
@@ -119,7 +138,7 @@ async function scoreMarket(
         awayPublishMl: game.awayPublishMl,
       });
       const edge = computeEdge(calibrated, marketProbFair);
-      const ev = computeEV(calibrated, publishOdds);
+      const ev = Math.min(MAX_EV_CAP, computeEV(calibrated, publishOdds));
       const calibConf = getCalibrationConfidence(game.league, marketType, rawProb);
       const mq = computeMarketQuality({
         league: game.league,
@@ -154,10 +173,12 @@ async function scoreMarket(
   } else if (marketType === "spread") {
     if (!hasSpread) return [];
     const spreadLine = game.publishSpreadLine ?? -110;
-    const oppositeSpreadLine = spreadLine < 0 ? Math.abs(spreadLine) : -spreadLine;
+    // Use the actual away spread line from the API if available.
+    // Fall back to assuming the same juice as home (symmetric market).
+    const awaySpreadLine = game.publishAwaySpreadLine ?? spreadLine;
     const sides: Array<["home" | "away", number, number | undefined]> = [
       ["home", spreadLine, output.rawProbHome],
-      ["away", oppositeSpreadLine, output.rawProbAway],
+      ["away", awaySpreadLine, output.rawProbAway],
     ];
     for (const [side, publishOdds, rawProb] of sides) {
       if (rawProb == null) continue;
@@ -170,7 +191,7 @@ async function scoreMarket(
         publishSpreadLine: game.publishSpreadLine,
       });
       const edge = computeEdge(calibrated, marketProbFair);
-      const ev = computeEV(calibrated, publishOdds);
+      const ev = Math.min(MAX_EV_CAP, computeEV(calibrated, publishOdds));
       const calibConf = getCalibrationConfidence(game.league, marketType, rawProb);
       const mq = computeMarketQuality({
         league: game.league,
@@ -232,7 +253,7 @@ async function scoreMarket(
         publishUnderLine: game.publishUnderLine,
       });
       const edge = computeEdge(calibrated, marketProbFair);
-      const ev = computeEV(calibrated, publishOdds);
+      const ev = Math.min(MAX_EV_CAP, computeEV(calibrated, publishOdds));
       const calibConf = getCalibrationConfidence(game.league, marketType, rawProb);
       const mq = computeMarketQuality({
         league: game.league,
@@ -276,7 +297,14 @@ export async function scorePicks(
 ): Promise<CandidateOutput[]> {
   const allCandidates: CandidateOutput[] = [];
 
-  for (const game of games) {
+  // Pre-compute features for all games (rest days, ATS records, etc.)
+  const featuresMap = await computeAllFeatures(games);
+  const gamesWithFeatures = games.map((g) => ({
+    ...g,
+    features: featuresMap.get(g.gameKey) ?? g.features,
+  }));
+
+  for (const game of gamesWithFeatures) {
     for (const market of markets) {
       const candidates = await scoreMarket(game, market, modelVersion);
       allCandidates.push(...candidates);

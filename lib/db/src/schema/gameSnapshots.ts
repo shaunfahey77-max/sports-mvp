@@ -26,6 +26,7 @@ export const gameSnapshotsTable = pgTable(
     awayCloseMl: numeric("away_close_ml"),
     publishSpread: numeric("publish_spread"),
     publishSpreadLine: numeric("publish_spread_line"),
+    publishAwaySpreadLine: numeric("publish_away_spread_line"),
     closeSpread: numeric("close_spread"),
     closeSpreadLine: numeric("close_spread_line"),
     publishTotal: numeric("publish_total"),

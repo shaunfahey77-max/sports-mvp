@@ -1,7 +1,8 @@
 /**
- * NHL Spread (Puck Line) Prediction Model.
- * NHL puck line is fixed at ±1.5 goals.
- * Std dev for goal differential is ~1.8 goals.
+ * NHL Spread (Puck Line) Prediction Model — v2
+ *
+ * NHL puck line is fixed at ±1.5 goals. Std dev for goal differential ~1.8 goals.
+ * Adjusts for back-to-back fatigue and rest advantage. Hash noise removed.
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
@@ -11,22 +12,31 @@ import { HOME_ADVANTAGE } from "../config/scoringModelConfig";
 const LEAGUE = "nhl";
 const MARGIN_STD_DEV = 1.85;
 
+// NHL puck line B2B: ~0.25 goal penalty (smaller than NBA, sport is less physical)
+const B2B_GOAL_PENALTY = 0.25;
+const REST_ADV_GOALS_PER_DAY = 0.04;
+
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   if (!game.publishSpread) return {};
 
   const { fairA: fairHome } = removeTwoSidedVig(game.homePublishMl, game.awayPublishMl);
-  const expectedMargin = probToMargin(fairHome, MARGIN_STD_DEV) + HOME_ADVANTAGE[LEAGUE] * 2;
 
-  // Negate the spread: puck line publishSpread = -1.5 means home must win by 2+.
-  // Home covers if actual_margin > 1.5, i.e. margin > -publishSpread.
+  let expectedMargin = probToMargin(fairHome, MARGIN_STD_DEV) + HOME_ADVANTAGE[LEAGUE] * 2;
+
+  const f = game.features;
+  if (f) {
+    if (f.homeTeamB2B) expectedMargin -= B2B_GOAL_PENALTY;
+    if (f.awayTeamB2B) expectedMargin += B2B_GOAL_PENALTY;
+    expectedMargin += f.restAdvantage * REST_ADV_GOALS_PER_DAY;
+  }
+
   const spread = -(game.publishSpread ?? -1.5);
   const probHomeCovers = normalCdf((expectedMargin - spread) / MARGIN_STD_DEV);
   const probAwayCovers = 1 - probHomeCovers;
-  const noise = modelNoise(game.gameKey, "spread");
 
   return {
-    rawProbHome: clamp(probHomeCovers + noise, 0.05, 0.95),
-    rawProbAway: clamp(probAwayCovers - noise, 0.05, 0.95),
+    rawProbHome: clamp(probHomeCovers, 0.05, 0.95),
+    rawProbAway: clamp(probAwayCovers, 0.05, 0.95),
     expectedMargin,
     marginStdDev: MARGIN_STD_DEV,
   };
@@ -56,27 +66,19 @@ function normalInvCdf(p: number): number {
   const a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
   const b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
   const pLow = 0.02425, pHigh = 1 - pLow;
-  if (p < pLow) {
-    const q = Math.sqrt(-2 * Math.log(p));
+  const pC = Math.max(pLow, Math.min(pHigh, p));
+  if (pC < pLow) {
+    const q = Math.sqrt(-2 * Math.log(pC));
     return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
-  } else if (p <= pHigh) {
-    const q = p - 0.5, r = q * q;
+  } else if (pC <= pHigh) {
+    const q = pC - 0.5, r = q * q;
     return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
   } else {
-    const q = Math.sqrt(-2 * Math.log(1 - p));
+    const q = Math.sqrt(-2 * Math.log(1 - pC));
     return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
   }
 }
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
-}
-
-function modelNoise(gameKey: string, suffix: string): number {
-  let hash = 0;
-  const str = gameKey + suffix + LEAGUE;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
-  }
-  return ((hash % 1000) / 1000 - 0.5) * 0.025;
 }

@@ -1,29 +1,45 @@
 /**
- * NBA Total (Over/Under) Prediction Model.
- * Estimates over/under probability at the published total.
+ * NBA Total (Over/Under) Prediction Model — v2
  *
- * Models expected scoring total using a normal distribution.
- * Base total is derived from the posted line; adjustments reflect model signal.
+ * Starts from the posted total (the market's best consensus estimate),
+ * then adjusts for real factors: back-to-back fatigue (reduces scoring)
+ * and each team's recent over/under tendency.
+ * Hash noise removed.
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
 
-const LEAGUE = "nba";
 const TOTAL_STD_DEV = 11.5;
-// Noise multiplier reduced from 8 → 4 (v2).
-// The posted total is a well-calibrated market estimate; drifting ±4 pts from it
-// via hash noise was generating false edges. Now caps raw prob at ~0.574.
-const NOISE_MULTIPLIER = 4;
+
+// Back-to-back teams score ~3 fewer points on average (tired legs)
+const B2B_SCORING_REDUCTION = 3.0;
+// Over/under rate: teams on an over/under streak can nudge the expected total
+const MAX_OVER_RATE_ADJ = 2.5;
 
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   if (!game.publishTotal) {
     return {};
   }
 
-  const baseTotal = game.publishTotal;
-  const noise = modelNoise(game.gameKey, "total");
-  const expectedTotal = baseTotal + noise * NOISE_MULTIPLIER;
+  let expectedTotal = game.publishTotal;
 
+  // --- Feature-based adjustments ---
+  const f = game.features;
+  if (f) {
+    // Fatigue: B2B teams score less
+    if (f.homeTeamB2B) expectedTotal -= B2B_SCORING_REDUCTION;
+    if (f.awayTeamB2B) expectedTotal -= B2B_SCORING_REDUCTION;
+
+    // Recent over/under tendency (only apply when sample is meaningful)
+    if (f.atsSampleSize >= 10) {
+      const homeAdj = (f.homeTeamOverRate - 0.5) * MAX_OVER_RATE_ADJ * 2;
+      const awayAdj = (f.awayTeamOverRate - 0.5) * MAX_OVER_RATE_ADJ * 2;
+      const combined = Math.max(-MAX_OVER_RATE_ADJ, Math.min(MAX_OVER_RATE_ADJ, (homeAdj + awayAdj) / 2));
+      expectedTotal += combined;
+    }
+  }
+
+  const baseTotal = game.publishTotal;
   const probOver = normalCdf((expectedTotal - baseTotal) / TOTAL_STD_DEV);
   const probUnder = 1 - probOver;
 
@@ -51,13 +67,4 @@ function erf(x: number): number {
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
-}
-
-function modelNoise(gameKey: string, suffix: string): number {
-  let hash = 0;
-  const str = gameKey + suffix + LEAGUE;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
-  }
-  return ((hash % 1000) / 1000 - 0.5);
 }

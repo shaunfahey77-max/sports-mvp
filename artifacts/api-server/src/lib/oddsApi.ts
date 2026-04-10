@@ -313,6 +313,7 @@ export interface TransformedSnapshot {
   awayPublishMl: number;
   publishSpread: number | null;
   publishSpreadLine: number | null;
+  publishAwaySpreadLine: number | null;
   publishTotal: number | null;
   publishOverLine: number | null;
   publishUnderLine: number | null;
@@ -350,6 +351,7 @@ export function transformGame(game: OddsGame, league: string): TransformedSnapsh
     awayPublishMl: best.h2h.awayOdds,
     publishSpread: best.spread?.homePoint ?? null,
     publishSpreadLine: best.spread?.homeOdds ?? null,
+    publishAwaySpreadLine: best.spread?.awayOdds ?? null,
     publishTotal: best.total?.overPoint ?? null,
     publishOverLine: best.total?.overOdds ?? null,
     publishUnderLine: best.total?.underOdds ?? null,

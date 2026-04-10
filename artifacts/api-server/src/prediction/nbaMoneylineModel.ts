@@ -1,10 +1,9 @@
 /**
- * NBA Moneyline Prediction Model.
- * Estimates win probability for each side.
+ * NBA Moneyline Prediction Model — v2
  *
- * This v1 model uses market-implied probabilities as the base signal
- * and applies power rating adjustments and home-court advantage.
- * Production models should replace this with trained ML features.
+ * Starts from market-implied fair probability, applies home advantage,
+ * then adjusts for real game-day factors: back-to-back and rest advantage.
+ * Hash noise removed.
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
@@ -13,6 +12,11 @@ import { HOME_ADVANTAGE } from "../config/scoringModelConfig";
 
 const LEAGUE = "nba";
 
+// Back-to-back reduces win probability by ~4%
+const B2B_WIN_PROB_PENALTY = 0.04;
+// Each extra rest day worth ~0.6% win probability (capped via restAdvantage ±3)
+const REST_ADV_PROB_PER_DAY = 0.006;
+
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   const { fairA: marketFairHome, fairB: marketFairAway } = removeTwoSidedVig(
     game.homePublishMl,
@@ -20,25 +24,25 @@ export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   );
 
   const homeAdvantage = HOME_ADVANTAGE[LEAGUE];
-  const adjustedHome = clamp(marketFairHome + homeAdvantage * (1 - marketFairHome), 0.05, 0.95);
+  let adjustedHome = clamp(marketFairHome + homeAdvantage * (1 - marketFairHome), 0.05, 0.95);
+
+  // --- Feature-based adjustments ---
+  const f = game.features;
+  if (f) {
+    if (f.homeTeamB2B) adjustedHome -= B2B_WIN_PROB_PENALTY;
+    if (f.awayTeamB2B) adjustedHome += B2B_WIN_PROB_PENALTY;
+    adjustedHome += f.restAdvantage * REST_ADV_PROB_PER_DAY;
+    adjustedHome = clamp(adjustedHome, 0.05, 0.95);
+  }
+
   const adjustedAway = 1 - adjustedHome;
 
-  const noise = modelNoise(game.gameKey, "ml");
   return {
-    rawProbHome: clamp(adjustedHome + noise, 0.05, 0.95),
-    rawProbAway: clamp(adjustedAway - noise, 0.05, 0.95),
+    rawProbHome: adjustedHome,
+    rawProbAway: adjustedAway,
   };
 }
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
-}
-
-function modelNoise(gameKey: string, suffix: string): number {
-  let hash = 0;
-  const str = gameKey + suffix + LEAGUE;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
-  }
-  return ((hash % 1000) / 1000 - 0.5) * 0.06;
 }
