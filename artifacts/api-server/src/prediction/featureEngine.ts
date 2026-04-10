@@ -155,6 +155,25 @@ async function computeTeamFeatures(
       gameTotals.push(g.homeScore + g.awayScore);
     }
 
+    if (scoredGames < 3 && recentScoredGames.length > 0) {
+      const partialGames = recentScoredGames.slice(0, Math.min(3, recentScoredGames.length));
+      goalsForSum = 0;
+      goalsAgainstSum = 0;
+      scoredGames = 0;
+      gameTotals.length = 0;
+
+      for (const g of partialGames) {
+        const parts = g.gameKey.split("_");
+        const isAway = parts[2] === abbrev;
+        const gf = isAway ? g.awayScore : g.homeScore;
+        const ga = isAway ? g.homeScore : g.awayScore;
+        goalsForSum += gf;
+        goalsAgainstSum += ga;
+        scoredGames++;
+        gameTotals.push(g.homeScore + g.awayScore);
+      }
+    }
+
     // ATS record
     const spreadPicks = teamPicks.filter((p) => p.market === "spread");
     for (const p of spreadPicks) {
@@ -181,19 +200,23 @@ async function computeTeamFeatures(
     // fallback to neutral
   }
 
-  const MIN_SAMPLE = 8;
+  const MIN_SAMPLE = 3;
   const homeATS = homeATSTotal >= MIN_SAMPLE ? homeATSWins / homeATSTotal : 0.5;
   const roadATS = roadATSTotal >= MIN_SAMPLE ? roadATSWins / roadATSTotal : 0.5;
   const overRate = overTotal >= MIN_SAMPLE ? overWins / overTotal : 0.5;
   const sampleSize = Math.min(homeATSTotal, roadATSTotal, overTotal);
-  const goalsForAvg = scoredGames > 0 ? goalsForSum / scoredGames : 3.0;
-  const goalsAgainstAvg = scoredGames > 0 ? goalsAgainstSum / scoredGames : 3.0;
+  const fallbackGoalsFor = 2.8;
+  const fallbackGoalsAgainst = 2.8;
+  const fallbackTotal = 5.8;
+
+  const goalsForAvg = scoredGames > 0 ? goalsForSum / scoredGames : fallbackGoalsFor;
+  const goalsAgainstAvg = scoredGames > 0 ? goalsAgainstSum / scoredGames : fallbackGoalsAgainst;
   const last5TotalAvg = gameTotals.length > 0
     ? gameTotals.slice(0, 5).reduce((a, b) => a + b, 0) / Math.min(5, gameTotals.length)
-    : 6.0;
+    : fallbackTotal;
   const last10TotalAvg = gameTotals.length > 0
     ? gameTotals.slice(0, 10).reduce((a, b) => a + b, 0) / Math.min(10, gameTotals.length)
-    : 6.0;
+    : fallbackTotal;
 
   return {
     restDays,
