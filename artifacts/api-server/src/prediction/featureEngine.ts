@@ -63,10 +63,18 @@ async function computeTeamFeatures(
   const ninetyDaysAgo = addDays(gameDate, -90);
   const fourteenDaysAgo = addDays(gameDate, -14);
 
+  // --- Recent historical games for this team ---
+  let recentGames: Array<{
+    gameKey: string;
+    snapshotDate: string;
+    homeScore: number | null;
+    awayScore: number | null;
+  }> = [];
+
   // --- Rest days: last game before gameDate in past 14 days ---
   let restDays = 7;
   try {
-    const recentGames = await db
+    recentGames = await db
       .select({
         gameKey: gameSnapshotsTable.gameKey,
         snapshotDate: gameSnapshotsTable.snapshotDate,
