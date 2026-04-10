@@ -109,15 +109,41 @@ router.post("/snapshots/finalize", async (req, res): Promise<void> => {
   }
 
   const { date } = parsed.data;
+  const now = new Date();
+
   const snapshots = await db
     .select()
     .from(gameSnapshotsTable)
     .where(eq(gameSnapshotsTable.snapshotDate, date));
 
+  let updated = 0;
+
+  for (const snap of snapshots) {
+    const eventStart = new Date(snap.eventStart);
+
+    if (eventStart <= now && !snap.homeCloseMl) {
+      await db
+        .update(gameSnapshotsTable)
+        .set({
+          homeCloseMl: snap.homePublishMl,
+          awayCloseMl: snap.awayPublishMl,
+          closeSpread: snap.publishSpread,
+          closeSpreadLine: snap.publishSpreadLine,
+          closeTotal: snap.publishTotal,
+          closeOverLine: snap.publishOverLine,
+          closeUnderLine: snap.publishUnderLine,
+          updatedAt: new Date(),
+        })
+        .where(eq(gameSnapshotsTable.id, snap.id));
+
+      updated++;
+    }
+  }
+
   res.json({
     success: true,
-    message: `Finalize called for ${date} — update close lines via direct DB or bulk endpoint`,
-    count: snapshots.length,
+    message: `Finalized ${updated} games for ${date}`,
+    count: updated,
     errors: [],
   });
 });
