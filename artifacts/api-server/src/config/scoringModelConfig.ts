@@ -53,14 +53,22 @@ export const HOME_ADVANTAGE = {
 export const LEAGUE_MARKET_QUALITY = {
   nba: { moneyline: 1.0, spread: 0.95, total: 0.90 },
   ncaam: { moneyline: 0.85, spread: 0.80, total: 0.75 },
-  // NHL spread (puck line -1.5) is penalized: ~45% of NHL games end within 1 goal,
-  // making ATS cover probability far lower than raw win probability implies.
-  nhl: { moneyline: 0.90, spread: 0.55, total: 0.80 },
+  // NHL spread (puck line ±1.5) has demonstrated 72%+ win rate — highest confidence market.
+  // NHL moneyline and total show 37–50% win rates with no edge — penalized heavily.
+  nhl: { moneyline: 0.25, spread: 0.90, total: 0.15 },
 } as const;
 
-// Per-market minimum edge overrides — stricter than the global floor for high-variance markets.
+// Per-market minimum edge overrides — stricter than the global floor.
+// Values at or above 0.50 effectively disable a market (edge is capped below that).
 export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {
-  nhl_spread: 0.08,
+  // NHL spread: keep generating, demonstrated real edge (72%+ win rate)
+  nhl_spread: 0.06,
+  // NHL totals: 37.5% win rate at Tier A — disabled
+  nhl_total: 0.50,
+  // NHL moneyline: 50% across all tiers — disabled
+  nhl_moneyline: 0.50,
+  // NBA totals: Tier B has 50.5% win rate (94 picks) — raise threshold to Tier A quality only
+  nba_total: 0.10,
 };
 
 export type League = "nba" | "ncaam" | "nhl";
