@@ -302,8 +302,9 @@ async function runNightlyValidation(): Promise<void> {
           if (closeOdds && pick.publishOdds) {
             const publishImplied = americanToImplied(parseFloat(pick.publishOdds));
             const closeImplied = americanToImplied(parseFloat(closeOdds));
-            // Positive CLV: close line moved in our favor (close worse for bettor → our direction was right)
-            clvImpliedDelta = String(publishImplied - closeImplied);
+            // Positive CLV: market moved toward our side after publish.
+            // closeImplied > publishImplied means sharps bet our side → we got better opening price.
+            clvImpliedDelta = String(closeImplied - publishImplied);
           }
 
           await db

@@ -32,6 +32,7 @@ export interface ValidationOutput {
   avgEdge: number;
   clvHitRate: number;
   avgClv: number;
+  clvSampleSize: number;
   brierScore: number;
   logLoss: number;
   passRate: number;
@@ -123,7 +124,11 @@ export function computeValidationMetrics(picks: PickWithFullData[], days: number
   const avgEdge =
     picks.length > 0 ? picks.reduce((s, p) => s + p.edge, 0) / picks.length : 0;
 
-  const picksWithClv = picks.filter((p) => p.clvImpliedDelta != null);
+  // CLV: only real closing line data, outliers excluded (>20pp swing = corrupt data)
+  const MAX_CLV_DELTA = 0.20;
+  const picksWithClv = picks.filter(
+    (p) => p.clvImpliedDelta != null && Math.abs(p.clvImpliedDelta) <= MAX_CLV_DELTA
+  );
   const clvHitRate =
     picksWithClv.length > 0
       ? picksWithClv.filter((p) => (p.clvImpliedDelta ?? 0) > 0).length /
@@ -134,6 +139,7 @@ export function computeValidationMetrics(picks: PickWithFullData[], days: number
       ? picksWithClv.reduce((s, p) => s + (p.clvImpliedDelta ?? 0), 0) /
         picksWithClv.length
       : 0;
+  const clvSampleSize = picksWithClv.length;
 
   let brierSum = 0;
   let logLossSum = 0;
@@ -172,6 +178,7 @@ export function computeValidationMetrics(picks: PickWithFullData[], days: number
     avgEdge,
     clvHitRate,
     avgClv,
+    clvSampleSize,
     brierScore,
     logLoss,
     passRate: 0,

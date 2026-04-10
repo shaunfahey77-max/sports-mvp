@@ -171,6 +171,7 @@ export interface PerformanceMetrics {
   avgEdge: number;
   clvHitRate: number;
   avgClv: number;
+  clvSampleSize: number;
   brierScore: number;
   logLoss: number;
   passRate: number;

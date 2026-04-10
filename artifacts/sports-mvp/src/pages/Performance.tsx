@@ -114,8 +114,9 @@ export function Performance() {
             />
             <StatCard
               label="CLV Hit Rate"
-              value={formatPercentage(metrics.clvHitRate)}
-              tooltip="Percentage of picks that beat the closing line. Above 50% confirms the model finds genuine edge before the market corrects."
+              value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.clvHitRate) : "—"}
+              subLabel={metrics.clvSampleSize > 0 ? `${metrics.clvSampleSize} picks with close data` : "No closing line data yet"}
+              tooltip="Percentage of picks that beat the closing line. Requires real closing odds data — only moneyline picks can be measured. Above 50% confirms the model finds genuine edge before the market corrects."
             />
             <StatCard
               label="Total Picks"
@@ -150,9 +151,10 @@ export function Performance() {
             />
             <StatCard
               label="Avg CLV"
-              value={formatPercentage(metrics.avgClv)}
-              trend={metrics.avgClv > 0 ? "positive" : "neutral"}
-              tooltip="Average closing line value. How much the market moves in our favor after publishing — a key indicator of genuine edge."
+              value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.avgClv) : "—"}
+              trend={metrics.clvSampleSize >= 20 ? (metrics.avgClv > 0 ? "positive" : "neutral") : undefined}
+              subLabel={metrics.clvSampleSize > 0 ? `n=${metrics.clvSampleSize} real close lines` : "Requires closing line data"}
+              tooltip="Average closing line value across picks with real closing odds. Positive = market confirms our side after publish. Only moneyline picks have closing line data. Outliers (>20pp swings from bad API data) are excluded."
             />
             <StatCard
               label="Pass Rate"
@@ -232,12 +234,13 @@ export function Performance() {
 }
 
 function StatCard({
-  label, value, trend, tooltip
+  label, value, trend, tooltip, subLabel
 }: {
   label: string;
   value: string;
   trend?: "positive" | "negative" | "neutral";
   tooltip?: string;
+  subLabel?: string;
 }) {
   return (
     <Card className="p-5 flex flex-col justify-center bg-card hover:bg-[#112454] transition-colors border-border">
@@ -252,6 +255,9 @@ function StatCard({
       }`}>
         {value}
       </div>
+      {subLabel && (
+        <div className="text-[10px] text-muted-foreground mt-1 opacity-70">{subLabel}</div>
+      )}
     </Card>
   );
 }

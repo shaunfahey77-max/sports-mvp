@@ -386,10 +386,9 @@ router.post("/odds/backfill", async (req, res): Promise<void> => {
       // Insert scored picks with computed outcomes
       if (picks.length > 0) {
         const pickRows = picks.map((c) => {
-          const game = allGameInputs.find((g) => g.gameKey === c.gameKey);
           const result = computeHistoricalOutcome(c, date);
-          const clvImpliedDelta = computeBackfillClv(c, result, date);
-
+          // CLV is only meaningful when we have real closing line data.
+          // Simulated/synthetic CLV pollutes the metric — leave null for historical picks.
           return {
             date,
             gameKey: c.gameKey,
@@ -406,7 +405,6 @@ router.post("/odds/backfill", async (req, res): Promise<void> => {
             ev: String(c.ev),
             rankScore: String(c.rankScore),
             tier: c.tier,
-            clvImpliedDelta: String(clvImpliedDelta),
             modelVersion: "v1",
             scoringVersion: "v1",
           };

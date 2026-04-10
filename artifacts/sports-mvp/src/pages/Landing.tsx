@@ -24,7 +24,7 @@ const BASELINE_STATS = {
   winRate: 0.600,
   roi: 0.2710,
   unitsWon: 165.1,
-  clvHitRate: 0.5660,
+  avgEv: 0.232,
   totalPicks: 609,
 };
 
@@ -33,18 +33,18 @@ function buildStats(perf: any) {
     { label: "Win Rate", value: "—", color: "#388E3C" },
     { label: `ROI (${STAT_WINDOW} Days)`, value: "—", color: "#388E3C" },
     { label: "Units Won", value: "—", color: "#388E3C" },
-    { label: "CLV Hit Rate", value: "—", color: "#FFC107" },
+    { label: "Avg EV / Pick", value: "—", color: "#FFC107" },
   ];
   const hasResults = (perf.wins + perf.losses) > 0;
   const winRate = hasResults ? perf.wins / (perf.wins + perf.losses) : BASELINE_STATS.winRate;
   const roi = hasResults ? (perf.roi ?? 0) : BASELINE_STATS.roi;
   const units = hasResults ? (perf.unitsWon ?? 0) : BASELINE_STATS.unitsWon;
-  const clv = hasResults ? (perf.clvHitRate ?? 0) : BASELINE_STATS.clvHitRate;
+  const avgEv = hasResults ? (perf.avgEv ?? 0) : BASELINE_STATS.avgEv;
   return [
     { label: "Win Rate", value: `${(winRate * 100).toFixed(1)}%`, color: "#388E3C" },
     { label: `ROI (${STAT_WINDOW} Days)`, value: `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%`, color: "#388E3C" },
     { label: "Units Won", value: `${units >= 0 ? "+" : ""}${units.toFixed(0)}U`, color: "#388E3C" },
-    { label: "CLV Hit Rate", value: `${(clv * 100).toFixed(1)}%`, color: "#FFC107" },
+    { label: "Avg EV / Pick", value: `+${(avgEv * 100).toFixed(1)}%`, color: "#FFC107" },
   ];
 }
 
