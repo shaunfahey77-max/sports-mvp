@@ -165,9 +165,11 @@ async function executeSimulation(params: {
 
     const candidates = await scorePicks(gameInputs, markets, modelVersion);
 
-    const picks: PickWithFullData[] = candidates
-      .filter((c) => c.tier !== "PASS")
-      .map((c) => {
+    const picks: PickWithFullData[] = require("../lib/pickUtils").capAndSort(
+      candidates
+        .filter((c) => c.tier !== "PASS")
+        .sort((a, b) => b.rankScore - a.rankScore)
+    ).map((c) => {
         const snap = leagueFiltered.find((s) => s.gameKey === c.gameKey);
         let result: "win" | "loss" | "push" | "pending" = "pending";
 
