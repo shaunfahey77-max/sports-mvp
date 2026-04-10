@@ -13,6 +13,7 @@ import {
 } from "@workspace/db";
 import { eq, and, between, gte, lte } from "drizzle-orm";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
+import { computeClvImpliedDelta } from "../scoring/expectedValue";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { logger } from "../lib/logger";
 import type { League, MarketType } from "../config/scoringModelConfig";
@@ -196,10 +197,7 @@ async function executeSimulation(params: {
               : null
             : null;
 
-        const clvImplied =
-          closeOdds != null
-            ? c.marketProbFair - c.marketProbFair
-            : null;
+        const clvImplied = computeClvImpliedDelta(c.publishOdds, closeOdds);
 
         return {
           id: 0,
