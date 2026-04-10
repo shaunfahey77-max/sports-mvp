@@ -2,6 +2,12 @@ export const MODEL_VERSION = "v1";
 export const SCORING_VERSION = "v2";
 export const CALIBRATION_VERSION = "v2";
 
+// Daily pick caps — controls how many picks are surfaced per league per day.
+// Picks are selected by descending rankScore, then re-sorted chronologically.
+export const MAX_PICKS_PER_LEAGUE_PER_DAY = 5;
+// Max picks per individual game (avoids piling multiple markets on one game).
+export const MAX_PICKS_PER_GAME = 2;
+
 export const RANK_WEIGHTS = {
   ev: 0.50,
   edge: 0.25,

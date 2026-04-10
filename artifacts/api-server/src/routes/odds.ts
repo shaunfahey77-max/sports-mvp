@@ -5,7 +5,7 @@ import {
   candidateBetsTable,
   scoredPicksTable,
 } from "@workspace/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { scorePicks, type GameMarketInput, type CandidateOutput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import type { League, MarketType } from "../config/scoringModelConfig";
@@ -16,6 +16,7 @@ import {
   SPORT_KEYS,
 } from "../lib/oddsApi";
 import { NBA_TEAMS, NHL_TEAMS } from "../lib/teamAbbreviations";
+import { capAndSort } from "../lib/pickUtils";
 
 const router: IRouter = Router();
 
@@ -128,7 +129,12 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
           }))
         ).onConflictDoNothing();
 
-        const picks = candidates.filter((c) => c.tier !== "PASS");
+        // Sort by rankScore DESC before capping so the best picks per league/game are kept
+        const picks = capAndSort(
+          candidates
+            .filter((c) => c.tier !== "PASS")
+            .sort((a, b) => b.rankScore - a.rankScore)
+        );
         if (picks.length > 0) {
           await db.insert(scoredPicksTable).values(
             picks.map((c) => ({
@@ -147,10 +153,26 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
               ev: String(c.ev),
               rankScore: String(c.rankScore),
               tier: c.tier,
+              eventStart: c.eventStart,
               modelVersion: "v1",
               scoringVersion: "v1",
             }))
-          ).onConflictDoNothing();
+          ).onConflictDoUpdate({
+            target: [scoredPicksTable.date, scoredPicksTable.gameKey, scoredPicksTable.market, scoredPicksTable.pick],
+            set: {
+              publishOdds: sql`EXCLUDED.publish_odds`,
+              publishLine: sql`EXCLUDED.publish_line`,
+              modelProbRaw: sql`EXCLUDED.model_prob_raw`,
+              modelProbCalibrated: sql`EXCLUDED.model_prob_calibrated`,
+              marketProbFair: sql`EXCLUDED.market_prob_fair`,
+              edge: sql`EXCLUDED.edge`,
+              ev: sql`EXCLUDED.ev`,
+              rankScore: sql`EXCLUDED.rank_score`,
+              tier: sql`EXCLUDED.tier`,
+              eventStart: sql`EXCLUDED.event_start`,
+              updatedAt: new Date(),
+            },
+          });
         }
 
         results[league] = {

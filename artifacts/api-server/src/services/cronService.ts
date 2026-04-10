@@ -11,8 +11,9 @@ import {
   candidateBetsTable,
   scoredPicksTable,
 } from "@workspace/db";
-import { eq, and, lt } from "drizzle-orm";
+import { eq, and, lt, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import { capAndSort } from "../lib/pickUtils";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
@@ -122,7 +123,12 @@ async function runOddsIngest(): Promise<void> {
 
       // Re-score all upcoming games to pick up updated odds
       const candidates = await scorePicks(snapshots, MARKETS, "v1");
-      const picks = candidates.filter((c) => c.tier !== "PASS");
+      // Sort by rankScore DESC before capping so the best picks per league/game are kept
+      const picks = capAndSort(
+        candidates
+          .filter((c) => c.tier !== "PASS")
+          .sort((a, b) => b.rankScore - a.rankScore)
+      );
       const date = snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0];
 
       // Upsert candidates
@@ -157,6 +163,8 @@ async function runOddsIngest(): Promise<void> {
       }
 
       // Upsert scored picks (pending only for future games)
+      // Use onConflictDoUpdate so odds changes and eventStart are always refreshed.
+      // Never overwrite result/closeOdds — those are set by the validation job.
       if (picks.length > 0) {
         await db
           .insert(scoredPicksTable)
@@ -177,11 +185,27 @@ async function runOddsIngest(): Promise<void> {
               ev: String(c.ev),
               rankScore: String(c.rankScore),
               tier: c.tier,
+              eventStart: c.eventStart,
               modelVersion: "v1",
               scoringVersion: "v1",
             }))
           )
-          .onConflictDoNothing();
+          .onConflictDoUpdate({
+            target: [scoredPicksTable.date, scoredPicksTable.gameKey, scoredPicksTable.market, scoredPicksTable.pick],
+            set: {
+              publishOdds: sql`EXCLUDED.publish_odds`,
+              publishLine: sql`EXCLUDED.publish_line`,
+              modelProbRaw: sql`EXCLUDED.model_prob_raw`,
+              modelProbCalibrated: sql`EXCLUDED.model_prob_calibrated`,
+              marketProbFair: sql`EXCLUDED.market_prob_fair`,
+              edge: sql`EXCLUDED.edge`,
+              ev: sql`EXCLUDED.ev`,
+              rankScore: sql`EXCLUDED.rank_score`,
+              tier: sql`EXCLUDED.tier`,
+              eventStart: sql`EXCLUDED.event_start`,
+              updatedAt: new Date(),
+            },
+          });
         totalPicks += picks.length;
       }
 

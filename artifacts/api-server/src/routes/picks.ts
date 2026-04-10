@@ -13,6 +13,7 @@ import {
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import type { League, MarketType } from "../config/scoringModelConfig";
+import { capAndSort } from "../lib/pickUtils";
 
 const router: IRouter = Router();
 
@@ -28,7 +29,8 @@ router.get("/picks", async (req, res): Promise<void> => {
   if (tier) conditions.push(eq(scoredPicksTable.tier, tier));
   if (result) conditions.push(eq(scoredPicksTable.result, result));
 
-  const picks =
+  // Fetch ordered by rankScore DESC so the cap selects the best picks per league/game
+  const raw =
     conditions.length > 0
       ? await db
           .select()
@@ -43,6 +45,12 @@ router.get("/picks", async (req, res): Promise<void> => {
           .orderBy(desc(scoredPicksTable.rankScore))
           .limit(limit)
           .offset(offset);
+
+  // When filtering by a single date, apply per-league cap and re-sort chronologically.
+  // Historical queries (no date, or multi-day) are returned as-is sorted by rankScore.
+  const picks = date && !league
+    ? capAndSort(raw.map(p => ({ ...p, eventStart: p.eventStart ?? p.date })))
+    : raw;
 
   res.json({ picks, total: picks.length, offset, limit });
 });
@@ -83,8 +91,11 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
       seen.set(key, c);
     }
   }
-  const candidates = Array.from(seen.values()).sort(
-    (a, b) => parseFloat(b.rankScore) - parseFloat(a.rankScore)
+  // Apply per-league cap then sort chronologically (best pick first within same game time)
+  const candidates = capAndSort(
+    Array.from(seen.values()).sort(
+      (a, b) => parseFloat(b.rankScore) - parseFloat(a.rankScore)
+    ).map(c => ({ ...c, eventStart: c.eventStart ?? new Date() }))
   );
 
   res.json(candidates);

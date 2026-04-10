@@ -36,6 +36,7 @@ export const scoredPicksTable = pgTable(
     clvLineDelta: numeric("clv_line_delta"),
     clvImpliedDelta: numeric("clv_implied_delta"),
     meta: jsonb("meta").default({}),
+    eventStart: timestamp("event_start", { withTimezone: true }),
     modelVersion: text("model_version").notNull().default("v1"),
     scoringVersion: text("scoring_version").notNull().default("v1"),
     createdAt: timestamp("created_at", { withTimezone: true })
