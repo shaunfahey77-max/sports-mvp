@@ -64,9 +64,9 @@ export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {
   // NHL spread: keep generating, demonstrated real edge (72%+ win rate)
   nhl_spread: 0.06,
   // NHL totals: 37.5% win rate at Tier A — disabled
-  nhl_total: 0.50,
+  nhl_total: 0.04,
   // NHL moneyline: 50% across all tiers — disabled
-  nhl_moneyline: 0.50,
+  nhl_moneyline: 0.04,
   // NBA totals: Tier B has 50.5% win rate (94 picks) — raise threshold to Tier A quality only
   nba_total: 0.10,
 };

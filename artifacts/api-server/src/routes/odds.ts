@@ -215,7 +215,7 @@ router.post("/odds/validate-scores", async (req, res): Promise<void> => {
         if (!score.completed || !score.scores) continue;
 
         // Find matching game_snapshot by teams + commence date
-        const date = score.commence_time.split("T")[0];
+        const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(score.commence_time));
         const snapshots = await db
           .select()
           .from(gameSnapshotsTable)

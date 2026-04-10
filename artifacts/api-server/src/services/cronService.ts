@@ -242,7 +242,7 @@ async function runNightlyValidation(): Promise<void> {
       for (const score of scores) {
         if (!score.completed || !score.scores) continue;
 
-        const date = score.commence_time.split("T")[0];
+        const date = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(score.commence_time));
 
         // Find matching snapshot by date + league + team name match
         const snapshots = await db
