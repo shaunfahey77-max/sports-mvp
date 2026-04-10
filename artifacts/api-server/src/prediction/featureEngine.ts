@@ -49,6 +49,10 @@ interface TeamFeatureData {
   roadATS: number;
   overRate: number;
   sampleSize: number;
+  goalsForAvg: number;
+  goalsAgainstAvg: number;
+  last5TotalAvg: number;
+  last10TotalAvg: number;
 }
 
 async function computeTeamFeatures(
@@ -63,7 +67,12 @@ async function computeTeamFeatures(
   let restDays = 7;
   try {
     const recentGames = await db
-      .select({ gameKey: gameSnapshotsTable.gameKey, snapshotDate: gameSnapshotsTable.snapshotDate })
+      .select({
+        gameKey: gameSnapshotsTable.gameKey,
+        snapshotDate: gameSnapshotsTable.snapshotDate,
+        homeScore: gameSnapshotsTable.homeScore,
+        awayScore: gameSnapshotsTable.awayScore,
+      })
       .from(gameSnapshotsTable)
       .where(
         and(
@@ -93,6 +102,8 @@ async function computeTeamFeatures(
   let homeATSWins = 0, homeATSTotal = 0;
   let roadATSWins = 0, roadATSTotal = 0;
   let overWins = 0, overTotal = 0;
+  let goalsForSum = 0, goalsAgainstSum = 0, scoredGames = 0;
+  const gameTotals = [];
 
   try {
     const recentPicks = await db
@@ -116,6 +127,25 @@ async function computeTeamFeatures(
       const parts = p.gameKey.split("_");
       return parts[2] === abbrev || parts[3] === abbrev;
     });
+
+    const recentScoredGames = recentGames
+      .filter((g) => {
+        const parts = g.gameKey.split("_");
+        return parts[2] === abbrev || parts[3] === abbrev;
+      })
+      .filter((g) => g.homeScore != null && g.awayScore != null)
+      .sort((a, b) => b.snapshotDate.localeCompare(a.snapshotDate));
+
+    for (const g of recentScoredGames) {
+      const parts = g.gameKey.split("_");
+      const isAway = parts[2] === abbrev;
+      const gf = isAway ? g.awayScore : g.homeScore;
+      const ga = isAway ? g.homeScore : g.awayScore;
+      goalsForSum += gf;
+      goalsAgainstSum += ga;
+      scoredGames++;
+      gameTotals.push(g.homeScore + g.awayScore);
+    }
 
     // ATS record
     const spreadPicks = teamPicks.filter((p) => p.market === "spread");
@@ -148,8 +178,27 @@ async function computeTeamFeatures(
   const roadATS = roadATSTotal >= MIN_SAMPLE ? roadATSWins / roadATSTotal : 0.5;
   const overRate = overTotal >= MIN_SAMPLE ? overWins / overTotal : 0.5;
   const sampleSize = Math.min(homeATSTotal, roadATSTotal, overTotal);
+  const goalsForAvg = scoredGames > 0 ? goalsForSum / scoredGames : 3.0;
+  const goalsAgainstAvg = scoredGames > 0 ? goalsAgainstSum / scoredGames : 3.0;
+  const last5TotalAvg = gameTotals.length > 0
+    ? gameTotals.slice(0, 5).reduce((a, b) => a + b, 0) / Math.min(5, gameTotals.length)
+    : 6.0;
+  const last10TotalAvg = gameTotals.length > 0
+    ? gameTotals.slice(0, 10).reduce((a, b) => a + b, 0) / Math.min(10, gameTotals.length)
+    : 6.0;
 
-  return { restDays, isB2B, homeATS, roadATS, overRate, sampleSize };
+  return {
+    restDays,
+    isB2B,
+    homeATS,
+    roadATS,
+    overRate,
+    sampleSize,
+    goalsForAvg,
+    goalsAgainstAvg,
+    last5TotalAvg,
+    last10TotalAvg,
+  };
 }
 
 /**
@@ -186,6 +235,14 @@ export async function computeAllFeatures(
         awayTeamOverRate: awayData.overRate,
         restAdvantage,
         atsSampleSize: Math.max(homeData.sampleSize, awayData.sampleSize),
+        homeGoalsForAvg: homeData.goalsForAvg,
+        awayGoalsForAvg: awayData.goalsForAvg,
+        homeGoalsAgainstAvg: homeData.goalsAgainstAvg,
+        awayGoalsAgainstAvg: awayData.goalsAgainstAvg,
+        homeLast5TotalAvg: homeData.last5TotalAvg,
+        awayLast5TotalAvg: awayData.last5TotalAvg,
+        homeLast10TotalAvg: homeData.last10TotalAvg,
+        awayLast10TotalAvg: awayData.last10TotalAvg,
       });
     } catch {
       // If feature computation fails for a game, leave it out of the map;

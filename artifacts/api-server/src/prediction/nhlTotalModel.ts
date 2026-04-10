@@ -1,39 +1,54 @@
 /**
- * NHL Total (Over/Under) Prediction Model — v2
+ * NHL Total (Over/Under) Prediction Model — v3
  *
- * NHL totals are lower-scoring (~5.5–6.5 goals, std dev ~1.5).
- * Adjusts for B2B fatigue and recent over/under tendencies.
- * Hash noise removed.
+ * Uses real team scoring features instead of pick-history proxies.
+ * Goal: produce differentiated expected totals across games.
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
 
 const TOTAL_STD_DEV = 1.55;
+const LEAGUE_AVG_TOTAL = 6.0;
 
-// NHL B2B: ~0.4 fewer goals per tired team
-const B2B_GOAL_REDUCTION = 0.4;
-const MAX_OVER_RATE_ADJ = 0.3;
+const OFFENSE_WEIGHT = 0.45;
+const DEFENSE_WEIGHT = 0.35;
+const RECENT_FORM_WEIGHT = 0.30;
+const GOALIE_PROXY_WEIGHT = 0.0;
+const B2B_TOTAL_PENALTY = 0.12;
 
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   if (!game.publishTotal) return {};
 
+  const f = game.features;
   let expectedTotal = game.publishTotal;
 
-  const f = game.features;
   if (f) {
-    if (f.homeTeamB2B) expectedTotal -= B2B_GOAL_REDUCTION;
-    if (f.awayTeamB2B) expectedTotal -= B2B_GOAL_REDUCTION;
+    const offenseAdj =
+      (((f.homeGoalsForAvg + f.awayGoalsForAvg) / 2) - (LEAGUE_AVG_TOTAL / 2)) * OFFENSE_WEIGHT * 2;
 
-    if (f.atsSampleSize >= 10) {
-      const homeAdj = (f.homeTeamOverRate - 0.5) * MAX_OVER_RATE_ADJ * 2;
-      const awayAdj = (f.awayTeamOverRate - 0.5) * MAX_OVER_RATE_ADJ * 2;
-      const combined = Math.max(-MAX_OVER_RATE_ADJ, Math.min(MAX_OVER_RATE_ADJ, (homeAdj + awayAdj) / 2));
-      expectedTotal += combined;
-    }
+    const defenseAdj =
+      (((f.homeGoalsAgainstAvg + f.awayGoalsAgainstAvg) / 2) - (LEAGUE_AVG_TOTAL / 2)) * DEFENSE_WEIGHT * 2;
+
+    const recent5Avg = (f.homeLast5TotalAvg + f.awayLast5TotalAvg) / 2;
+    const recent10Avg = (f.homeLast10TotalAvg + f.awayLast10TotalAvg) / 2;
+    const recentFormAdj =
+      (((recent5Avg * 0.6 + recent10Avg * 0.4) - game.publishTotal)) * RECENT_FORM_WEIGHT;
+
+    const situationalAdj =
+      (f.homeTeamB2B ? -B2B_TOTAL_PENALTY : 0) +
+      (f.awayTeamB2B ? -B2B_TOTAL_PENALTY : 0);
+
+    expectedTotal =
+      game.publishTotal +
+      offenseAdj +
+      defenseAdj +
+      recentFormAdj +
+      GOALIE_PROXY_WEIGHT * 0 +
+      situationalAdj;
   }
 
-  const baseTotal = game.publishTotal;
-  const probOver = normalCdf((expectedTotal - baseTotal) / TOTAL_STD_DEV);
+  const z = (expectedTotal - game.publishTotal) / TOTAL_STD_DEV;
+  const probOver = normalCdf(z);
   const probUnder = 1 - probOver;
 
   return {

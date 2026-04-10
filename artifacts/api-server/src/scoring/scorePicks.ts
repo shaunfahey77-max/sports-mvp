@@ -25,6 +25,14 @@ export interface GameFeatures {
   awayTeamOverRate: number;
   restAdvantage: number;
   atsSampleSize: number;
+  homeGoalsForAvg: number;
+  awayGoalsForAvg: number;
+  homeGoalsAgainstAvg: number;
+  awayGoalsAgainstAvg: number;
+  homeLast5TotalAvg: number;
+  awayLast5TotalAvg: number;
+  homeLast10TotalAvg: number;
+  awayLast10TotalAvg: number;
 }
 
 export interface GameMarketInput {
