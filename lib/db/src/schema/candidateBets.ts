@@ -6,7 +6,6 @@ import {
   numeric,
   date,
   index,
-  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -44,7 +43,6 @@ export const candidateBetsTable = pgTable(
     index("candidate_bets_league_market_idx").on(t.league, t.marketType),
     index("candidate_bets_tier_idx").on(t.tier),
     index("candidate_bets_game_key_idx").on(t.gameKey),
-    uniqueIndex("candidate_bets_unique_snapshot_pick_idx_v2").on(t.snapshotDate, t.gameKey, t.marketType, t.side),
   ]
 );
 
