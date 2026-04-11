@@ -21,6 +21,10 @@ export const TIER_THRESHOLDS = {
   C: 0.35,
 } as const;
 
+export const TIER_A_THRESHOLD_OVERRIDE: Partial<Record<string, number>> = {
+  nhl_total: 0.94,
+};
+
 export const MIN_EDGE_TO_CANDIDATE = 0.025;
 export const MIN_EV_TO_CANDIDATE = 0.008;
 export const MAX_EV_CAP = 0.12;

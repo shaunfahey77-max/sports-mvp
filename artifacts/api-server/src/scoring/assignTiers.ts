@@ -3,7 +3,7 @@
  * Maps rank scores to tiers using explicit score bands — no scattered hard-coded gates.
  */
 
-import { TIER_THRESHOLDS, MIN_EDGE_TO_CANDIDATE, MIN_EV_TO_CANDIDATE, MARKET_MIN_EDGE } from "../config/scoringModelConfig";
+import { TIER_THRESHOLDS, TIER_A_THRESHOLD_OVERRIDE, MIN_EDGE_TO_CANDIDATE, MIN_EV_TO_CANDIDATE, MARKET_MIN_EDGE } from "../config/scoringModelConfig";
 import type { Tier, League, MarketType } from "../config/scoringModelConfig";
 
 export interface TierInput {
@@ -49,7 +49,10 @@ export function assignTier(input: TierInput): { tier: Tier; selectionReason: str
 
   const { rankScore } = input;
 
-  if (rankScore >= TIER_THRESHOLDS.A) {
+  const marketKey = input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
+  const tierAThreshold = (marketKey && TIER_A_THRESHOLD_OVERRIDE[marketKey]) ?? TIER_THRESHOLDS.A;
+
+  if (rankScore >= tierAThreshold) {
     return { tier: "A", selectionReason: "high_rank_score" };
   }
   if (rankScore >= TIER_THRESHOLDS.B) {

@@ -7,12 +7,12 @@
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
 
-const TOTAL_STD_DEV = 1.55;
+const TOTAL_STD_DEV = 2.1;
 const LEAGUE_AVG_TOTAL = 6.0;
 
-const OFFENSE_WEIGHT = 0.45;
-const DEFENSE_WEIGHT = 0.35;
-const RECENT_FORM_WEIGHT = 0.30;
+const OFFENSE_WEIGHT = 0.25;
+const DEFENSE_WEIGHT = 0.20;
+const RECENT_FORM_WEIGHT = 0.02;
 const GOALIE_PROXY_WEIGHT = 0.0;
 const B2B_TOTAL_PENALTY = 0.12;
 
@@ -32,7 +32,7 @@ export async function predict(game: GameMarketInput): Promise<ModelOutput> {
     const recent5Avg = (f.homeLast5TotalAvg + f.awayLast5TotalAvg) / 2;
     const recent10Avg = (f.homeLast10TotalAvg + f.awayLast10TotalAvg) / 2;
     const recentFormAdj =
-      (((recent5Avg * 0.6 + recent10Avg * 0.4) - game.publishTotal)) * RECENT_FORM_WEIGHT;
+      (((recent5Avg * 0.6 + recent10Avg * 0.4) - game.publishTotal)) * RECENT_FORM_WEIGHT * 0.5;
 
     const situationalAdj =
       (f.homeTeamB2B ? -B2B_TOTAL_PENALTY : 0) +

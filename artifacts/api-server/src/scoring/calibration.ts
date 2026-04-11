@@ -34,7 +34,7 @@ export const DEFAULT_CALIBRATION_PARAMS: Record<string, Record<string, Calibrati
     // NHL spread (puck line -1.5): aggressively compressed. ~45% of NHL games end within 1 goal;
     // a team's win probability does NOT translate cleanly to cover probability at -1.5.
     spread: { method: "isotonic", version: "v2", isotonicBuckets: nhlSpreadIsotonicBuckets() },
-    total: { method: "isotonic", version: "v2", isotonicBuckets: defaultIsotonicBuckets() },
+    total: { method: "none", version: "v3" },
   },
 };
 
