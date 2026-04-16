@@ -1,0 +1,47 @@
+Proceed with this as a shared pipeline correction pass for NHL/NBA production readiness, with NCAAM gated off.
+
+Please follow these guardrails:
+
+- Work on a new git branch only
+- Do not publish or deploy
+- Do not change infra, Replit config, Clerk, Stripe, database connection settings, or migrations unless strictly required to compile
+- Do not change unrelated UI styling
+- If any change requires a high-risk judgment call, stop and show me the diff before proceeding
+- After each major step, run the narrowest api-server typecheck/build validation possible
+- At the end, give me a concise file-by-file summary of what changed, why, and any remaining risks
+
+Execution order:
+1. Gate NCAAM off from default production-facing endpoints, cron, and performance views, while keeping it accessible only via explicit request for inspection.
+2. Fix spread fair-probability computation so it uses real two-sided spread odds, not a fabricated sign-flipped opposite side.
+3. Fix away spread settlement/grading so one consistent sign convention is used from scoring through validation.
+4. Remove self-referential prediction features derived from prior scored picks/results. Replace them with game_snapshots-based team-performance features where possible, otherwise neutralize them.
+5. Align the manual /picks/score write path with the cron write path using the same explicit conflict targets/upsert behavior.
+6. Make performance metrics honest by ensuring avg EV / avg edge are not mixed across resolved and unresolved populations. Prefer resolved-only in this pass unless a clearly labeled projected metric is trivial and safe.
+7. Reduce Tier A inflation by replacing per-batch min-max normalization with an absolute/population-anchored scheme using fixed caps. If the resulting Tier A volume swings by more than about 50 percent in either direction on a sanity-check date, stop and show me the diff before applying.
+
+Scope for this pass:
+- NHL and NBA are the production focus
+- spread, total, and moneyline should remain the long-term target markets for both leagues
+- do not broaden this pass into MLB/NFL/NCAAF work
+- do not rebuild NCAAM models; just gate them as experimental/off by default
+
+Relevant files:
+- artifacts/api-server/src/scoring/marketProb.ts
+- artifacts/api-server/src/scoring/scorePicks.ts
+- artifacts/api-server/src/scoring/validatePicks.ts
+- artifacts/api-server/src/scoring/rankBets.ts
+- artifacts/api-server/src/scoring/assignTiers.ts
+- artifacts/api-server/src/prediction/featureEngine.ts
+- artifacts/api-server/src/prediction/ncaamMoneylineModel.ts
+- artifacts/api-server/src/prediction/ncaamSpreadModel.ts
+- artifacts/api-server/src/prediction/ncaamTotalModel.ts
+- artifacts/api-server/src/routes/picks.ts
+- artifacts/api-server/src/services/cronService.ts
+- artifacts/api-server/src/config/scoringModelConfig.ts
+- artifacts/sports-mvp/src/pages/Performance.tsx
+
+At the end, do not deploy. Show me:
+1. exact files changed
+2. exact commands run
+3. typecheck/build results
+4. any follow-up work you recommend
