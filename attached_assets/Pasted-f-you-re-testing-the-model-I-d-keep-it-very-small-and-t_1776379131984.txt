@@ -1,0 +1,129 @@
+f you’re testing the model, I’d keep it very small and treat tonight like a signal check, not a profit night.
+
+Based on the card you showed for Thursday, April 16, 2026, my recommendation would be:
+
+Best 2-pick test parlay
+
+VAN @ EDM UNDER 6.5 (+110)
+SJS @ WPG HOME moneyline (-155)
+Why:
+
+those are the cleanest-looking Tier A plays on your board
+they’re in different markets, so you’re not stacking two versions of the same game exposure
+Best singles to test
+
+VAN @ EDM UNDER 6.5 (+110)
+SJS @ WPG HOME -155
+VAN @ EDM AWAY +1.5 (+110)
+If you want the safest testing structure, I’d actually do:
+
+1 very small 2-leg parlay
+2 or 3 even smaller singles
+That gives you better information than loading up on one parlay.
+
+One caution:
+
+only take these if DraftKings is still offering something close to those numbers
+if the line moves hard against you, skip it rather than forcing the test
+If you want, I can also rank tonight’s card from most testable to least testable based on the screenshot you sent.
+
+
+6:27 PM
+User attachment
+(No content)
+This is a much better test bet than a random sweat, but I’d make one adjustment.
+
+What you have now:
+
+VAN @ EDM Under 6.5 (+102)
+SJ moneyline (+136)
+2-leg parlay at +452
+My take:
+
+Under 6.5 is still the cleaner leg
+SJ moneyline +136 is the riskier piece
+If you want the best model test, I’d rather you do:
+
+keep the parlay small
+also place the Under 6.5 as a single
+Why:
+
+the under is the strongest-looking signal from your board
+the Sharks moneyline is more volatile, so if the parlay loses you won’t learn much about whether the under read was good
+My recommendation:
+
+keep this parlay if you want action
+but make your main “test” bet the Under 6.5 single
+if you want a second single, I’d prefer WPG moneyline over SJ moneyline from a safety standpoint, even if it pays less
+So short version:
+
+good as a fun small parlay
+best true test single = VAN/EDM Under 6.5
+don’t over-size the Sharks leg
+
+6:35 PM
+How do I make money using my prediction and scoring modular? What can we do to improve it?
+6:36 PM
+
+
+
+
+Worked for 50s
+Right now? They probably won’t, at least not at scale, unless it gets sharper and more trustworthy.
+
+The honest answer is: people pay $19.99/month for a betting product when they believe it gives them one or more of these things:
+
+Better decisions
+fewer bad bets
+clearer best bets
+more discipline
+Time savings
+they don’t want to research every slate themselves
+they want a clean shortlist
+Confidence
+not “guaranteed wins”
+but a system that feels rigorous, selective, and honest
+Entertainment with structure
+some people pay because it makes betting more fun and organized
+especially if the UI, tracking, and explanations feel premium
+But for your product specifically, the value proposition has to become:
+
+“We help you bet smarter by surfacing a small number of credible, data-backed picks and transparently tracking results.”
+
+Not:
+
+“we have lots of picks”
+“our EV is high”
+“trust us”
+Because people won’t keep paying for that if:
+
+ROI is weak
+Tier A is inflated
+the card feels noisy
+the results page doesn’t back up the confidence
+So why would someone pay $19.99/month eventually?
+
+if they get 3 to 5 truly curated plays, not 15+ noisy ones
+if the app saves them time every day
+if the tracking is transparent
+if NHL/NBA playoff picks feel sharper than what they’d find free on Twitter
+if the product experience feels premium and disciplined
+My blunt view:
+$19.99/month is reasonable only if the service feels selective, trustworthy, and useful every day.
+If it still feels experimental, people won’t stay.
+
+So the commercial goal isn’t “justify $19.99 with more features.”
+It’s:
+
+make the product feel worth trusting.
+
+The strongest path is:
+
+fewer picks
+better picks
+honest reporting
+clean UX
+clear edge by league/market
+If you want, I can help you answer the harder follow-up:
+
+“What would need to be true for this to actually deserve $19.99/month?”
