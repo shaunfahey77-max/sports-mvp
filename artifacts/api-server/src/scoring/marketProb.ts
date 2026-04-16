@@ -67,10 +67,11 @@ export function computeMarketProbFair(params: {
 
   if (marketType === "spread") {
     const homeLine = params.publishSpreadLine ?? -110;
-    // Prefer the real away juice; fall back to symmetric assumption only when absent.
-    const awayLine =
-      params.publishAwaySpreadLine ??
-      (homeLine < 0 ? Math.abs(homeLine) : -homeLine);
+    // Prefer the real away juice. When absent, assume symmetric juice
+    // (same American odds on both sides) — matches the symmetric-juice
+    // fallback used in scorePicks.ts so EV and fair-probability are
+    // computed under identical assumptions. Fair prob resolves to 0.5.
+    const awayLine = params.publishAwaySpreadLine ?? homeLine;
     const { fairA, fairB } = removeTwoSidedVig(homeLine, awayLine);
     if (side === "home") return fairA;
     if (side === "away") return fairB;
