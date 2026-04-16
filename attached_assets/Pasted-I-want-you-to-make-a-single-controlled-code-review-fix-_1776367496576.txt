@@ -1,0 +1,73 @@
+I want you to make a single controlled code-review fix pass on the prediction, scoring, and performance pipeline.
+
+Important constraints:
+- Work on a new branch only
+- Do not publish or deploy anything
+- Do not change infra, Replit config, database connection settings, Clerk, Stripe, or migrations unless absolutely required for the code to compile
+- Do not change unrelated UI styling
+- Before editing, create backups/checkpoints of touched files
+- After editing, run the narrowest possible build/tests and show me the exact results
+- At the end, give me a concise file-by-file summary of what changed, why, and any remaining risks
+
+Primary issues to fix in one pass:
+
+1. Spread fair probability bug
+- In scoring, use the actual away spread odds when computing market fair probability for spread markets
+- Do not fabricate the opposite side by sign-flipping the home price
+- Make sure edge and EV for spread picks are based on the true two-sided market
+
+2. Away spread settlement bug
+- Fix away spread grading/validation so result calculation matches the bettor-facing published line exactly
+- Verify the sign convention is consistent between scoring and validation
+
+3. Self-referential feature bug
+- Remove or neutralize any feature logic that derives ATS rate, over rate, or similar predictive inputs from prior scored picks/results
+- If there is no clean historical game-results source available, disable those features instead of keeping polluted ones
+
+4. Manual scoring write-path inconsistency
+- Align the manual /picks/score path with the cron write path so both use explicit conflict targets/upsert behavior instead of vague onConflictDoNothing()
+
+5. Misleading performance metrics
+- Update performance calculations so avg EV and avg edge are not mixed across unresolved and resolved populations
+- Either compute them on resolved picks only, or split them clearly into projected vs realized metrics
+- Keep labels honest
+
+6. Ranking / tier inflation
+- Reduce Tier A inflation
+- Review rankBets and scoringModelConfig so Tier A becomes genuinely selective rather than batch-relative inflation
+- Do not overfit thresholds blindly; make the smallest principled change that reduces obviously excessive Tier A volume
+
+7. NCAAM safety
+- If NCAAM models are still hash/noise-driven rather than feature-driven, disable them from production-facing scoring or clearly gate them as experimental so they are not surfaced as normal production picks
+
+Files likely involved:
+- artifacts/api-server/src/scoring/marketProb.ts
+- artifacts/api-server/src/scoring/validatePicks.ts
+- artifacts/api-server/src/prediction/featureEngine.ts
+- artifacts/api-server/src/routes/picks.ts
+- artifacts/api-server/src/scoring/rankBets.ts
+- artifacts/api-server/src/config/scoringModelConfig.ts
+- artifacts/api-server/src/prediction/ncaamMoneylineModel.ts
+- artifacts/api-server/src/prediction/ncaamSpreadModel.ts
+- artifacts/api-server/src/prediction/ncaamTotalModel.ts
+- any directly related scoring/prediction files required to make the fixes coherent
+
+Success criteria:
+- Spread edge/EV uses real two-sided odds
+- Away spread results grade correctly
+- No self-referential scored_picks features remain in production scoring
+- Manual scoring path matches cron conflict behavior
+- Performance metrics no longer overstate model quality
+- Tier A volume is materially more selective
+- NCAAM is not exposed as a normal production model if it still lacks real predictive features
+- Build passes
+- Any targeted tests you add or run pass
+
+At the end, do NOT deploy. Just show me:
+1. exact files changed
+2. exact commands run
+3. build/test results
+4. any follow-up work you still recommend
+One small recommendation: if you send this, I’d add one last line:
+
+If any part of this requires a high-risk judgment call, stop and show me the diff before proceeding.
