@@ -127,7 +127,7 @@ export function Performance() {
               label="Avg EV"
               value={formatPercentage(metrics.avgEv)}
               trend={metrics.avgEv > 0 ? "positive" : "negative"}
-              tooltip="Average expected value per pick. Above 0% means we are systematically finding +EV bets."
+              tooltip="Average realized expected value across graded picks (pending picks excluded). Above 0% means the model is finding genuine +EV bets after outcomes are in."
             />
             <StatCard
               label="Max Drawdown"
@@ -147,7 +147,7 @@ export function Performance() {
               label="Avg Edge"
               value={formatPercentage(metrics.avgEdge)}
               trend={metrics.avgEdge > 0 ? "positive" : "neutral"}
-              tooltip="Average edge across all picks. This is the raw probability advantage before odds conversion."
+              tooltip="Average edge across graded picks (pending picks excluded). This is the raw probability advantage before odds conversion."
             />
             <StatCard
               label="Avg CLV"

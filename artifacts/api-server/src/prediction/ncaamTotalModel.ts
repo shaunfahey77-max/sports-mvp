@@ -1,6 +1,10 @@
 /**
  * NCAAM Total (Over/Under) Prediction Model.
- * College basketball totals have higher variance (~14 points std dev).
+ *
+ * EXPERIMENTAL — NOT PRODUCTION-READY.
+ * Expected total is just the published line plus a deterministic hash-derived
+ * offset — no real features. NCAAM is gated off from production-facing endpoints
+ * and cron by default; opt in explicitly via ?league=ncaam.
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";

@@ -28,6 +28,9 @@ export const TIER_A_THRESHOLD_OVERRIDE: Partial<Record<string, number>> = {
 export const MIN_EDGE_TO_CANDIDATE = 0.025;
 export const MIN_EV_TO_CANDIDATE = 0.008;
 export const MAX_EV_CAP = 0.12;
+// Absolute edge ceiling used by rankBets to scale edge into [0,1] regardless
+// of the batch. Picks with edge >= this value saturate at 1.0.
+export const MAX_EDGE_CAP = 0.20;
 export const MIN_MARKET_QUALITY = 0.3;
 
 export const CALIBRATION_CONFIG: Record<string, Record<string, "sigmoid" | "isotonic" | "none">> = {

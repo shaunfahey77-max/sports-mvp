@@ -5,7 +5,7 @@ import {
   candidateBetsTable,
   scoredPicksTable,
 } from "@workspace/db";
-import { eq, and, gte, lte, desc } from "drizzle-orm";
+import { eq, and, gte, lte, desc, inArray, sql } from "drizzle-orm";
 import {
   ScoreDateBody,
   ValidatePicksBody,
@@ -14,6 +14,10 @@ import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { capAndSort } from "../lib/pickUtils";
+
+// Leagues surfaced by default to subscribers. NCAAM is experimental (hash-noise
+// pseudo-models) and must be requested explicitly via ?league=ncaam.
+const DEFAULT_PRODUCTION_LEAGUES = ["nba", "nhl"] as const;
 
 const router: IRouter = Router();
 
@@ -24,7 +28,12 @@ router.get("/picks", async (req, res): Promise<void> => {
 
   const conditions = [];
   if (date) conditions.push(eq(scoredPicksTable.date, date));
-  if (league) conditions.push(eq(scoredPicksTable.league, league));
+  if (league) {
+    conditions.push(eq(scoredPicksTable.league, league));
+  } else {
+    // No explicit league filter → serve production leagues only (exclude experimental NCAAM).
+    conditions.push(inArray(scoredPicksTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+  }
   if (market) conditions.push(eq(scoredPicksTable.market, market));
   if (tier) conditions.push(eq(scoredPicksTable.tier, tier));
   if (result) conditions.push(eq(scoredPicksTable.result, result));
@@ -62,10 +71,14 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
   // `date` filters by snapshotDate (legacy); `gameDate` filters by the date embedded in gameKey
   if (date) conditions.push(eq(candidateBetsTable.snapshotDate, date));
   if (gameDate) {
-    const { sql: sqlRaw } = await import("drizzle-orm");
-    conditions.push(sqlRaw`${candidateBetsTable.gameKey} LIKE ${'%_' + gameDate + '_%'}`);
+    conditions.push(sql`${candidateBetsTable.gameKey} LIKE ${'%_' + gameDate + '_%'}`);
   }
-  if (league) conditions.push(eq(candidateBetsTable.league, league));
+  if (league) {
+    conditions.push(eq(candidateBetsTable.league, league));
+  } else {
+    // No explicit league filter → serve production leagues only (exclude experimental NCAAM).
+    conditions.push(inArray(candidateBetsTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+  }
   if (market) conditions.push(eq(candidateBetsTable.marketType, market));
   if (tier) conditions.push(eq(candidateBetsTable.tier, tier));
 
@@ -110,7 +123,8 @@ router.post("/picks/score", async (req, res): Promise<void> => {
 
   const {
     date,
-    leagues = ["nba", "nhl", "ncaam"],
+    // NCAAM gated off by default — explicitly request via leagues: ["ncaam"] for inspection.
+    leagues = [...DEFAULT_PRODUCTION_LEAGUES],
     markets = ["moneyline", "spread", "total"],
     modelVersion = "v1",
     scoringVersion = "v1",
@@ -145,6 +159,7 @@ router.post("/picks/score", async (req, res): Promise<void> => {
     awayPublishMl: parseFloat(s.awayPublishMl),
     publishSpread: s.publishSpread ? parseFloat(s.publishSpread) : null,
     publishSpreadLine: s.publishSpreadLine ? parseFloat(s.publishSpreadLine) : null,
+    publishAwaySpreadLine: s.publishAwaySpreadLine ? parseFloat(s.publishAwaySpreadLine) : null,
     publishTotal: s.publishTotal ? parseFloat(s.publishTotal) : null,
     publishOverLine: s.publishOverLine ? parseFloat(s.publishOverLine) : null,
     publishUnderLine: s.publishUnderLine ? parseFloat(s.publishUnderLine) : null,
@@ -188,7 +203,28 @@ router.post("/picks/score", async (req, res): Promise<void> => {
           modelVersion,
         }))
       )
-      .onConflictDoNothing();
+      // Keep /picks/score idempotent the same way the cron does: on rerun,
+      // overwrite scoring fields so line movements / model changes propagate.
+      .onConflictDoUpdate({
+        target: [
+          candidateBetsTable.snapshotDate,
+          candidateBetsTable.gameKey,
+          candidateBetsTable.marketType,
+          candidateBetsTable.side,
+        ],
+        set: {
+          publishOdds: sql`EXCLUDED.publish_odds`,
+          publishLine: sql`EXCLUDED.publish_line`,
+          modelProbRaw: sql`EXCLUDED.model_prob_raw`,
+          modelProbCalibrated: sql`EXCLUDED.model_prob_calibrated`,
+          marketProbFair: sql`EXCLUDED.market_prob_fair`,
+          edge: sql`EXCLUDED.edge`,
+          ev: sql`EXCLUDED.ev`,
+          rankScore: sql`EXCLUDED.rank_score`,
+          tier: sql`EXCLUDED.tier`,
+          selectionReason: sql`EXCLUDED.selection_reason`,
+        },
+      });
   }
 
   const picks = candidates.filter((c) => c.tier !== "PASS");
@@ -213,11 +249,34 @@ router.post("/picks/score", async (req, res): Promise<void> => {
           ev: String(c.ev),
           rankScore: String(c.rankScore),
           tier: c.tier,
+          eventStart: c.eventStart,
           modelVersion,
           scoringVersion,
         }))
       )
-      .onConflictDoNothing();
+      // Match cron semantics: refresh scoring/odds on rerun; never touch
+      // result or closeOdds (those belong to the validation job).
+      .onConflictDoUpdate({
+        target: [
+          scoredPicksTable.date,
+          scoredPicksTable.gameKey,
+          scoredPicksTable.market,
+          scoredPicksTable.pick,
+        ],
+        set: {
+          publishOdds: sql`EXCLUDED.publish_odds`,
+          publishLine: sql`EXCLUDED.publish_line`,
+          modelProbRaw: sql`EXCLUDED.model_prob_raw`,
+          modelProbCalibrated: sql`EXCLUDED.model_prob_calibrated`,
+          marketProbFair: sql`EXCLUDED.market_prob_fair`,
+          edge: sql`EXCLUDED.edge`,
+          ev: sql`EXCLUDED.ev`,
+          rankScore: sql`EXCLUDED.rank_score`,
+          tier: sql`EXCLUDED.tier`,
+          eventStart: sql`EXCLUDED.event_start`,
+          updatedAt: new Date(),
+        },
+      });
   }
 
   const formattedCandidates = candidates.map((c) => ({
@@ -288,8 +347,10 @@ router.post("/picks/validate", async (req, res): Promise<void> => {
       pick: pick.pick,
       homeScore: game.homeScore,
       awayScore: game.awayScore,
-      spread: pick.publishLine ? parseFloat(pick.publishLine) : null,
-      total: pick.publishLine ? parseFloat(pick.publishLine) : null,
+      // Canonical home-team spread from the game snapshot (not pick.publishLine,
+      // which is team-signed and would double-negate for away picks).
+      homeSpread: game.publishSpread ? parseFloat(game.publishSpread) : null,
+      total: game.publishTotal ? parseFloat(game.publishTotal) : null,
     });
 
     const closeOdds =

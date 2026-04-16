@@ -305,8 +305,10 @@ async function runNightlyValidation(): Promise<void> {
             pick: pick.pick,
             homeScore,
             awayScore,
-            spread: pick.publishLine ? parseFloat(pick.publishLine) : null,
-            total: pick.publishLine ? parseFloat(pick.publishLine) : null,
+            // Canonical home-team spread from the snapshot — NOT pick.publishLine,
+            // which is team-signed and would double-negate for away picks.
+            homeSpread: snap.publishSpread ? parseFloat(snap.publishSpread) : null,
+            total: snap.publishTotal ? parseFloat(snap.publishTotal) : null,
           });
 
           // Compute CLV implied delta (close odds vs publish odds)

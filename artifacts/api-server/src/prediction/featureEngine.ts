@@ -14,7 +14,7 @@
  */
 
 import { db } from "@workspace/db";
-import { gameSnapshotsTable, scoredPicksTable } from "@workspace/db";
+import { gameSnapshotsTable } from "@workspace/db";
 import { and, eq, gte, lt } from "drizzle-orm";
 import type { GameMarketInput, GameFeatures } from "../scoring/scorePicks";
 import { NBA_TEAM_ABBREVS, NHL_TEAM_ABBREVS } from "../lib/teamAbbreviations";
@@ -106,105 +106,41 @@ async function computeTeamFeatures(
 
   const isB2B = restDays <= 1;
 
-  // --- ATS and over/under rates: last 25 graded picks ---
-  let homeATSWins = 0, homeATSTotal = 0;
-  let roadATSWins = 0, roadATSTotal = 0;
-  let overWins = 0, overTotal = 0;
+  // Scoring-history-derived features (goalsFor/Against/totals) from the game
+  // snapshots we already fetched. We intentionally do NOT consult
+  // `scored_picks.result` here — doing so made features a function of the model's
+  // own prior outputs, creating a self-reinforcing feedback loop that inflated
+  // historical win rates without predictive value.
   let goalsForSum = 0, goalsAgainstSum = 0, scoredGames = 0;
-  const gameTotals = [];
+  const gameTotals: number[] = [];
 
-  try {
-    const recentPicks = await db
-      .select({
-        gameKey: scoredPicksTable.gameKey,
-        market: scoredPicksTable.market,
-        pick: scoredPicksTable.pick,
-        result: scoredPicksTable.result,
-      })
-      .from(scoredPicksTable)
-      .where(
-        and(
-          eq(scoredPicksTable.league, league),
-          gte(scoredPicksTable.date, ninetyDaysAgo),
-          lt(scoredPicksTable.date, gameDate)
-        )
-      );
-
-    const teamPicks = recentPicks.filter((p) => {
-      if (p.result === "pending" || p.result === "push") return false;
-      const parts = p.gameKey.split("_");
-      return parts[2] === abbrev || parts[3] === abbrev;
-    });
-
-    const recentScoredGames = recentGames
-      .filter((g) => {
-        const parts = g.gameKey.split("_");
-        return parts[2] === abbrev || parts[3] === abbrev;
-      })
-      .filter((g) => g.homeScore != null && g.awayScore != null)
-      .sort((a, b) => b.snapshotDate.localeCompare(a.snapshotDate));
-
-    for (const g of recentScoredGames) {
+  const recentScoredGames = recentGames
+    .filter((g) => {
       const parts = g.gameKey.split("_");
-      const isAway = parts[2] === abbrev;
-      const gf = isAway ? g.awayScore : g.homeScore;
-      const ga = isAway ? g.homeScore : g.awayScore;
-      goalsForSum += gf;
-      goalsAgainstSum += ga;
-      scoredGames++;
-      gameTotals.push(g.homeScore + g.awayScore);
-    }
+      return parts[2] === abbrev || parts[3] === abbrev;
+    })
+    .filter((g) => g.homeScore != null && g.awayScore != null)
+    .sort((a, b) => b.snapshotDate.localeCompare(a.snapshotDate));
 
-    if (scoredGames < 3 && recentScoredGames.length > 0) {
-      const partialGames = recentScoredGames.slice(0, Math.min(3, recentScoredGames.length));
-      goalsForSum = 0;
-      goalsAgainstSum = 0;
-      scoredGames = 0;
-      gameTotals.length = 0;
-
-      for (const g of partialGames) {
-        const parts = g.gameKey.split("_");
-        const isAway = parts[2] === abbrev;
-        const gf = isAway ? g.awayScore : g.homeScore;
-        const ga = isAway ? g.homeScore : g.awayScore;
-        goalsForSum += gf;
-        goalsAgainstSum += ga;
-        scoredGames++;
-        gameTotals.push(g.homeScore + g.awayScore);
-      }
-    }
-
-    // ATS record
-    const spreadPicks = teamPicks.filter((p) => p.market === "spread");
-    for (const p of spreadPicks) {
-      const parts = p.gameKey.split("_");
-      const isHome = parts[3] === abbrev;
-      const isAway = parts[2] === abbrev;
-      if (isHome && p.pick === "home") {
-        homeATSTotal++;
-        if (p.result === "win") homeATSWins++;
-      } else if (isAway && p.pick === "away") {
-        roadATSTotal++;
-        if (p.result === "win") roadATSWins++;
-      }
-    }
-
-    // Over/under rate
-    const totalPicks = teamPicks.filter((p) => p.market === "total");
-    for (const p of totalPicks) {
-      overTotal++;
-      if (p.pick === "over" && p.result === "win") overWins++;
-      if (p.pick === "under" && p.result === "loss") overWins++;
-    }
-  } catch {
-    // fallback to neutral
+  for (const g of recentScoredGames) {
+    const parts = g.gameKey.split("_");
+    const isAway = parts[2] === abbrev;
+    const gf = (isAway ? g.awayScore : g.homeScore) ?? 0;
+    const ga = (isAway ? g.homeScore : g.awayScore) ?? 0;
+    goalsForSum += gf;
+    goalsAgainstSum += ga;
+    scoredGames++;
+    gameTotals.push((g.homeScore ?? 0) + (g.awayScore ?? 0));
   }
 
-  const MIN_SAMPLE = 3;
-  const homeATS = homeATSTotal >= MIN_SAMPLE ? homeATSWins / homeATSTotal : 0.5;
-  const roadATS = roadATSTotal >= MIN_SAMPLE ? roadATSWins / roadATSTotal : 0.5;
-  const overRate = overTotal >= MIN_SAMPLE ? overWins / overTotal : 0.5;
-  const sampleSize = Math.min(homeATSTotal, roadATSTotal, overTotal);
+  // ATS / over rates are neutralized until we have a non-self-referential
+  // source (e.g. independent team-stat feed). Keeping these at 0.5 means the
+  // prediction models treat them as uninformative priors rather than signal
+  // laundered from our own prior predictions.
+  const homeATS = 0.5;
+  const roadATS = 0.5;
+  const overRate = 0.5;
+  const sampleSize = 0;
   const fallbackGoalsFor = 2.8;
   const fallbackGoalsAgainst = 2.8;
   const fallbackTotal = 5.8;

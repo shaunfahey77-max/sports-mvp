@@ -1,6 +1,10 @@
 /**
  * NCAAM Spread Prediction Model.
- * College basketball has higher variance (~14 points std dev vs NBA's ~12).
+ *
+ * EXPERIMENTAL — NOT PRODUCTION-READY.
+ * Signal comes from a deterministic hash of the gameKey (`modelNoise`), not from
+ * real features. NCAAM is gated off from production-facing endpoints and cron
+ * by default; opt in explicitly via ?league=ncaam.
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";

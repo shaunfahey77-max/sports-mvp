@@ -197,6 +197,7 @@ async function scoreMarket(
         homePublishMl: game.homePublishMl,
         awayPublishMl: game.awayPublishMl,
         publishSpreadLine: game.publishSpreadLine,
+        publishAwaySpreadLine: game.publishAwaySpreadLine,
       });
       const edge = computeEdge(calibrated, marketProbFair);
       const ev = Math.min(MAX_EV_CAP, computeEV(calibrated, publishOdds));

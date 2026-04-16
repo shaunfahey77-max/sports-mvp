@@ -54,6 +54,7 @@ export function computeMarketProbFair(params: {
   homePublishMl: number;
   awayPublishMl: number;
   publishSpreadLine?: number | null;
+  publishAwaySpreadLine?: number | null;
   publishOverLine?: number | null;
   publishUnderLine?: number | null;
 }): number {
@@ -65,9 +66,12 @@ export function computeMarketProbFair(params: {
   }
 
   if (marketType === "spread") {
-    const spreadLine = params.publishSpreadLine ?? -110;
-    const otherLine = spreadLine < 0 ? Math.abs(spreadLine) : -spreadLine;
-    const { fairA, fairB } = removeTwoSidedVig(spreadLine, otherLine);
+    const homeLine = params.publishSpreadLine ?? -110;
+    // Prefer the real away juice; fall back to symmetric assumption only when absent.
+    const awayLine =
+      params.publishAwaySpreadLine ??
+      (homeLine < 0 ? Math.abs(homeLine) : -homeLine);
+    const { fairA, fairB } = removeTwoSidedVig(homeLine, awayLine);
     if (side === "home") return fairA;
     if (side === "away") return fairB;
   }

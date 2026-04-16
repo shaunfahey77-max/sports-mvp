@@ -1,6 +1,11 @@
 /**
  * NCAAM Moneyline Prediction Model.
- * College basketball has higher home advantage and more variance than NBA.
+ *
+ * EXPERIMENTAL — NOT PRODUCTION-READY.
+ * This model is a thin market-prob adjustment plus a deterministic hash of the
+ * gameKey (`modelNoise`). It does not use real features and produces pseudo-random
+ * "signal." NCAAM is gated off from production-facing endpoints and cron by default
+ * (see DEFAULT_PRODUCTION_LEAGUES in routes/picks.ts and routes/performance.ts).
  */
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";

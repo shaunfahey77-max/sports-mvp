@@ -49,15 +49,25 @@ export interface PickWithFullData extends PickForValidation {
   tier: string;
 }
 
+/**
+ * Grade a pick against final scores.
+ *
+ * `homeSpread` MUST be the canonical home team's spread as stored on the game
+ * snapshot (e.g. -7.5 means the home team is a 7.5-point favorite). Do NOT pass
+ * the team-signed `pick.publishLine` — that value is negated for away picks and
+ * will double-negate when the pick side is "away".
+ *
+ * `total` is the over/under line (e.g. 220.5). Moneyline picks ignore both.
+ */
 export function computeOutcomeResult(params: {
   market: string;
   pick: string;
   homeScore: number;
   awayScore: number;
-  spread?: number | null;
+  homeSpread?: number | null;
   total?: number | null;
 }): "win" | "loss" | "push" {
-  const { market, pick, homeScore, awayScore, spread, total } = params;
+  const { market, pick, homeScore, awayScore, homeSpread, total } = params;
 
   if (market === "moneyline") {
     if (homeScore === awayScore) return "push";
@@ -65,18 +75,13 @@ export function computeOutcomeResult(params: {
     if (pick === "away") return awayScore > homeScore ? "win" : "loss";
   }
 
-  if (market === "spread" && spread != null) {
-    const margin = homeScore - awayScore;
-    if (pick === "home") {
-      const adjusted = margin + spread;
-      if (adjusted === 0) return "push";
-      return adjusted > 0 ? "win" : "loss";
-    }
-    if (pick === "away") {
-      const adjusted = awayScore - homeScore + spread;
-      if (adjusted === 0) return "push";
-      return adjusted > 0 ? "win" : "loss";
-    }
+  if (market === "spread" && homeSpread != null) {
+    // Home cover metric: actual margin relative to the spread the home team was laying.
+    // homeMargin > 0 → home covered; < 0 → away covered; == 0 → push.
+    const homeMargin = homeScore - awayScore + homeSpread;
+    if (homeMargin === 0) return "push";
+    if (pick === "home") return homeMargin > 0 ? "win" : "loss";
+    if (pick === "away") return homeMargin < 0 ? "win" : "loss";
   }
 
   if (market === "total" && total != null) {
@@ -119,10 +124,13 @@ export function computeValidationMetrics(picks: PickWithFullData[], days: number
   const roi = resolved.length > 0 ? totalUnits / resolved.length : 0;
   const unitsWon = totalUnits;
 
+  // Only average over graded picks so the number reflects realized performance.
+  // Averaging over `picks` (which includes pending and pushes) conflates the
+  // model's prospective EV on unresolved games with its realized edge.
   const avgEv =
-    picks.length > 0 ? picks.reduce((s, p) => s + p.ev, 0) / picks.length : 0;
+    resolved.length > 0 ? resolved.reduce((s, p) => s + p.ev, 0) / resolved.length : 0;
   const avgEdge =
-    picks.length > 0 ? picks.reduce((s, p) => s + p.edge, 0) / picks.length : 0;
+    resolved.length > 0 ? resolved.reduce((s, p) => s + p.edge, 0) / resolved.length : 0;
 
   // CLV: only real closing line data, outliers excluded (>20pp swing = corrupt data)
   const MAX_CLV_DELTA = 0.20;
