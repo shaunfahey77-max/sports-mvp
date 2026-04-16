@@ -1,0 +1,70 @@
+Here is the required report.
+
+1. Root cause
+/performance/history reads exclusively from the validation_metrics table. That table had 0 rows and had never been written to — no cron job, route, or script anywhere in the codebase inserted into it. Core settlement on scored_picks was actually healthy (picks graded cleanly through 2026-04-15, no stale pendings older than 6 hours); the "stoppage" was the rollup layer feeding the history endpoint never existing.
+
+2. Exact files changed
+artifacts/api-server/src/services/cronService.ts — added backfillValidationMetrics(startDate, endDate, leagues?) which groups graded scored_picks by (date, league) and upserts a windowDays=1, market=null row per day via computeValidationMetrics. Idempotent (deletes daily rows in range first). Hooked into runNightlyValidation after the ESPN backstop sweep with a rolling 7-day window.
+scripts/src/backfill-validation-metrics.ts — new CLI wrapper.
+scripts/package.json — added backfill-validation-metrics script alias.
+3. Exact commands run
+pnpm --filter @workspace/scripts exec tsx ./src/backfill-validation-metrics.ts 2026-04-09 2026-04-15
+# → { datesProcessed: 7, rowsWritten: 11, errors: [] }
+# Then restarted the api-server workflow to pick up the new cron hook.
+pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts   # 9/9 pass
+pnpm --filter @workspace/api-server exec tsc --noEmit 2>&1 | grep -cE "error TS"                        # 8 (cap 23)
+
+4. DB verification results
+SELECT COUNT(*), MIN(run_date), MAX(run_date) FROM validation_metrics WHERE window_days=1;
+→ 11 rows, 2026-04-09 → 2026-04-15
+Stale pending picks (event_start < now - 6h AND result='pending'): 0
+Settlement coverage (scored_picks.result by day, 04-09..04-15):
+2026-04-09  loss=26 win=7
+2026-04-10  loss=11 win=13
+2026-04-11  loss=11 win=5
+2026-04-12  loss=10 push=1 win=11
+2026-04-13  loss=6  win=5
+2026-04-14  loss=11 win=8
+2026-04-15  loss=10 win=2
+
+Per-day rollup just written:
+
+date        league  n   W   L   P   win_rate  roi     units
+2026-04-15  nba     3   1   2   0   .333      -.337   -1.01
+2026-04-15  nhl     9   1   8   0   .111      -.750   -6.75
+2026-04-14  nba     3   1   2   0   .333      -.349   -1.05
+2026-04-14  nhl     16  7   9   0   .438      +.206   +3.30
+2026-04-13  nhl     11  5   6   0   .455      +.001   +0.01
+2026-04-12  nba     17  9   8   0   .529      +.046   +0.79
+2026-04-12  nhl     5   2   2   1   .500      +.004   +0.02
+2026-04-11  nhl     16  5   11  0   .313      +1.348  +21.56
+2026-04-10  nba     24  13  11  0   .542      +.075   +1.79
+2026-04-09  nba     10  2   8   0   .200      -.621   -6.21
+2026-04-09  nhl     23  5   18  0   .217      -.253   -5.83
+
+5. Endpoint outputs
+GET /api/performance?window=30
+
+{"windowDays":30,"league":null,"market":null,"totalPicks":157,"wins":51,
+ "losses":85,"pushes":1,"pending":20,"winRate":0.375,"roi":0.0483,
+ "unitsWon":6.613,"maxDrawdown":18.909,"avgEv":0.108,"avgEdge":0.150,
+ "clvHitRate":0,"avgClv":0,"clvSampleSize":18,"brierScore":0.249,
+ "logLoss":0.681,"passRate":0.157,"picksPerDay":5.23,
+ "tierBreakdown":{"A":92,"B":61,"C":4},
+ "leagueBreakdown":{"nba":65,"nhl":92},
+ "marketBreakdown":{"spread":71,"total":62,"moneyline":24}}
+
+GET /api/performance/history?days=45 — 11 entries, newest first:
+
+2026-04-15 nba, 2026-04-15 nhl, 2026-04-14 nba, 2026-04-14 nhl,
+2026-04-13 nhl, 2026-04-12 nba, 2026-04-12 nhl, 2026-04-11 nhl,
+2026-04-10 nba, 2026-04-09 nba, 2026-04-09 nhl
+
+(Each row includes totalPicks, wins, losses, pushes, roi, winRate, unitsWon, maxDrawdown, avgEv, avgEdge, brierScore, logLoss, picksPerDay, modelVersion — full JSON response is 5,262 bytes.)
+
+6. Remaining risks
+Unit-level granularity only at the league level. Current rollup writes market=null per (date, league). If /performance/history?market=spread or market=total is queried, it returns []. Add per-market rollup rows when that filter becomes product-facing.
+Hourly/intra-day views not supported. Rollup is strictly daily (windowDays=1).
+NHL 04-11 row shows ROI of +1.35 / units +21.56 (5W-11L). That is the pre-fix NHL edge-inflation tail: those picks were scored under the old independent-side line shopping, and the favorable +21.56 units reflects a few high-price wins on inflated-edge picks. Going forward, newly scored picks use the matched-pair shopping from Task #4, so the tail should compress.
+CLV all zero across the window (clvHitRate=0, avgClv=0). The CLV delta population logic in runNightlyValidation only sets clvImpliedDelta for moneyline picks where both closeOdds and publishOdds exist — spread/total never get CLV, and moneyline close-odds coverage has been spotty. Separate from this settlement fix.
+Not deployed. Per your instruction. The next scheduled 3:30 AM nightly cron on the running dev server will re-roll the last 7 days automatically.
