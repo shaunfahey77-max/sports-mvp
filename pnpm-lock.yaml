@@ -209,6 +209,9 @@ importers:
       stripe:
         specifier: 20.0.0
         version: 20.0.0(@types/node@25.3.5)
+      stripe-replit-sync:
+        specifier: 1.0.0
+        version: 1.0.0(stripe@20.0.0(@types/node@25.3.5))
       uuid:
         specifier: ^13.0.0
         version: 13.0.0

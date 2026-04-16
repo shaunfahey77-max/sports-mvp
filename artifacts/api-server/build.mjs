@@ -100,6 +100,9 @@ async function buildAll() {
       "puppeteer",
       "puppeteer-core",
       "electron",
+      // stripe-replit-sync resolves its migration SQL files via __dirname
+      // relative to its own package location; bundling it breaks that lookup.
+      "stripe-replit-sync",
     ],
     sourcemap: "linked",
     plugins: [

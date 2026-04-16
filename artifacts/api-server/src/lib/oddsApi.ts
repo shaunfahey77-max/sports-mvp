@@ -1,4 +1,5 @@
 import { getTeamAbbrev } from "./teamAbbreviations";
+import { SPREAD_LINE_ABS_MAX, TOTAL_LINE_RANGE } from "../config/scoringModelConfig";
 
 const BASE = "https://api.the-odds-api.com/v4";
 
@@ -170,89 +171,151 @@ function americanToDecimal(american: number): number {
 }
 
 /**
- * For spread shopping: compute a score for a home side (point, price) combination.
- * Lower point spread (e.g., -1.5 vs -3.5) at similar juice is better for home.
- * We score as: decimal_odds * spread_adjustment_factor
+ * Scan all bookmakers and pick the best available line for each market.
+ *
+ * Moneyline shops each side independently — there is no "line" concept to
+ * mismatch, so best-price-per-side is safe.
+ *
+ * SPREADS and TOTALS use matched-pair shopping. For each distinct point
+ * value offered across books, collect the best price for each side AT
+ * THAT POINT, then pick the point whose matched pair has the best combined
+ * decimal-odds sum. This prevents the root cause of the NHL spread/total
+ * edge inflation investigated in Task #4: the previous independent-best
+ * picker would pair home -1.5 (from book A) with away +2.5 (from book B),
+ * or over 3.5 (from book A) with under 6.5 (from book B). The downstream
+ * model then computes `rawProbAway = 1 - rawProbHome` under the assumption
+ * that both sides are at the same line, and `computeMarketProbFair`
+ * removes vig between two prices also assumed to share a line, producing
+ * spurious edges of 30-50%.
+ *
+ * A per-league plausibility filter (SPREAD_LINE_ABS_MAX, TOTAL_LINE_RANGE)
+ * additionally drops any line point outside the realistic main-line range
+ * for that sport, catching alt-line / team-total / period-total leakage
+ * that occasionally appears under the main `spreads` / `totals` market
+ * keys in the feed.
  */
-function spreadHomeScore(point: number, price: number): number {
-  const decimal = americanToDecimal(price);
-  // Every 0.5 points of spread is worth roughly 2% probability
-  const spreadAdj = Math.exp(point * 0.04); // higher point = better for home (less negative)
-  return decimal * spreadAdj;
-}
-
-/**
- * Scan all bookmakers and pick the best available line for each market/side.
- */
-export function pickBestLines(bookmakers: OddsBookmaker[], homeTeam: string, awayTeam: string): BestLines {
+export function pickBestLines(
+  bookmakers: OddsBookmaker[],
+  homeTeam: string,
+  awayTeam: string,
+  league?: string
+): BestLines {
+  // --- Moneyline (independent best-per-side — no line to mismatch) ---
   let bestHome: { odds: number; book: string } | null = null;
   let bestAway: { odds: number; book: string } | null = null;
-  let bestSpreadHome: { point: number; odds: number; book: string; score: number } | null = null;
-  let bestSpreadAway: { point: number; odds: number; book: string; score: number } | null = null;
-  let bestOver: { point: number; odds: number; book: string } | null = null;
-  let bestUnder: { point: number; odds: number; book: string } | null = null;
-
   for (const bk of bookmakers) {
-    // --- Moneyline (h2h) ---
     const h2h = bk.markets.find((m) => m.key === "h2h");
-    if (h2h) {
-      const homeOut = h2h.outcomes.find((o) => o.name === homeTeam);
-      const awayOut = h2h.outcomes.find((o) => o.name === awayTeam);
-      if (homeOut) {
-        const homeDecimal = americanToDecimal(homeOut.price);
-        if (!bestHome || homeDecimal > americanToDecimal(bestHome.odds)) {
-          bestHome = { odds: homeOut.price, book: bk.key };
-        }
-      }
-      if (awayOut) {
-        const awayDecimal = americanToDecimal(awayOut.price);
-        if (!bestAway || awayDecimal > americanToDecimal(bestAway.odds)) {
-          bestAway = { odds: awayOut.price, book: bk.key };
-        }
+    if (!h2h) continue;
+    const homeOut = h2h.outcomes.find((o) => o.name === homeTeam);
+    const awayOut = h2h.outcomes.find((o) => o.name === awayTeam);
+    if (homeOut) {
+      const d = americanToDecimal(homeOut.price);
+      if (!bestHome || d > americanToDecimal(bestHome.odds)) {
+        bestHome = { odds: homeOut.price, book: bk.key };
       }
     }
-
-    // --- Spreads ---
-    const spreads = bk.markets.find((m) => m.key === "spreads");
-    if (spreads) {
-      const homeOut = spreads.outcomes.find((o) => o.name === homeTeam);
-      const awayOut = spreads.outcomes.find((o) => o.name === awayTeam);
-      if (homeOut?.point != null) {
-        const score = spreadHomeScore(homeOut.point, homeOut.price);
-        if (!bestSpreadHome || score > bestSpreadHome.score) {
-          bestSpreadHome = { point: homeOut.point, odds: homeOut.price, book: bk.key, score };
-        }
-      }
-      if (awayOut?.point != null) {
-        // Away score: higher point (less negative) is better; mirror of home
-        const score = spreadHomeScore(-awayOut.point, awayOut.price);
-        if (!bestSpreadAway || score > bestSpreadAway.score) {
-          bestSpreadAway = { point: awayOut.point, odds: awayOut.price, book: bk.key, score };
-        }
+    if (awayOut) {
+      const d = americanToDecimal(awayOut.price);
+      if (!bestAway || d > americanToDecimal(bestAway.odds)) {
+        bestAway = { odds: awayOut.price, book: bk.key };
       }
     }
+  }
 
-    // --- Totals ---
-    const totals = bk.markets.find((m) => m.key === "totals");
-    if (totals) {
-      const overOut = totals.outcomes.find((o) => o.name === "Over");
-      const underOut = totals.outcomes.find((o) => o.name === "Under");
-      if (overOut?.point != null) {
-        // For over: lower total + better price is more favorable
-        const overScore = americanToDecimal(overOut.price) * Math.exp(-overOut.point * 0.02);
-        const prevScore = bestOver ? americanToDecimal(bestOver.odds) * Math.exp(-bestOver.point * 0.02) : -Infinity;
-        if (overScore > prevScore) {
-          bestOver = { point: overOut.point, odds: overOut.price, book: bk.key };
-        }
-      }
-      if (underOut?.point != null) {
-        // For under: higher total + better price is more favorable
-        const underScore = americanToDecimal(underOut.price) * Math.exp(underOut.point * 0.02);
-        const prevScore = bestUnder ? americanToDecimal(bestUnder.odds) * Math.exp(bestUnder.point * 0.02) : -Infinity;
-        if (underScore > prevScore) {
-          bestUnder = { point: underOut.point, odds: underOut.price, book: bk.key };
-        }
-      }
+  // --- Spreads (matched-pair shopping) ---
+  const spreadAbsMax = league ? SPREAD_LINE_ABS_MAX[league] : undefined;
+  const spreadByPoint = new Map<
+    number,
+    { bestHome: { price: number; book: string } | null; bestAway: { price: number; book: string } | null }
+  >();
+  for (const bk of bookmakers) {
+    const mkt = bk.markets.find((m) => m.key === "spreads");
+    if (!mkt) continue;
+    const homeOut = mkt.outcomes.find((o) => o.name === homeTeam);
+    const awayOut = mkt.outcomes.find((o) => o.name === awayTeam);
+    if (homeOut?.point == null || awayOut?.point == null) continue;
+    // A single book's home and away spread must be zero-sum (home -X ↔ away +X).
+    // If a book fails this, its own data is inconsistent — skip it.
+    if (Math.abs(homeOut.point + awayOut.point) > 1e-6) continue;
+    // Plausibility filter: drop alt-line leaks (e.g. NHL spread ±2.5 when
+    // the main puck line is strictly ±1.5).
+    if (spreadAbsMax != null && Math.abs(homeOut.point) > spreadAbsMax) continue;
+
+    const entry =
+      spreadByPoint.get(homeOut.point) ?? ({ bestHome: null, bestAway: null } as {
+        bestHome: { price: number; book: string } | null;
+        bestAway: { price: number; book: string } | null;
+      });
+    if (!entry.bestHome || americanToDecimal(homeOut.price) > americanToDecimal(entry.bestHome.price)) {
+      entry.bestHome = { price: homeOut.price, book: bk.key };
+    }
+    if (!entry.bestAway || americanToDecimal(awayOut.price) > americanToDecimal(entry.bestAway.price)) {
+      entry.bestAway = { price: awayOut.price, book: bk.key };
+    }
+    spreadByPoint.set(homeOut.point, entry);
+  }
+  let bestSpread: BestSpread | null = null;
+  let bestSpreadScore = -Infinity;
+  for (const [point, e] of spreadByPoint) {
+    if (!e.bestHome || !e.bestAway) continue;
+    const score = americanToDecimal(e.bestHome.price) + americanToDecimal(e.bestAway.price);
+    if (score > bestSpreadScore) {
+      bestSpreadScore = score;
+      bestSpread = {
+        homePoint: point,
+        homeOdds: e.bestHome.price,
+        homeBook: e.bestHome.book,
+        awayPoint: -point,
+        awayOdds: e.bestAway.price,
+        awayBook: e.bestAway.book,
+      };
+    }
+  }
+
+  // --- Totals (matched-pair shopping) ---
+  const totalRange = league ? TOTAL_LINE_RANGE[league] : undefined;
+  const totalByPoint = new Map<
+    number,
+    { bestOver: { price: number; book: string } | null; bestUnder: { price: number; book: string } | null }
+  >();
+  for (const bk of bookmakers) {
+    const mkt = bk.markets.find((m) => m.key === "totals");
+    if (!mkt) continue;
+    const overOut = mkt.outcomes.find((o) => o.name === "Over");
+    const underOut = mkt.outcomes.find((o) => o.name === "Under");
+    if (overOut?.point == null || underOut?.point == null) continue;
+    // A single book's over and under total must share the same point.
+    if (Math.abs(overOut.point - underOut.point) > 1e-6) continue;
+    if (totalRange && (overOut.point < totalRange.min || overOut.point > totalRange.max)) continue;
+
+    const entry =
+      totalByPoint.get(overOut.point) ?? ({ bestOver: null, bestUnder: null } as {
+        bestOver: { price: number; book: string } | null;
+        bestUnder: { price: number; book: string } | null;
+      });
+    if (!entry.bestOver || americanToDecimal(overOut.price) > americanToDecimal(entry.bestOver.price)) {
+      entry.bestOver = { price: overOut.price, book: bk.key };
+    }
+    if (!entry.bestUnder || americanToDecimal(underOut.price) > americanToDecimal(entry.bestUnder.price)) {
+      entry.bestUnder = { price: underOut.price, book: bk.key };
+    }
+    totalByPoint.set(overOut.point, entry);
+  }
+  let bestTotal: BestTotal | null = null;
+  let bestTotalScore = -Infinity;
+  for (const [point, e] of totalByPoint) {
+    if (!e.bestOver || !e.bestUnder) continue;
+    const score = americanToDecimal(e.bestOver.price) + americanToDecimal(e.bestUnder.price);
+    if (score > bestTotalScore) {
+      bestTotalScore = score;
+      bestTotal = {
+        overPoint: point,
+        overOdds: e.bestOver.price,
+        overBook: e.bestOver.book,
+        underPoint: point,
+        underOdds: e.bestUnder.price,
+        underBook: e.bestUnder.book,
+      };
     }
   }
 
@@ -261,28 +324,8 @@ export function pickBestLines(bookmakers: OddsBookmaker[], homeTeam: string, awa
       bestHome && bestAway
         ? { homeOdds: bestHome.odds, awayOdds: bestAway.odds, homeBook: bestHome.book, awayBook: bestAway.book }
         : null,
-    spread:
-      bestSpreadHome && bestSpreadAway
-        ? {
-            homePoint: bestSpreadHome.point,
-            homeOdds: bestSpreadHome.odds,
-            awayPoint: bestSpreadAway.point,
-            awayOdds: bestSpreadAway.odds,
-            homeBook: bestSpreadHome.book,
-            awayBook: bestSpreadAway.book,
-          }
-        : null,
-    total:
-      bestOver && bestUnder
-        ? {
-            overPoint: bestOver.point,
-            overOdds: bestOver.odds,
-            underPoint: bestUnder.point,
-            underOdds: bestUnder.odds,
-            overBook: bestOver.book,
-            underBook: bestUnder.book,
-          }
-        : null,
+    spread: bestSpread,
+    total: bestTotal,
   };
 }
 
@@ -333,7 +376,7 @@ export interface TransformedSnapshot {
  * using best available line across ALL bookmakers.
  */
 export function transformGame(game: OddsGame, league: string): TransformedSnapshot | null {
-  const best = pickBestLines(game.bookmakers, game.home_team, game.away_team);
+  const best = pickBestLines(game.bookmakers, game.home_team, game.away_team, league);
   if (!best.h2h) return null;
 
   const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(game.commence_time));

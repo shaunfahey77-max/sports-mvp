@@ -69,6 +69,28 @@ export const ODDS_RANGE_OVERRIDE: Partial<Record<string, { min: number; max: num
  */
 export const ODDS_RANGE_GUARDRAIL_LEAGUES = ["nba", "nhl"] as const;
 
+/**
+ * Per-league plausibility ranges for the line POINT (not price). Any
+ * book-published spread or total whose point falls outside these bounds is
+ * treated as an alt-line / team-total / period-total leak and dropped
+ * during `pickBestLines`. This prevents values like NHL total 3.5 or 9.5
+ * (main NHL total is ~6) and NHL spread ±2.5 (main puck line is ±1.5)
+ * from ever being paired with a main-line model probability, which is the
+ * root cause of the NHL spread/total edge-inflation issue investigated in
+ * Task #4. These ranges are generous enough to accept every realistic
+ * main-line value but strict enough to reject out-of-market outcomes.
+ */
+export const SPREAD_LINE_ABS_MAX: Partial<Record<string, number>> = {
+  nba: 25,
+  ncaam: 35,
+  nhl: 2.0,
+};
+export const TOTAL_LINE_RANGE: Partial<Record<string, { min: number; max: number }>> = {
+  nba: { min: 180, max: 280 },
+  ncaam: { min: 100, max: 180 },
+  nhl: { min: 5.0, max: 7.0 },
+};
+
 export const MIN_EDGE_TO_CANDIDATE = 0.025;
 export const MIN_EV_TO_CANDIDATE = 0.008;
 export const MAX_EV_CAP = 0.12;
