@@ -1,0 +1,70 @@
+These are both good task definitions. I’d approve them, with a few small tighten-ups.
+
+Task 3: Odds Sanity / Alt-Line Guardrail
+This is well scoped and should go next after settlement.
+
+What I’d add:
+
+Make the filter config-driven, not hardcoded in scoring logic.
+Log both:
+selection_reason='odds_out_of_range'
+the offending odds value and market line if possible
+Require a short report showing how many picks were blocked by:
+league
+market
+tier-before-filter if known
+One thing I’d clarify:
+
+the guardrail should apply at the candidate generation / scoring pass, but rejected rows should still be auditable as PASS or rejected candidates, not silently disappear
+I’d send back:
+
+Approve Task 3.
+
+Add these requirements:
+- Make the odds range config-driven, not hardcoded
+- Record the rejection reason and offending odds for auditability
+- Include a short before/after report showing how many picks were blocked by league and market
+- Keep the filter at candidate generation so rejected picks never surface as subscriber-facing A/B/C picks
+
+This task should remain scoped to NHL/NBA production readiness only.
+Task 4: NHL Spread/Total Edge Inflation Investigation
+Also strong. This is the right follow-up after the guardrail is in place.
+
+What I’d add:
+
+Require at least 2-3 concrete traced examples end-to-end:
+raw odds feed
+chosen line
+model probability
+fair probability
+final edge
+Require an explicit statement of root cause:
+alt-line leakage
+line mismatch
+side mismatch
+model evaluated on wrong line
+or combination
+Require that the fix happens upstream of ranking, which you already called out correctly
+One nuance:
+
+I agree with Fix settlement pipeline first
+I agree with Odds sanity guardrail before this
+but this investigation does not need settled results to begin, since the bug is already visible in current scored picks
+so settlement is an operational dependency, but not necessarily a logic dependency for diagnosis
+I’d send back:
+
+Approve Task 4.
+
+Add these requirements:
+- Trace at least 2–3 concrete NHL spread/total examples end-to-end from raw odds feed to final edge calculation
+- Include an explicit root-cause statement naming whether the issue is alt-line leakage, line mismatch, side mismatch, or a combination
+- Keep the fix upstream in odds/line matching or model-to-market matching, not in ranking or tier assignment
+- Provide a short before/after report on the last 14 days showing NHL spread and total edge distribution plus tier counts
+
+One note: this task should still follow the odds-sanity guardrail task, but diagnosis can begin without waiting for settled ROI data.
+Recommended order
+
+Settlement pipeline fix
+Odds sanity / alt-line guardrail
+NHL spread/total edge inflation investigation
+So yes: I’d approve both tasks, with those added guardrails.
