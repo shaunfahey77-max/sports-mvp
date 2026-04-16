@@ -131,7 +131,7 @@ async function runOddsIngest(): Promise<void> {
       );
       const date = snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0];
 
-      // Upsert candidates
+      // Upsert candidates — update scoring data if odds have moved since last run
       if (candidates.length > 0) {
         await db
           .insert(candidateBetsTable)
@@ -159,7 +159,26 @@ async function runOddsIngest(): Promise<void> {
               modelVersion: "v1",
             }))
           )
-          .onConflictDoNothing();
+          .onConflictDoUpdate({
+            target: [
+              candidateBetsTable.snapshotDate,
+              candidateBetsTable.gameKey,
+              candidateBetsTable.marketType,
+              candidateBetsTable.side,
+            ],
+            set: {
+              publishOdds: sql`EXCLUDED.publish_odds`,
+              publishLine: sql`EXCLUDED.publish_line`,
+              modelProbRaw: sql`EXCLUDED.model_prob_raw`,
+              modelProbCalibrated: sql`EXCLUDED.model_prob_calibrated`,
+              marketProbFair: sql`EXCLUDED.market_prob_fair`,
+              edge: sql`EXCLUDED.edge`,
+              ev: sql`EXCLUDED.ev`,
+              rankScore: sql`EXCLUDED.rank_score`,
+              tier: sql`EXCLUDED.tier`,
+              selectionReason: sql`EXCLUDED.selection_reason`,
+            },
+          });
       }
 
       // Upsert scored picks (pending only for future games)
