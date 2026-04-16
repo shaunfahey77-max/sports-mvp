@@ -10,8 +10,10 @@ import {
   gameSnapshotsTable,
   candidateBetsTable,
   scoredPicksTable,
+  validationMetricsTable,
 } from "@workspace/db";
 import { eq, and, lt, sql } from "drizzle-orm";
+import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { logger } from "../lib/logger";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
@@ -386,7 +388,122 @@ async function runNightlyValidation(): Promise<void> {
     logger.error({ jobId, err }, "Cron: ESPN backstop sweep failed");
   }
 
+  // Roll up daily validation_metrics for the last 7 days so /performance/history
+  // has rows for any games just settled (including late ESPN backstops).
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const start = new Date();
+    start.setUTCDate(start.getUTCDate() - 7);
+    const startDate = start.toISOString().split("T")[0];
+    const metricsResult = await backfillValidationMetrics(startDate, today);
+    logger.info({ jobId, metricsWritten: metricsResult.rowsWritten }, "Cron: validation_metrics rollup complete");
+  } catch (err) {
+    logger.error({ jobId, err }, "Cron: validation_metrics rollup failed");
+  }
+
   logger.info({ jobId, scoresFetched, picksValidated }, "Cron: nightly validation finished");
+}
+
+// ---------------------------------------------------------------------------
+// Validation-metrics rollup. /performance/history reads from validation_metrics;
+// this persists a per-day, per-league summary row (windowDays=1, market=null)
+// from graded rows in scored_picks. Idempotent: deletes existing daily rows
+// in the date range before reinserting.
+// ---------------------------------------------------------------------------
+export interface ValidationMetricsBackfillResult {
+  datesProcessed: number;
+  rowsWritten: number;
+  errors: string[];
+}
+
+export async function backfillValidationMetrics(
+  startDate: string,
+  endDate: string,
+  leagues: League[] = LEAGUES
+): Promise<ValidationMetricsBackfillResult> {
+  const result: ValidationMetricsBackfillResult = {
+    datesProcessed: 0,
+    rowsWritten: 0,
+    errors: [],
+  };
+
+  // Idempotent: clear existing daily rollup rows in the window so re-runs after
+  // late-settled games produce the correct aggregates.
+  await db
+    .delete(validationMetricsTable)
+    .where(
+      and(
+        eq(validationMetricsTable.windowDays, 1),
+        sql`${validationMetricsTable.runDate} >= ${startDate}`,
+        sql`${validationMetricsTable.runDate} <= ${endDate}`
+      )
+    );
+
+  let date = startDate;
+  while (date <= endDate) {
+    for (const league of leagues) {
+      try {
+        const picks = await db
+          .select()
+          .from(scoredPicksTable)
+          .where(and(eq(scoredPicksTable.date, date), eq(scoredPicksTable.league, league)));
+
+        if (picks.length === 0) continue;
+
+        const picksForValidation: PickWithFullData[] = picks.map((p) => ({
+          id: p.id,
+          league: p.league,
+          market: p.market,
+          pick: p.pick,
+          publishOdds: parseFloat(p.publishOdds),
+          closeOdds: p.closeOdds ? parseFloat(p.closeOdds) : null,
+          closeLine: p.closeLine ? parseFloat(p.closeLine) : null,
+          publishLine: p.publishLine ? parseFloat(p.publishLine) : null,
+          modelProbCalibrated: parseFloat(p.modelProbCalibrated),
+          result: p.result as "win" | "loss" | "push" | "pending",
+          ev: parseFloat(p.ev),
+          edge: parseFloat(p.edge),
+          clvImpliedDelta: p.clvImpliedDelta ? parseFloat(p.clvImpliedDelta) : null,
+          tier: p.tier,
+        }));
+
+        const m = computeValidationMetrics(picksForValidation, 1);
+
+        await db.insert(validationMetricsTable).values({
+          runDate: date,
+          league,
+          market: null,
+          windowDays: 1,
+          totalPicks: m.totalPicks,
+          wins: m.wins,
+          losses: m.losses,
+          pushes: m.pushes,
+          roi: String(m.roi),
+          winRate: String(m.winRate),
+          unitsWon: String(m.unitsWon),
+          maxDrawdown: String(m.maxDrawdown),
+          avgEv: String(m.avgEv),
+          avgEdge: String(m.avgEdge),
+          clvHitRate: String(m.clvHitRate),
+          avgClv: String(m.avgClv),
+          brierScore: String(m.brierScore),
+          logLoss: String(m.logLoss),
+          passRate: String(m.passRate),
+          picksPerDay: String(m.picksPerDay),
+          modelVersion: "v1",
+        });
+        result.rowsWritten++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`${date}/${league}: ${msg}`);
+        logger.error({ date, league, err }, "validation_metrics rollup error");
+      }
+    }
+    result.datesProcessed++;
+    date = addDaysIso(date, 1);
+  }
+
+  return result;
 }
 
 function americanToImplied(american: number): number {
