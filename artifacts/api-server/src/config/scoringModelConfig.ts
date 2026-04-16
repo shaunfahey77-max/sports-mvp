@@ -21,8 +21,24 @@ export const TIER_THRESHOLDS = {
   C: 0.35,
 } as const;
 
+// Per-market Tier A threshold overrides (keyed by `${league}_${marketType}`).
+// The global Tier A floor (TIER_THRESHOLDS.A = 0.65) is too loose for markets
+// where rank_score systematically runs hot — typically because one or more
+// components (EV normalized against MAX_EV_CAP, market_quality, calibration
+// confidence) saturate even on modest picks. These overrides tighten the
+// band so Tier A remains a selective subset of surfaced picks, without
+// changing the shared rank mechanism or affecting other leagues.
+//
+// NBA calibration: measured over a 14-day sample, surfaced NBA picks landed
+// at avg rank_score 0.84 (moneyline) and 0.93 (spread), pushing ~96% of
+// surfaced NBA picks into Tier A. Thresholds below shift NBA Tier A back to
+// a selective minority (~40-50% of surfaced), matching NHL behavior. NHL
+// thresholds are unchanged.
 export const TIER_A_THRESHOLD_OVERRIDE: Partial<Record<string, number>> = {
   nhl_total: 0.94,
+  nba_moneyline: 0.88,
+  nba_spread: 0.95,
+  nba_total: 0.80,
 };
 
 export const MIN_EDGE_TO_CANDIDATE = 0.025;
