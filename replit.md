@@ -182,3 +182,21 @@ On-demand 45-day backtester. Inputs: startDate, days, leagues, markets, model/sc
 4. **Validate** — POST `/api/picks/validate` to score outcomes and compute CLV
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Operations Runbook
+
+### Settlement Pipeline
+- **Nightly job** (`runNightlyValidation`, 3:30 AM ET daily): fetches completed
+  scores from the Odds API for the last 3 days (max supported by the API),
+  grades `scored_picks`, finalizes `game_snapshots`.
+- **Self-healing ESPN backstop**: after each nightly run, sweeps the last 7 days
+  via ESPN's free scoreboard API to recover any games that aged past the Odds
+  API's 3-day `/scores` window (e.g. missed cron run, server restart through
+  the 3:30 AM slot, Odds API 5xx). Idempotent — skips already-final games.
+- **Manual recovery**: `POST /api/admin/backfill-settlement` with
+  `{ startDate, endDate, leagues?, secret }` where `secret` is the
+  `SESSION_SECRET` env var. Uses ESPN scoreboard; idempotent.
+- **Known incident (2026-04-08 → 2026-04-15)**: 54 pending picks stranded
+  because the 3-day Odds API window expired while the nightly job was not
+  firing. Recovered via ESPN backfill; self-healing backstop now prevents
+  recurrence.

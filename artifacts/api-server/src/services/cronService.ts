@@ -256,9 +256,10 @@ async function runNightlyValidation(): Promise<void> {
     if (!sportKey) continue;
 
     try {
-      // Fetch scores for the last 7 days so a single missed cron run
-      // doesn't strand completed games as permanently pending.
-      const { data: scores } = await fetchScores(sportKey, 7);
+      // Odds API /scores caps daysFrom at 3. We backstop this with an
+      // ESPN-based backfill after the Odds-API pass (see below) so that a
+      // single missed cron run cannot permanently strand completed games.
+      const { data: scores } = await fetchScores(sportKey, 3);
 
       for (const score of scores) {
         if (!score.completed || !score.scores) continue;
@@ -346,6 +347,23 @@ async function runNightlyValidation(): Promise<void> {
     } catch (err) {
       logger.error({ jobId, league, err }, "Cron: validation error");
     }
+  }
+
+  // Self-healing backstop: sweep the last 7 days via ESPN so any games that
+  // aged past the Odds API's 3-day /scores window (missed cron, restart, or
+  // Odds API 5xx) still get settled. Idempotent — skips already-final games.
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const start = new Date();
+    start.setUTCDate(start.getUTCDate() - 7);
+    const startDate = start.toISOString().split("T")[0];
+    const sweep = await backfillSettlementEspn(startDate, today, LEAGUES);
+    logger.info(
+      { jobId, espnSnapshotsSettled: sweep.snapshotsSettled, espnPicksSettled: sweep.picksSettled },
+      "Cron: ESPN backstop sweep complete"
+    );
+  } catch (err) {
+    logger.error({ jobId, err }, "Cron: ESPN backstop sweep failed");
   }
 
   logger.info({ jobId, scoresFetched, picksValidated }, "Cron: nightly validation finished");
