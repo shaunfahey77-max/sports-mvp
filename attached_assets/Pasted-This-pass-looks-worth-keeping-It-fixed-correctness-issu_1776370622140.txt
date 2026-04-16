@@ -1,0 +1,47 @@
+This pass looks worth keeping. It fixed correctness issues, but it did not finish selectivity/tuning. I want to accept this branch as the correctness-remediation pass and then do one narrow follow-up focused only on NBA Tier A inflation before calling Phase 0.75 passed.
+
+Please do a tightly scoped NBA-only ranking calibration pass with these guardrails:
+
+- Work on the same branch unless you strongly prefer a fresh follow-up branch
+- Do not publish or deploy
+- Do not change infra, auth, billing, migrations, or unrelated UI
+- Do not reopen MLB/NFL/NCAAF work
+- Do not undo the correctness fixes from the previous pass
+- Keep NHL behavior as stable as possible unless a shared bug absolutely requires touching it
+- If the proposed NBA tuning changes would materially alter NHL output, stop and show me the diff before applying
+
+Goal:
+Reduce NBA Tier A inflation so Tier A becomes meaningfully selective, while preserving the new absolute-cap ranking mechanism.
+
+What to tune:
+- Prefer NBA-specific caps and/or NBA-specific Tier A threshold adjustments
+- Do not revert to batch-relative min-max normalization
+- Do not blindly tighten global thresholds if the problem is clearly NBA-specific
+- Keep the mechanism population-anchored and stable across slate sizes
+
+What to evaluate:
+- Use recent NBA sample windows / sanity-check dates
+- Show before/after Tier A vs Tier B counts for NBA
+- Show before/after pass rate and average edge/EV distribution for NBA
+- Confirm NHL output does not regress materially as a side effect
+
+Success criteria:
+- NBA Tier A volume is no longer near-saturated
+- Tier A becomes a minority/selective subset rather than almost all NBA picks
+- NHL remains broadly stable
+- No new typecheck/build regressions
+- No deploy
+
+Files most likely involved:
+- artifacts/api-server/src/scoring/rankBets.ts
+- artifacts/api-server/src/config/scoringModelConfig.ts
+- artifacts/api-server/src/scoring/assignTiers.ts
+- any small supporting file required for sane calibration reporting
+
+At the end, show me:
+1. exact files changed
+2. exact commands run
+3. before/after NBA Tier distribution
+4. before/after NHL Tier distribution
+5. typecheck/build/test results
+6. any remaining risks or recommended follow-up
