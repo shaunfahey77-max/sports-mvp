@@ -90,22 +90,20 @@ router.get("/performance/history", async (req, res): Promise<void> => {
   const days = parseInt((req.query.days as string) ?? "45");
 
   const conditions = [];
-  if (league) conditions.push(eq(validationMetricsTable.league, league));
+  if (league) {
+    conditions.push(eq(validationMetricsTable.league, league));
+  } else {
+    // Gate NCAAM (experimental) off the default history surface.
+    conditions.push(inArray(validationMetricsTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+  }
   if (market) conditions.push(eq(validationMetricsTable.market, market));
 
-  const records =
-    conditions.length > 0
-      ? await db
-          .select()
-          .from(validationMetricsTable)
-          .where(and(...conditions))
-          .orderBy(desc(validationMetricsTable.runDate))
-          .limit(days)
-      : await db
-          .select()
-          .from(validationMetricsTable)
-          .orderBy(desc(validationMetricsTable.runDate))
-          .limit(days);
+  const records = await db
+    .select()
+    .from(validationMetricsTable)
+    .where(and(...conditions))
+    .orderBy(desc(validationMetricsTable.runDate))
+    .limit(days);
 
   res.json(records);
 });

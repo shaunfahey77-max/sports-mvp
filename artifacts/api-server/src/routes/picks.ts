@@ -82,18 +82,16 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
   if (market) conditions.push(eq(candidateBetsTable.marketType, market));
   if (tier) conditions.push(eq(candidateBetsTable.tier, tier));
 
-  const raw =
-    conditions.length > 0
-      ? await db
-          .select()
-          .from(candidateBetsTable)
-          .where(and(...conditions))
-          .orderBy(desc(candidateBetsTable.rankScore))
-      : await db
-          .select()
-          .from(candidateBetsTable)
-          .orderBy(desc(candidateBetsTable.rankScore))
-          .limit(200);
+  // Apply a hard cap so an unfiltered call (now always carrying the default
+  // league filter) cannot return unbounded rows. Callers can pass ?limit to
+  // widen it; we default to 200 to match the prior fallback behavior.
+  const candidateLimit = parseInt((req.query.limit as string) ?? "200");
+  const raw = await db
+    .select()
+    .from(candidateBetsTable)
+    .where(and(...conditions))
+    .orderBy(desc(candidateBetsTable.rankScore))
+    .limit(candidateLimit);
 
   // Deduplicate: keep only the highest-EV candidate per (gameKey, marketType, side)
   const seen = new Map<string, typeof raw[0]>();
