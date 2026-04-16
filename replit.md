@@ -108,10 +108,42 @@ Central config for all scoring parameters: rank weights, tier thresholds, home a
 
 On-demand 45-day backtester. Inputs: startDate, days, leagues, markets, model/scoring/calibration versions. Outputs: ROI, win rate, CLV hit rate, Brier score, log loss, drawdown, per-day breakdown.
 
-### Database Schema (`lib/db/src/schema/`)
+### Auth + Subscription System
+
+### Clerk Authentication
+- Provider: Clerk (VITE_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY set)
+- Proxy middleware: `artifacts/api-server/src/middlewares/clerkProxyMiddleware.ts`
+- Routes: `/sign-in`, `/sign-up` — Clerk embedded components with custom localization
+- Protected routes use `<Show when="signed-in">` + `<Redirect>` pattern
+- API auth: `getAuth(req)` from `@clerk/express` returns `{ userId }` for session validation
+- Auth pane (Replit toolbar) manages users, providers, and OAuth credentials
+
+### Stripe Subscriptions
+- Integration: Replit Stripe connector (reads credentials via REPL_IDENTITY token)
+- Products: `prod_UIH0YSKeXgO2mf` (MVP) and `prod_UIH0B0pmsXpaAa` (MVP Pro) — both have `metadata.tier` set
+- Tier system: `free` | `mvp` | `mvp_pro` (stored in `users.tier`)
+- Webhook endpoint: `POST /api/stripe/webhook` — handles `customer.subscription.*` and `checkout.session.completed`
+- Checkout: `POST /api/stripe/checkout` with `{ priceId }` → returns `{ url }` for redirect
+- Portal: `POST /api/stripe/portal` → returns `{ url }` for Stripe billing portal
+- Prices: `GET /api/stripe/prices` → returns products with prices filtered by `metadata.tier` field
+- User endpoint: `GET /api/user/me` → upserts user on first call, syncs tier from Stripe, returns tier
+
+### Pricing
+| Plan | Monthly | Yearly |
+|------|---------|--------|
+| MVP | $19.99/mo | $149/yr (save 38%) |
+| MVP Pro | $39.99/mo | $299/yr (save 38%) |
+
+### Tier Gating
+- Free: 1 top pick per day (Tier A only), basic stats, public performance history
+- MVP: Unlimited picks (all tiers), full Edge/EV/CLV data, Parlay Builder, Bet Tracker
+- MVP Pro: Everything in MVP + 5/6-leg parlays, priority updates, early access
+
+## Database Schema (`lib/db/src/schema/`)
 
 | Table | Purpose |
 |-------|---------|
+| `users` | Clerk user + Stripe customer/subscription ID + tier |
 | `game_snapshots` | Raw game/market data with publish and close lines |
 | `candidate_bets` | All evaluated bets with full scoring metadata |
 | `scored_picks` | Final picks (non-PASS) with outcomes |

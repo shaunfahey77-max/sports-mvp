@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startCronJobs } from "./services/cronService";
+import { runMigrations } from "./lib/runMigrations";
 
 const rawPort = process.env["PORT"];
 if (!rawPort) throw new Error("PORT environment variable is required");
@@ -11,17 +12,26 @@ const cronDisabled = ["1", "true", "yes"].includes(
   (process.env["DISABLE_CRON"] ?? "").toLowerCase()
 );
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening");
-    process.exit(1);
-  }
+async function main() {
+  await runMigrations();
 
-  logger.info({ port, cronDisabled }, "Server listening");
+  app.listen(port, (err) => {
+    if (err) {
+      logger.error({ err }, "Error listening");
+      process.exit(1);
+    }
 
-  if (!cronDisabled) {
-    startCronJobs();
-  } else {
-    logger.info("Cron startup disabled by DISABLE_CRON");
-  }
+    logger.info({ port, cronDisabled }, "Server listening");
+
+    if (!cronDisabled) {
+      startCronJobs();
+    } else {
+      logger.info("Cron startup disabled by DISABLE_CRON");
+    }
+  });
+}
+
+main().catch((err) => {
+  logger.error({ err }, "Fatal error during startup");
+  process.exit(1);
 });
