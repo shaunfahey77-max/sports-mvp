@@ -40,14 +40,11 @@ export interface TierInput {
  * via `publish_odds` / `publish_line`, which persistence already writes.
  */
 export function applyRiskControls(input: TierInput): string | null {
-  if (input.marketQuality < 0.3) {
-    return "market_quality_too_low";
-  }
-
   // Odds-range guardrail — opt-in per-league via enableOddsRangeGuardrail.
   // Range is config-driven (DEFAULT_ODDS_RANGE + per-`${league}_${marketType}`
-  // overrides); no magic numbers here. Fires before edge/EV gates so
-  // contaminated picks never reach tier assignment.
+  // overrides); no magic numbers here. Evaluated FIRST so the exact
+  // `odds_out_of_range` reason is never masked by other risk checks
+  // (keeps selection_reason taxonomy stable for downstream analytics).
   if (input.enableOddsRangeGuardrail && input.publishOdds != null) {
     const marketKey =
       input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
@@ -56,6 +53,10 @@ export function applyRiskControls(input: TierInput): string | null {
     if (input.publishOdds < range.min || input.publishOdds > range.max) {
       return "odds_out_of_range";
     }
+  }
+
+  if (input.marketQuality < 0.3) {
+    return "market_quality_too_low";
   }
 
   // Per-market minimum edge override takes precedence over global floor.
