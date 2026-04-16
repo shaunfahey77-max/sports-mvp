@@ -215,6 +215,58 @@ test("scorePicks (applyTieringToCandidates): guardrail off by default — all le
   assert.notEqual(tiered[0].tier, "PASS");
 });
 
+test("rerun reconciliation: a candidate that flips from A/B/C to PASS this run yields a stale-key for scored_picks deletion", async () => {
+  // Simulates the real rerun scenario the reviewer asked about:
+  //   - Yesterday: NHL spread at +5000 was scored Tier A (pre-guardrail).
+  //   - Today: same (game, market, side) scored again WITH the guardrail
+  //     → PASS with reason 'odds_out_of_range'.
+  //   - Stale-row reconciliation must return that (gameKey, market, pick)
+  //     tuple so callers DELETE the prior scored_picks pending row.
+  //
+  // End-to-end through the scoring-path helper and the reconciliation
+  // helper used by routes/picks.ts, routes/odds.ts, and cronService.ts.
+  const { computeStaleScoredPicksKeys } = await import("../../lib/pickUtils");
+
+  const candidates: CandidateOutput[] = [
+    // Contaminated NHL spread: rank_score 0.70 would otherwise be Tier A.
+    mkCandidate({
+      gameKey: "2026-04-16-NHL-BOS-TOR",
+      league: "nhl",
+      marketType: "spread",
+      side: "away",
+      publishOdds: 5000,
+      publishLine: -1.5,
+    }),
+    // Clean NBA spread that should still surface (unchanged between runs).
+    mkCandidate({
+      gameKey: "2026-04-16-NBA-LAL-BOS",
+      league: "nba",
+      marketType: "spread",
+      side: "home",
+      publishOdds: -110,
+      publishLine: -2.5,
+    }),
+  ];
+
+  const tiered = applyTieringToCandidates(candidates, [0.70, 0.70], {
+    oddsRangeGuardrailLeagues: ["nhl", "nba"],
+  });
+
+  // The NHL pick is now PASS, the NBA pick survives.
+  const nhl = tiered.find((c) => c.gameKey === "2026-04-16-NHL-BOS-TOR")!;
+  const nba = tiered.find((c) => c.gameKey === "2026-04-16-NBA-LAL-BOS")!;
+  assert.equal(nhl.tier, "PASS");
+  assert.equal(nhl.selectionReason, "odds_out_of_range");
+  assert.notEqual(nba.tier, "PASS");
+
+  // Stale-key helper returns exactly the (gameKey, market, pick) tuples
+  // that callers must delete from scored_picks for this date.
+  const staleKeys = computeStaleScoredPicksKeys(tiered);
+  assert.deepEqual(staleKeys, [
+    { gameKey: "2026-04-16-NHL-BOS-TOR", market: "spread", pick: "away" },
+  ]);
+});
+
 test("pipeline: rejected candidate preserves exact reason + offending odds/line through the candidate_bets persistence shape", () => {
   // End-to-end assertion that mirrors the claim in task-3: when scoring
   // rejects a pick via the odds-range guardrail, the downstream

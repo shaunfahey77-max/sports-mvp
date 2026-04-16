@@ -17,7 +17,7 @@ import {
   SPORT_KEYS,
 } from "../lib/oddsApi";
 import { NBA_TEAMS, NHL_TEAMS } from "../lib/teamAbbreviations";
-import { capAndSort } from "../lib/pickUtils";
+import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 
 const router: IRouter = Router();
 
@@ -133,7 +133,26 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
             snapshotDate: snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0],
             modelVersion: "v1",
           }))
-        ).onConflictDoNothing();
+        ).onConflictDoUpdate({
+          target: [
+            candidateBetsTable.snapshotDate,
+            candidateBetsTable.gameKey,
+            candidateBetsTable.marketType,
+            candidateBetsTable.side,
+          ],
+          set: {
+            publishOdds: sql`EXCLUDED.publish_odds`,
+            publishLine: sql`EXCLUDED.publish_line`,
+            modelProbRaw: sql`EXCLUDED.model_prob_raw`,
+            modelProbCalibrated: sql`EXCLUDED.model_prob_calibrated`,
+            marketProbFair: sql`EXCLUDED.market_prob_fair`,
+            edge: sql`EXCLUDED.edge`,
+            ev: sql`EXCLUDED.ev`,
+            rankScore: sql`EXCLUDED.rank_score`,
+            tier: sql`EXCLUDED.tier`,
+            selectionReason: sql`EXCLUDED.selection_reason`,
+          },
+        });
 
         // Sort by rankScore DESC before capping so the best picks per league/game are kept
         const picks = capAndSort(
@@ -179,6 +198,23 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
               updatedAt: new Date(),
             },
           });
+        }
+
+        // Reconcile: strip prior pending rows for candidates that are now PASS.
+        const staleKeys = computeStaleScoredPicksKeys(candidates);
+        const reconcileDate = snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0];
+        for (const k of staleKeys) {
+          await db
+            .delete(scoredPicksTable)
+            .where(
+              and(
+                eq(scoredPicksTable.date, reconcileDate),
+                eq(scoredPicksTable.gameKey, k.gameKey),
+                eq(scoredPicksTable.market, k.market),
+                eq(scoredPicksTable.pick, k.pick),
+                eq(scoredPicksTable.result, "pending")
+              )
+            );
         }
 
         results[league] = {

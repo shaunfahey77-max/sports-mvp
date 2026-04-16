@@ -13,7 +13,7 @@ import {
 } from "@workspace/db";
 import { eq, and, lt, sql } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import { capAndSort } from "../lib/pickUtils";
+import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
@@ -230,6 +230,23 @@ async function runOddsIngest(): Promise<void> {
             },
           });
         totalPicks += picks.length;
+      }
+
+      // Reconcile: remove pending scored_picks rows for candidates that
+      // are now PASS this run (e.g. odds-range guardrail flipped them).
+      const staleKeys = computeStaleScoredPicksKeys(candidates);
+      for (const k of staleKeys) {
+        await db
+          .delete(scoredPicksTable)
+          .where(
+            and(
+              eq(scoredPicksTable.date, date),
+              eq(scoredPicksTable.gameKey, k.gameKey),
+              eq(scoredPicksTable.market, k.market),
+              eq(scoredPicksTable.pick, k.pick),
+              eq(scoredPicksTable.result, "pending")
+            )
+          );
       }
 
       logger.info(

@@ -1,6 +1,29 @@
 import { MAX_PICKS_PER_LEAGUE_PER_DAY, MAX_PICKS_PER_GAME } from "../config/scoringModelConfig";
 
 /**
+ * Return the (gameKey, market, pick) tuples that must be removed from
+ * `scored_picks` for a given scoring run because the candidate that
+ * previously produced them is now PASS.
+ *
+ * Rationale: scoring routes only upsert non-PASS candidates into
+ * `scored_picks`. If a candidate flips from A/B/C to PASS across runs
+ * (e.g. new odds-range guardrail, line movement pushing edge below
+ * threshold), its prior surfaced row would remain visible to subscribers.
+ * Call this alongside the scored-picks upsert to delete those stale rows.
+ *
+ * Only PASS candidates from the current batch are considered — settled
+ * results are never touched because callers should additionally scope the
+ * DELETE to `result = 'pending'`.
+ */
+export function computeStaleScoredPicksKeys<
+  T extends { tier: string; gameKey: string; marketType: string; side: string }
+>(candidates: T[]): Array<{ gameKey: string; market: string; pick: string }> {
+  return candidates
+    .filter((c) => c.tier === "PASS")
+    .map((c) => ({ gameKey: c.gameKey, market: c.marketType, pick: c.side }));
+}
+
+/**
  * Apply per-league and per-game caps to a set of picks, then sort chronologically.
  *
  * Algorithm:

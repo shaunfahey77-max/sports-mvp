@@ -14,7 +14,7 @@ import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
-import { capAndSort } from "../lib/pickUtils";
+import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 
 // Leagues surfaced by default to subscribers. NCAAM is experimental (hash-noise
 // pseudo-models) and must be requested explicitly via ?league=ncaam.
@@ -278,6 +278,27 @@ router.post("/picks/score", async (req, res): Promise<void> => {
           updatedAt: new Date(),
         },
       });
+  }
+
+  // Reconcile: if a candidate that was previously A/B/C flips to PASS on
+  // this run (e.g. new odds guardrail, line movement), the prior row would
+  // otherwise remain visible. Delete only pending rows; settled results
+  // are immutable truth.
+  const staleKeys = computeStaleScoredPicksKeys(candidates);
+  if (staleKeys.length > 0) {
+    for (const k of staleKeys) {
+      await db
+        .delete(scoredPicksTable)
+        .where(
+          and(
+            eq(scoredPicksTable.date, date),
+            eq(scoredPicksTable.gameKey, k.gameKey),
+            eq(scoredPicksTable.market, k.market),
+            eq(scoredPicksTable.pick, k.pick),
+            eq(scoredPicksTable.result, "pending")
+          )
+        );
+    }
   }
 
   const formattedCandidates = candidates.map((c) => ({
