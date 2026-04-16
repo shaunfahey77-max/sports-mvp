@@ -18,6 +18,7 @@ import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
 import type { League, MarketType } from "../config/scoringModelConfig";
+import { fetchEspnScores } from "./historicalIngest";
 
 const LEAGUES: League[] = ["nba", "nhl"];
 const MARKETS: MarketType[] = ["moneyline", "spread", "total"];
@@ -255,8 +256,9 @@ async function runNightlyValidation(): Promise<void> {
     if (!sportKey) continue;
 
     try {
-      // Fetch scores for the last 3 days
-      const { data: scores } = await fetchScores(sportKey, 3);
+      // Fetch scores for the last 7 days so a single missed cron run
+      // doesn't strand completed games as permanently pending.
+      const { data: scores } = await fetchScores(sportKey, 7);
 
       for (const score of scores) {
         if (!score.completed || !score.scores) continue;
@@ -352,6 +354,158 @@ async function runNightlyValidation(): Promise<void> {
 function americanToImplied(american: number): number {
   if (american < 0) return (-american) / (-american + 100);
   return 100 / (american + 100);
+}
+
+// ---------------------------------------------------------------------------
+// Backfill settlement using ESPN's free scoreboard API.
+// Used when games have aged beyond the Odds API /scores daysFrom window
+// (typical after a multi-day outage or server restart through a cron window).
+// ---------------------------------------------------------------------------
+export interface BackfillResult {
+  datesProcessed: number;
+  snapshotsSettled: number;
+  picksSettled: number;
+  errors: string[];
+}
+
+function addDaysIso(dateStr: string, n: number): string {
+  const d = new Date(dateStr + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().split("T")[0];
+}
+
+export async function backfillSettlementEspn(
+  startDate: string,
+  endDate: string,
+  leagues: League[] = LEAGUES
+): Promise<BackfillResult> {
+  const jobId = `backfill-${Date.now()}`;
+  const result: BackfillResult = {
+    datesProcessed: 0,
+    snapshotsSettled: 0,
+    picksSettled: 0,
+    errors: [],
+  };
+
+  logger.info({ jobId, startDate, endDate, leagues }, "Backfill settlement starting");
+
+  let date = startDate;
+  while (date <= endDate) {
+    for (const league of leagues) {
+      try {
+        const espnScores = await fetchEspnScores(league, date);
+        if (espnScores.size === 0) continue;
+
+        // Pull all snapshots for this date+league that still need settlement.
+        const snapshots = await db
+          .select()
+          .from(gameSnapshotsTable)
+          .where(
+            and(
+              eq(gameSnapshotsTable.snapshotDate, date),
+              eq(gameSnapshotsTable.league, league)
+            )
+          );
+
+        for (const snap of snapshots) {
+          if (snap.status === "final" && snap.homeScore != null && snap.awayScore != null) continue;
+
+          // Match by full home team name, then by last word (e.g. "Lakers"),
+          // and require the away team to match as well so naming collisions
+          // (e.g. doubleheaders, renamed franchises) cannot silently settle
+          // the wrong snapshot.
+          const espnEntry =
+            espnScores.get(snap.homeTeam) ??
+            espnScores.get(snap.homeTeam.split(" ").pop()?.toLowerCase() ?? "");
+          if (!espnEntry) continue;
+          const awayLast = snap.awayTeam.split(" ").pop()?.toLowerCase() ?? "";
+          const espnAwayLast = espnEntry.awayTeam.split(" ").pop()?.toLowerCase() ?? "";
+          if (snap.awayTeam !== espnEntry.awayTeam && awayLast !== espnAwayLast) {
+            logger.warn(
+              { gameKey: snap.gameKey, snapAway: snap.awayTeam, espnAway: espnEntry.awayTeam },
+              "Backfill: away-team mismatch, skipping"
+            );
+            continue;
+          }
+
+          await db
+            .update(gameSnapshotsTable)
+            .set({
+              homeScore: espnEntry.homeScore,
+              awayScore: espnEntry.awayScore,
+              status: "final",
+              updatedAt: new Date(),
+            })
+            .where(eq(gameSnapshotsTable.id, snap.id));
+          result.snapshotsSettled++;
+
+          // Settle pending picks for this game.
+          const pending = await db
+            .select()
+            .from(scoredPicksTable)
+            .where(
+              and(
+                eq(scoredPicksTable.gameKey, snap.gameKey),
+                eq(scoredPicksTable.result, "pending")
+              )
+            );
+
+          for (const pick of pending) {
+            const outcome = computeOutcomeResult({
+              market: pick.market,
+              pick: pick.pick,
+              homeScore: espnEntry.homeScore,
+              awayScore: espnEntry.awayScore,
+              homeSpread: snap.publishSpread ? parseFloat(snap.publishSpread) : null,
+              total: snap.publishTotal ? parseFloat(snap.publishTotal) : null,
+            });
+
+            const closeOdds =
+              pick.market === "moneyline"
+                ? pick.pick === "home"
+                  ? snap.homeCloseMl
+                  : snap.awayCloseMl
+                : null;
+
+            let clvImpliedDelta: string | undefined;
+            if (closeOdds && pick.publishOdds) {
+              const publishImplied = americanToImplied(parseFloat(pick.publishOdds));
+              const closeImplied = americanToImplied(parseFloat(closeOdds));
+              clvImpliedDelta = String(closeImplied - publishImplied);
+            }
+
+            // Concurrency guard: only settle if still pending. Prevents
+            // double-counting when nightly validation and backfill overlap.
+            const updated = await db
+              .update(scoredPicksTable)
+              .set({
+                result: outcome,
+                closeOdds: closeOdds ?? undefined,
+                clvImpliedDelta,
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(scoredPicksTable.id, pick.id),
+                  eq(scoredPicksTable.result, "pending")
+                )
+              )
+              .returning({ id: scoredPicksTable.id });
+            if (updated.length > 0) result.picksSettled++;
+          }
+        }
+      } catch (err) {
+        const msg = `${date}/${league}: ${String(err)}`;
+        logger.error({ jobId, date, league, err }, "Backfill: error");
+        result.errors.push(msg);
+      }
+    }
+    result.datesProcessed++;
+    date = addDaysIso(date, 1);
+  }
+
+  logger.info({ jobId, ...result }, "Backfill settlement complete");
+  return result;
 }
 
 // ---------------------------------------------------------------------------

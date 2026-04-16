@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { runNightlyValidation, runOddsIngest } from "../services/cronService";
+import { runNightlyValidation, runOddsIngest, backfillSettlementEspn } from "../services/cronService";
 import { logger } from "../lib/logger";
 import { storage } from "../storage";
 import { startHistoricalIngest, getHistoricalIngestStatus } from "../services/historicalIngest";
@@ -20,6 +20,36 @@ router.post("/admin/run-validation", async (_req, res) => {
     res.json({ ok: true, message: "Validation complete" });
   } catch (err) {
     logger.error({ err }, "Manual validation failed");
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+router.post("/admin/backfill-settlement", async (req, res) => {
+  try {
+    const { startDate, endDate, leagues, secret } = req.body;
+    const expected = process.env.SESSION_SECRET;
+    // Fail closed: require both configured secret and provided secret,
+    // and reject if they don't match. Prevents unintentional fail-open
+    // when SESSION_SECRET is missing in misconfigured environments.
+    if (!expected || !secret || secret !== expected) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+    if (!startDate || !endDate) {
+      return res.status(400).json({ ok: false, error: "startDate and endDate required (YYYY-MM-DD)" });
+    }
+    const validLeagues: Array<"nba" | "nhl"> = ["nba", "nhl"];
+    let leaguesArg: Array<"nba" | "nhl"> | undefined;
+    if (leagues !== undefined) {
+      if (!Array.isArray(leagues) || !leagues.every((l) => validLeagues.includes(l))) {
+        return res.status(400).json({ ok: false, error: "leagues must be an array of 'nba'|'nhl'" });
+      }
+      leaguesArg = leagues;
+    }
+    logger.info({ startDate, endDate, leagues: leaguesArg }, "Admin backfill-settlement triggered");
+    const result = await backfillSettlementEspn(startDate, endDate, leaguesArg);
+    res.json({ ok: true, result });
+  } catch (err) {
+    logger.error({ err }, "Admin backfill-settlement failed");
     res.status(500).json({ ok: false, error: String(err) });
   }
 });

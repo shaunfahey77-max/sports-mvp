@@ -39,7 +39,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface EspnScore {
+export interface EspnScore {
   homeTeam: string;
   awayTeam: string;
   homeScore: number;
@@ -50,7 +50,7 @@ interface EspnScore {
  * Fetch completed game scores from ESPN's free public scoreboard API.
  * Returns a map of home team name → scores for all completed games on that date.
  */
-async function fetchEspnScores(league: string, date: string): Promise<Map<string, EspnScore>> {
+export async function fetchEspnScores(league: string, date: string): Promise<Map<string, EspnScore>> {
   const sportPath = ESPN_SPORT_PATH[league];
   if (!sportPath) return new Map();
 
