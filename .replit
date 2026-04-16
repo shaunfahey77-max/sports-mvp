@@ -39,4 +39,3 @@ CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsuc3BvcnRzbXZwLm5ldCQ"
 
 [userenv.production]
 VITE_CLERK_KEY = "pk_live_Y2xlcmsuc3BvcnRzbXZwLm5ldCQ"
-DISABLE_CRON = "true"
