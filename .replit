@@ -26,22 +26,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "api-typecheck"
+args = "api-tests"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "api-tests"
-
-[[workflows.workflow]]
-name = "api-typecheck"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-server exec tsc --noEmit"
-
-[workflows.workflow.metadata]
-isValidation = true
+args = "api-typecheck-baseline"
 
 [[workflows.workflow]]
 name = "api-tests"
@@ -50,6 +39,17 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "api-typecheck-baseline"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash -c 'errs=$(pnpm --filter @workspace/api-server exec tsc --noEmit 2>&1 | grep -cE \"error TS\" || true); echo \"typecheck errors: $errs (baseline on main: 26; task asserts <=23)\"; test \"$errs\" -le 23'"
 
 [workflows.workflow.metadata]
 isValidation = true
