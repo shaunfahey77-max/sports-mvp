@@ -7,10 +7,13 @@
  * Features computed:
  *  - Rest days for each team (days since last game)
  *  - Back-to-back flag (0 rest days)
- *  - Home ATS win rate (last 25 graded home spread picks)
- *  - Road ATS win rate (last 25 graded road spread picks)
- *  - Over rate for each team (last 25 graded total picks)
  *  - Rest advantage (home rest - away rest, capped ±3)
+ *
+ * Previously this engine also computed home/road ATS win rate and team over
+ * rate by reading back from scored_picks.result. That was a feedback loop —
+ * the model training on its own previous predictions — so those fields are
+ * now neutralized to 0.5 with sampleSize=0 until a true external ATS/total
+ * result source is wired in.
  */
 
 import { db } from "@workspace/db";
