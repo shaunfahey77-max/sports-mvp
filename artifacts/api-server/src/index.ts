@@ -24,9 +24,9 @@ async function initStripe() {
   try {
     // 1. Create stripe schema and tables (idempotent)
     const stripeSyncLogger: StripeSyncLogger = {
-      info: (msg) => logger.info({ pkg: "stripe-replit-sync" }, msg),
-      error: (err, msg) => logger.error({ pkg: "stripe-replit-sync", err }, msg ?? "stripe-replit-sync error"),
-      warn: (msg) => logger.warn({ pkg: "stripe-replit-sync" }, msg),
+      info(msg: string) { logger.info({ pkg: "stripe-replit-sync" }, msg); },
+      error(err: unknown, msg?: string) { logger.error({ pkg: "stripe-replit-sync", err }, msg ?? "stripe-replit-sync error"); },
+      warn(msg: string) { logger.warn({ pkg: "stripe-replit-sync" }, msg); },
     };
     await runStripeMigrations({ databaseUrl, logger: stripeSyncLogger });
 
