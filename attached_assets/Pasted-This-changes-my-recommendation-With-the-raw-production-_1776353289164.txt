@@ -1,0 +1,66 @@
+This changes my recommendation.
+
+With the raw production evidence, the duplicate-row diagnosis is now credible:
+
+to_regclass(...) is NULL
+the unique index is absent from pg_indexes
+duplicates are real and large
+So yes: this now looks like a real data-quality + missing-index problem, not just a stale-cache story.
+
+I’d proceed, but with one careful adjustment:
+
+First deploy with cron disabled.
+
+Why:
+
+you already have a cron-disable flag in the app
+the whole point of 0001_dedup_candidate_bets.sql is to clean the table and create the unique index
+the safest way to do that is without the running app simultaneously inserting new candidate rows during first boot
+What I recommend now
+Keep the temporary schema workaround
+remove uniqueIndex from candidateBets.ts for this deploy only
+that gets Provision past the diff
+Deploy with DISABLE_CRON=true in production
+just for the first cleanup deploy
+let runMigrations() do:
+dedup
+create the unique index
+record the migration
+After deploy, verify in production
+Run these exact checks:
+select to_regclass('public.candidate_bets_unique_candidate_idx');
+select
+  snapshot_date,
+  game_key,
+  market_type,
+  side,
+  count(*) as row_count
+from candidate_bets
+group by 1,2,3,4
+having count(*) > 1
+order by row_count desc
+limit 20;
+Expected:
+
+index exists
+duplicate query returns 0 rows
+Then re-enable cron
+only after the index exists and duplicates are gone
+Then restore uniqueIndex in TypeScript schema
+as a follow-up commit
+so long-term schema and production match again
+One more thing I would insist on
+Before publish, I’d want to see:
+
+the exact contents of 0001_dedup_candidate_bets.sql
+the exact cronService.ts change using explicit conflict target / upsert
+Not because I think the plan is wrong now, but because this is finally a plausible fix and it’s worth one last clean review before you pull the trigger.
+
+Bottom line
+Yes, I would proceed with this approach now.
+But I would do it in this order:
+
+publish once with DISABLE_CRON=true
+verify dedup + index creation in production
+re-enable cron
+re-add uniqueIndex to schema in a follow-up commit
