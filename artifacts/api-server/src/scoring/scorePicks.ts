@@ -299,10 +299,24 @@ async function scoreMarket(
   return results;
 }
 
+export interface ScorePicksOptions {
+  /**
+   * Leagues that opt in to the odds-range guardrail (see
+   * DEFAULT_ODDS_RANGE / ODDS_RANGE_OVERRIDE in scoringModelConfig). Only
+   * candidates whose `league` is in this list will have their `publishOdds`
+   * range-checked before tier assignment.
+   *
+   * Left undefined by design: simulation and historical paths don't set
+   * this, so their behavior is bit-for-bit unchanged.
+   */
+  oddsRangeGuardrailLeagues?: readonly League[];
+}
+
 export async function scorePicks(
   games: GameMarketInput[],
   markets: MarketType[],
-  modelVersion: string
+  modelVersion: string,
+  options: ScorePicksOptions = {}
 ): Promise<CandidateOutput[]> {
   const allCandidates: CandidateOutput[] = [];
 
@@ -331,8 +345,27 @@ export async function scorePicks(
 
   const rankScores = rankBets(rankInputs);
 
+  return applyTieringToCandidates(allCandidates, rankScores, options);
+}
+
+/**
+ * Final stage of the scoring pipeline: attach rank_score and run per-league
+ * tier assignment (including the opt-in odds-range guardrail). Extracted so
+ * it can be tested in isolation without standing up the prediction / DB
+ * layer, and so the per-league gating of `oddsRangeGuardrailLeagues` is a
+ * real integration point rather than a mirror of routes/*.ts logic.
+ */
+export function applyTieringToCandidates(
+  allCandidates: CandidateOutput[],
+  rankScores: number[],
+  options: ScorePicksOptions = {}
+): CandidateOutput[] {
+  const guardrailLeagues = options.oddsRangeGuardrailLeagues;
+
   return allCandidates.map((c, i) => {
     const rankScore = rankScores[i];
+    const enableOddsRangeGuardrail =
+      guardrailLeagues != null && guardrailLeagues.includes(c.league);
     const { tier, selectionReason } = assignTier({
       rankScore,
       edge: c.edge,
@@ -340,6 +373,9 @@ export async function scorePicks(
       marketQuality: c.marketQuality,
       league: c.league,
       marketType: c.marketType,
+      publishOdds: c.publishOdds,
+      publishLine: c.publishLine,
+      enableOddsRangeGuardrail,
     });
     return { ...c, rankScore, tier, selectionReason };
   });

@@ -41,6 +41,34 @@ export const TIER_A_THRESHOLD_OVERRIDE: Partial<Record<string, number>> = {
   nba_total: 0.80,
 };
 
+// Odds-range guardrail. When enabled for a given league, candidates whose
+// American publish_odds fall outside these bounds are forced to PASS with
+// selection_reason 'odds_out_of_range' before tier assignment. This blocks
+// alt-line and exotic-prop contamination (e.g. NHL spread at +2800, NBA
+// moneyline at +10000) from being surfaced as A/B/C to subscribers.
+//
+// Calibrated against the 14-day NBA/NHL main-line distribution on the
+// pipeline-fixes-nhl-nba branch: spread and total main lines live in
+// [-125, +135]; moneylines span a much wider legitimate range because
+// heavy favorites and dogs on main ML are real. Per-market moneyline
+// overrides preserve those while pruning the +3000 → +10000 alt-line tail.
+//
+// This range is intentionally only enforced against NHL/NBA production
+// paths — NCAAM and historical simulation do not opt in and are unaffected.
+export const DEFAULT_ODDS_RANGE = { min: -350, max: 350 } as const;
+export const ODDS_RANGE_OVERRIDE: Partial<Record<string, { min: number; max: number }>> = {
+  nba_moneyline: { min: -2000, max: 600 },
+  nhl_moneyline: { min: -800, max: 600 },
+};
+
+/**
+ * Production leagues that opt in to the odds-range guardrail. NCAAM is
+ * intentionally excluded (still default-gated elsewhere) and all simulation
+ * / historical code paths leave the guardrail off entirely so their bit-
+ * for-bit reproducibility is preserved.
+ */
+export const ODDS_RANGE_GUARDRAIL_LEAGUES = ["nba", "nhl"] as const;
+
 export const MIN_EDGE_TO_CANDIDATE = 0.025;
 export const MIN_EV_TO_CANDIDATE = 0.008;
 export const MAX_EV_CAP = 0.12;

@@ -3,7 +3,15 @@
  * Maps rank scores to tiers using explicit score bands — no scattered hard-coded gates.
  */
 
-import { TIER_THRESHOLDS, TIER_A_THRESHOLD_OVERRIDE, MIN_EDGE_TO_CANDIDATE, MIN_EV_TO_CANDIDATE, MARKET_MIN_EDGE } from "../config/scoringModelConfig";
+import {
+  TIER_THRESHOLDS,
+  TIER_A_THRESHOLD_OVERRIDE,
+  MIN_EDGE_TO_CANDIDATE,
+  MIN_EV_TO_CANDIDATE,
+  MARKET_MIN_EDGE,
+  DEFAULT_ODDS_RANGE,
+  ODDS_RANGE_OVERRIDE,
+} from "../config/scoringModelConfig";
 import type { Tier, League, MarketType } from "../config/scoringModelConfig";
 
 export interface TierInput {
@@ -13,20 +21,48 @@ export interface TierInput {
   marketQuality: number;
   league?: League;
   marketType?: MarketType;
+  // Optional inputs for the odds-range guardrail. The guardrail only fires
+  // when `enableOddsRangeGuardrail` is explicitly true AND `publishOdds` is
+  // provided — callers on simulation / NCAAM paths leave the flag off so
+  // their behavior is unchanged.
+  publishOdds?: number;
+  publishLine?: number | null;
+  enableOddsRangeGuardrail?: boolean;
 }
 
 /**
  * Risk controls — all in one place, explicit.
  * Returns a reason string if the bet should be forced to PASS, or null if clean.
+ *
+ * Selection reasons are exact, stable strings (for downstream analytics
+ * joins). When a pick is rejected via the odds-range guardrail, the
+ * offending odds and line values are preserved on the candidate row itself
+ * via `publish_odds` / `publish_line`, which persistence already writes.
  */
 export function applyRiskControls(input: TierInput): string | null {
   if (input.marketQuality < 0.3) {
     return "market_quality_too_low";
   }
 
+  // Odds-range guardrail — opt-in per-league via enableOddsRangeGuardrail.
+  // Range is config-driven (DEFAULT_ODDS_RANGE + per-`${league}_${marketType}`
+  // overrides); no magic numbers here. Fires before edge/EV gates so
+  // contaminated picks never reach tier assignment.
+  if (input.enableOddsRangeGuardrail && input.publishOdds != null) {
+    const marketKey =
+      input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
+    const range =
+      (marketKey != null ? ODDS_RANGE_OVERRIDE[marketKey] : undefined) ?? DEFAULT_ODDS_RANGE;
+    if (input.publishOdds < range.min || input.publishOdds > range.max) {
+      return "odds_out_of_range";
+    }
+  }
+
   // Per-market minimum edge override takes precedence over global floor.
-  const marketKey = input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
-  const minEdge = (marketKey && MARKET_MIN_EDGE[marketKey]) ?? MIN_EDGE_TO_CANDIDATE;
+  const marketKey =
+    input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
+  const minEdge =
+    (marketKey != null ? MARKET_MIN_EDGE[marketKey] : undefined) ?? MIN_EDGE_TO_CANDIDATE;
   if (input.edge < minEdge) {
     return "insufficient_edge";
   }
@@ -49,8 +85,10 @@ export function assignTier(input: TierInput): { tier: Tier; selectionReason: str
 
   const { rankScore } = input;
 
-  const marketKey = input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
-  const tierAThreshold = (marketKey && TIER_A_THRESHOLD_OVERRIDE[marketKey]) ?? TIER_THRESHOLDS.A;
+  const marketKey =
+    input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
+  const tierAThreshold =
+    (marketKey != null ? TIER_A_THRESHOLD_OVERRIDE[marketKey] : undefined) ?? TIER_THRESHOLDS.A;
 
   if (rankScore >= tierAThreshold) {
     return { tier: "A", selectionReason: "high_rank_score" };

@@ -9,6 +9,7 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 import { scorePicks, type GameMarketInput, type CandidateOutput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import type { League, MarketType } from "../config/scoringModelConfig";
+import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import {
   fetchOdds,
   fetchScores,
@@ -101,7 +102,12 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
       }
 
       // Run scoring pipeline
-      const candidates = snapshots.length > 0 ? await scorePicks(snapshots, markets, "v1") : [];
+      const candidates =
+        snapshots.length > 0
+          ? await scorePicks(snapshots, markets, "v1", {
+              oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+            })
+          : [];
 
       if (candidates.length > 0) {
         await db.insert(candidateBetsTable).values(

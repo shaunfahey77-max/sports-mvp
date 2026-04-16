@@ -13,6 +13,7 @@ import {
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import type { League, MarketType } from "../config/scoringModelConfig";
+import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { capAndSort } from "../lib/pickUtils";
 
 // Leagues surfaced by default to subscribers. NCAAM is experimental (hash-noise
@@ -164,7 +165,9 @@ router.post("/picks/score", async (req, res): Promise<void> => {
     snapshotDate: date,
   }));
 
-  const candidates = await scorePicks(gameInputs, markets as MarketType[], modelVersion);
+  const candidates = await scorePicks(gameInputs, markets as MarketType[], modelVersion, {
+    oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+  });
 
   const tierBreakdown: Record<string, number> = {};
   const leagueBreakdown: Record<string, number> = {};

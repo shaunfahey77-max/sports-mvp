@@ -18,6 +18,7 @@ import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
 import type { League, MarketType } from "../config/scoringModelConfig";
+import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { fetchEspnScores } from "./historicalIngest";
 
 const LEAGUES: League[] = ["nba", "nhl"];
@@ -123,7 +124,9 @@ async function runOddsIngest(): Promise<void> {
       if (snapshots.length === 0) continue;
 
       // Re-score all upcoming games to pick up updated odds
-      const candidates = await scorePicks(snapshots, MARKETS, "v1");
+      const candidates = await scorePicks(snapshots, MARKETS, "v1", {
+        oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+      });
       // Sort by rankScore DESC before capping so the best picks per league/game are kept
       const picks = capAndSort(
         candidates
