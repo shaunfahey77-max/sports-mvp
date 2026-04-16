@@ -252,8 +252,8 @@ router.post("/odds/validate-scores", async (req, res): Promise<void> => {
 
         // Canonical home-team spread and total come from the snapshot, not
         // the (team-signed) pick.publishLine, so away picks grade correctly.
-        const canonicalHomeSpread = snap.publishSpreadLine != null
-          ? parseFloat(snap.publishSpreadLine)
+        const canonicalHomeSpread = snap.publishSpread != null
+          ? parseFloat(snap.publishSpread)
           : null;
         const canonicalTotal = snap.publishTotal != null
           ? parseFloat(snap.publishTotal)

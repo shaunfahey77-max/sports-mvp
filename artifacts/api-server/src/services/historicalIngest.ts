@@ -292,7 +292,7 @@ async function processDate(date: string, leagues: League[], delayMs: number): Pr
           pick: pick.side,
           homeScore: gameEntry.score.homeScore,
           awayScore: gameEntry.score.awayScore,
-          homeSpread: gameEntry.input.publishSpreadLine ?? null,
+          homeSpread: gameEntry.input.publishSpread ?? null,
           total: gameEntry.input.publishTotal ?? null,
         });
 

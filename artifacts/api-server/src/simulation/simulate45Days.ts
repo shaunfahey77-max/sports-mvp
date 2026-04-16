@@ -183,7 +183,7 @@ async function executeSimulation(params: {
             pick: c.side,
             homeScore: snap.homeScore,
             awayScore: snap.awayScore,
-            homeSpread: snap.publishSpreadLine != null ? parseFloat(String(snap.publishSpreadLine)) : null,
+            homeSpread: snap.publishSpread != null ? parseFloat(String(snap.publishSpread)) : null,
             total: snap.publishTotal != null ? parseFloat(String(snap.publishTotal)) : null,
           });
         }
