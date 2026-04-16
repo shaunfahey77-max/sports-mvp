@@ -176,13 +176,15 @@ async function executeSimulation(params: {
 
         if (snap && snap.homeScore != null && snap.awayScore != null) {
           const { computeOutcomeResult } = require("../scoring/validatePicks");
+          // Canonical home spread and total come from the snapshot, not the
+          // team-signed candidate.publishLine, so away picks grade correctly.
           result = computeOutcomeResult({
             market: c.marketType,
             pick: c.side,
             homeScore: snap.homeScore,
             awayScore: snap.awayScore,
-            spread: c.publishLine,
-            total: c.publishLine,
+            homeSpread: snap.publishSpreadLine != null ? parseFloat(String(snap.publishSpreadLine)) : null,
+            total: snap.publishTotal != null ? parseFloat(String(snap.publishTotal)) : null,
           });
         }
 

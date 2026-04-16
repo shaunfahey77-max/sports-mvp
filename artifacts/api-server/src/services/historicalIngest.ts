@@ -284,13 +284,16 @@ async function processDate(date: string, leagues: League[], delayMs: number): Pr
         const gameEntry = gameInputsWithScores.find((g) => g.input.gameKey === pick.gameKey);
         if (!gameEntry) continue;
 
+        // Use canonical home-team spread and total from the snapshot input,
+        // not the team-signed pick.publishLine, so away-side picks grade
+        // correctly after the computeOutcomeResult signature change.
         const outcome = computeOutcomeResult({
           market: pick.marketType,
           pick: pick.side,
           homeScore: gameEntry.score.homeScore,
           awayScore: gameEntry.score.awayScore,
-          spread: pick.publishLine,
-          total: pick.publishLine,
+          homeSpread: gameEntry.input.publishSpreadLine ?? null,
+          total: gameEntry.input.publishTotal ?? null,
         });
 
         await db

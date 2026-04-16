@@ -250,14 +250,22 @@ router.post("/odds/validate-scores", async (req, res): Promise<void> => {
           .from(scoredPicksTable)
           .where(and(eq(scoredPicksTable.gameKey, snap.gameKey), eq(scoredPicksTable.result, "pending")));
 
+        // Canonical home-team spread and total come from the snapshot, not
+        // the (team-signed) pick.publishLine, so away picks grade correctly.
+        const canonicalHomeSpread = snap.publishSpreadLine != null
+          ? parseFloat(snap.publishSpreadLine)
+          : null;
+        const canonicalTotal = snap.publishTotal != null
+          ? parseFloat(snap.publishTotal)
+          : null;
         for (const pick of pending) {
           const result = computeOutcomeResult({
             market: pick.market,
             pick: pick.pick,
             homeScore,
             awayScore,
-            spread: pick.publishLine ? parseFloat(pick.publishLine) : null,
-            total: pick.publishLine ? parseFloat(pick.publishLine) : null,
+            homeSpread: canonicalHomeSpread,
+            total: canonicalTotal,
           });
 
           await db
