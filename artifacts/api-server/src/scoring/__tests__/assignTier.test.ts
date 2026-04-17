@@ -32,17 +32,23 @@ test("assignTier: nba_moneyline override (0.88) — currently shadowed by MARKET
   assert.equal(assignTier({ ...base, rankScore: 0.88 }).selectionReason, "market_disabled");
 });
 
-test("assignTier: nhl_total override (0.94) preserved — unchanged by NBA calibration", () => {
+test("assignTier: nhl_total override (0.94) shadowed by MARKET_DISABLED gate (Phase 0.75C)", () => {
+  // The TIER_A_THRESHOLD_OVERRIDE for nhl_total (0.94) is still wired up,
+  // but Phase 0.75C added MARKET_DISABLED["nhl_total"] = true which
+  // short-circuits to PASS for every rank score. When the gate is removed,
+  // restore the original rankScore=0.93 → "B" and 0.94 → "A" expectations.
   const base = { ...CLEAN, league: "nhl" as const, marketType: "total" as const };
-  assert.equal(assignTier({ ...base, rankScore: 0.93 }).tier, "B");
-  assert.equal(assignTier({ ...base, rankScore: 0.94 }).tier, "A");
+  assert.equal(assignTier({ ...base, rankScore: 0.93 }).tier, "PASS");
+  assert.equal(assignTier({ ...base, rankScore: 0.94 }).selectionReason, "market_disabled");
 });
 
 test("assignTier: MARKET_DISABLED short-circuits to PASS regardless of rank score / edge / ev", () => {
   // nhl_moneyline + nba_moneyline are gated in scoringModelConfig as of Phase 0.75B.
+  // nhl_total was added to the gate in Phase 0.75C.
   for (const [league, marketType] of [
     ["nhl", "moneyline"] as const,
     ["nba", "moneyline"] as const,
+    ["nhl", "total"] as const,
   ]) {
     const r = assignTier({
       ...CLEAN,
@@ -59,19 +65,23 @@ test("assignTier: MARKET_DISABLED short-circuits to PASS regardless of rank scor
 
 test("assignTier: non-disabled markets are unaffected by MARKET_DISABLED check", () => {
   // nhl_spread is NOT in MARKET_DISABLED — should still tier normally.
+  // Phase 0.75C: nhl_spread Tier A override is now 0.85 (was global 0.65),
+  // so we use rankScore=0.86 to keep the test asserting "A".
   const r = assignTier({
     ...CLEAN,
     league: "nhl",
     marketType: "spread",
-    rankScore: 0.70,
+    rankScore: 0.86,
   });
   assert.equal(r.tier, "A");
 });
 
-test("assignTier: NHL spread still uses global 0.65 floor (no override); NHL moneyline is gated", () => {
-  // NHL spread has no TIER_A override and isn't market_disabled — global 0.65 floor applies.
-  const sp = { ...CLEAN, league: "nhl" as const, marketType: "spread" as const, rankScore: 0.70 };
-  assert.equal(assignTier(sp).tier, "A");
+test("assignTier: NHL spread uses Phase 0.75C override (0.85); NHL moneyline is gated", () => {
+  // NHL spread Tier A override raised to 0.85 in Phase 0.75C — rankScore
+  // 0.70 now lands in B (was A under the previous global 0.65 floor).
+  const base = { ...CLEAN, league: "nhl" as const, marketType: "spread" as const };
+  assert.equal(assignTier({ ...base, rankScore: 0.84 }).tier, "B");
+  assert.equal(assignTier({ ...base, rankScore: 0.85 }).tier, "A");
   // NHL moneyline is currently disabled (Phase 0.75B). When re-enabled, restore
   // the original rankScore=0.70 → "A" expectation.
   const ml = { ...CLEAN, league: "nhl" as const, marketType: "moneyline" as const, rankScore: 0.70 };
@@ -80,12 +90,13 @@ test("assignTier: NHL spread still uses global 0.65 floor (no override); NHL mon
 
 test("assignTier: odds-range guardrail is OFF by default — extreme odds are not rejected", () => {
   // Without enableOddsRangeGuardrail, simulation / NCAAM paths score normally
-  // even when odds are far outside the production sanity range.
+  // even when odds are far outside the production sanity range. NHL spread
+  // Tier A override is 0.85 (Phase 0.75C), so we use rankScore=0.86.
   const result = assignTier({
     ...CLEAN,
     league: "nhl",
     marketType: "spread",
-    rankScore: 0.70,
+    rankScore: 0.86,
     publishOdds: 2800,
   });
   assert.equal(result.tier, "A");

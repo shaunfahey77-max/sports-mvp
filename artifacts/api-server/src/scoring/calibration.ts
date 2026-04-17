@@ -20,7 +20,11 @@ export interface CalibrationParams {
 export const DEFAULT_CALIBRATION_PARAMS: Record<string, Record<string, CalibrationParams>> = {
   nba: {
     moneyline: { method: "sigmoid", version: "v2", sigmoidA: 1.05, sigmoidB: 0.0 },
-    spread: { method: "sigmoid", version: "v2", sigmoidA: 1.02, sigmoidB: 0.0 },
+    // NBA spread (Phase 0.75C): tightened sigmoidA from 1.02 → 0.85 to shrink
+    // model probabilities toward 0.5. POST evidence: meanModel 0.574 in the
+    // [0.55,0.60) bucket realized 44.4% — overconfident by ~13pts. Sigmoid
+    // with a<1 compresses without changing the rank ordering of picks.
+    spread: { method: "sigmoid", version: "v3", sigmoidA: 0.85, sigmoidB: 0.0 },
     // NBA totals: compressed toward 50% — model noise alone should not generate strong edges.
     total: { method: "isotonic", version: "v2", isotonicBuckets: nbaTotalIsotonicBuckets() },
   },
@@ -60,6 +64,11 @@ function defaultIsotonicBuckets(): Array<{ low: number; high: number; calibrated
  * A team modeled at 70% to win might only be ~58% to win by 2+.
  */
 function nhlSpreadIsotonicBuckets(): Array<{ low: number; high: number; calibrated: number }> {
+  // Phase 0.75C: upper buckets pulled further toward 0.5. POST evidence
+  // (across all NHL surfaced picks, dominated by spread once total is
+  // gated): model 0.687 → realized 25.0% in [0.65,0.70); model 0.729 →
+  // realized 33.3% in [0.70,1.00). Existing 0.56 / 0.61 calibrated values
+  // were not shrinking enough. Lower buckets unchanged — they were honest.
   return [
     { low: 0.00, high: 0.10, calibrated: 0.05 },
     { low: 0.10, high: 0.20, calibrated: 0.12 },
@@ -67,10 +76,10 @@ function nhlSpreadIsotonicBuckets(): Array<{ low: number; high: number; calibrat
     { low: 0.30, high: 0.40, calibrated: 0.33 },
     { low: 0.40, high: 0.50, calibrated: 0.46 },
     { low: 0.50, high: 0.60, calibrated: 0.52 },
-    { low: 0.60, high: 0.70, calibrated: 0.56 },
-    { low: 0.70, high: 0.80, calibrated: 0.61 },
-    { low: 0.80, high: 0.90, calibrated: 0.67 },
-    { low: 0.90, high: 1.00, calibrated: 0.74 },
+    { low: 0.60, high: 0.70, calibrated: 0.54 },
+    { low: 0.70, high: 0.80, calibrated: 0.57 },
+    { low: 0.80, high: 0.90, calibrated: 0.62 },
+    { low: 0.90, high: 1.00, calibrated: 0.66 },
   ];
 }
 

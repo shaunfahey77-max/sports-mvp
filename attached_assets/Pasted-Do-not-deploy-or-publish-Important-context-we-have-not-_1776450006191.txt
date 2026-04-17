@@ -1,0 +1,62 @@
+Do not deploy or publish.
+
+Important context:
+- we have not republished/deployed since yesterday
+- this KPI report is evaluating the current candidate/dev branch behavior, not a newly shipped production state
+- treat these findings as branch-level tuning feedback, not a production regression
+
+Proceed with a tightly scoped Phase 0.75C tuning pass focused only on NHL/NBA scoring quality.
+
+Goals:
+1. Gate NHL total if the current evidence still supports it
+2. Tighten NBA spread selectivity
+3. Reduce overconfident model probabilities, especially in the 0.55–0.70 buckets
+4. Reduce Tier A inflation again so Tier A becomes a smaller, more trustworthy subset
+
+Guardrails:
+- branch only
+- no publish or deploy
+- no frontend styling changes
+- no auth, billing, migrations, or unrelated infra changes
+- no league expansion work
+- do not undo the existing correctness fixes, market gating, KPI work, or public-history cutoff logic
+- if any proposed change has broad behavioral impact, stop and show me the diff before applying
+
+Specific priorities:
+
+1. NHL total decision
+- review the current POST evidence for nhl total
+- if it still clearly fails the trust bar, gate it using the existing market gating mechanism
+- show exact before/after surfaced-pick impact
+
+2. NBA spread tightening
+- do not disable nba spread by default unless the evidence is overwhelming
+- first try tighter thresholds / pass logic / Tier A promotion rules
+- reduce the share of nba spread picks with very high displayed edge
+
+3. Probability / calibration shrinkage
+- focus on the overconfident mid-high buckets, especially 0.55–0.70
+- reduce the gap between model probability and realized outcomes
+- prefer a scoped calibration/shrinkage adjustment over broad rewrites
+
+4. Tier A reduction
+- reduce Tier A volume again if needed
+- Tier A should outperform lower tiers clearly, not just carry higher displayed edge
+
+Deliverables:
+1. exact files changed
+2. exact commands run
+3. validation / test / typecheck results
+4. before/after KPI impact for:
+   - nba spread
+   - nhl total
+   - overall Tier A vs Tier B
+5. recommended markets to keep live vs gate
+6. remaining risks
+
+Success criteria:
+- no deploy
+- weaker markets are tighter or gated
+- displayed confidence is less inflated
+- Tier A is more selective
+- KPI report looks more honest and less red-flag heavy than the current branch state

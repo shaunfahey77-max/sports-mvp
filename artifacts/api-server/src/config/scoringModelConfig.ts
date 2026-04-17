@@ -32,10 +32,24 @@ export const TIER_THRESHOLDS = {
 // NBA calibration: measured over a 14-day sample, surfaced NBA picks landed
 // at avg rank_score 0.84 (moneyline) and 0.93 (spread), pushing ~96% of
 // surfaced NBA picks into Tier A. Thresholds below shift NBA Tier A back to
-// a selective minority (~40-50% of surfaced), matching NHL behavior. NHL
-// thresholds are unchanged.
+// a selective minority (~40-50% of surfaced), matching NHL behavior.
+//
+// Phase 0.75C tuning (post-fix evidence):
+//   - nhl_spread: NEW 0.85. Default 0.65 was too loose — NHL Tier A
+//     posted 22.2% wr while Tier B posted 43.8%, i.e. Tier A was worse
+//     than Tier B by win rate. Profit was driven by dog-cover variance,
+//     not by selection quality.
+//   - nba_spread stays at 0.95. The wider post-line-shopping-fix sample
+//     (date >= 2026-04-12) shows OLD Tier A NBA spread at 11-9 / 55% wr —
+//     Tier A WAS working, the issue was displayed edge inflation. The
+//     sigmoidA shrinkage (1.02 → 0.85) and MIN_EDGE bump (0.025 → 0.05)
+//     already prune the inflated displayed edges and naturally drop rank
+//     scores; pushing Tier A to 0.97 on top over-pruned to 0/2.
+//   - nhl_total override remains at 0.94 but is moot once nhl_total is
+//     gated via MARKET_DISABLED below.
 export const TIER_A_THRESHOLD_OVERRIDE: Partial<Record<string, number>> = {
   nhl_total: 0.94,
+  nhl_spread: 0.85,
   nba_moneyline: 0.88,
   nba_spread: 0.95,
   nba_total: 0.80,
@@ -140,11 +154,21 @@ export const LEAGUE_MARKET_QUALITY = {
  * Set during Phase 0.75B based on KPI report findings:
  *   - nhl_moneyline: 0/6 resolved post-fix (-100% ROI)
  *   - nba_moneyline: 22% wr, -47% ROI on 9 resolved post-fix
+ *
+ * Phase 0.75C addition (post-fix evidence, both cohorts agree):
+ *   - nhl_total: PRE 37.5% wr / -21.3% ROI on 25 resolved;
+ *                POST 30.8% wr / -21.5% ROI on 26 resolved.
+ *                Brier 0.240 (worse than naive 0.27 threshold) and
+ *                26.6% of picks carry edge >0.20 — clear calibration
+ *                drift, not bad luck. Per-market MIN_EDGE of 0.04 is
+ *                not enough; gate it.
+ *
  * Re-evaluate after the next 7-day post-fix settlement window.
  */
 export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   nhl_moneyline: true,
   nba_moneyline: true,
+  nhl_total: true,
 };
 
 // Per-market minimum edge overrides — stricter than the global floor.
@@ -158,6 +182,10 @@ export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {
   nhl_moneyline: 0.04,
   // NBA totals: Tier B has 50.5% win rate (94 picks) — raise threshold to Tier A quality only
   nba_total: 0.10,
+  // NBA spread (Phase 0.75C): mean edge ran at 0.247 with 43.8% wr / -17.3% ROI.
+  // Lifting from the global 0.025 floor to 0.05 prunes the lowest-information
+  // candidates without disabling the market.
+  nba_spread: 0.05,
 };
 
 /**
