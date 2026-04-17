@@ -1,0 +1,90 @@
+Proceed with Phase 0.75B as an internal scoring-quality and KPI-discipline pass.
+
+Goal:
+Make the NHL/NBA prediction and scoring system more honest, selective, and measurable before any broader rollout or league expansion.
+
+Guardrails:
+- Work on a branch only
+- Do not publish or deploy
+- Do not change frontend styling unless needed for the internal KPI view
+- Do not change auth, billing, migrations, or unrelated infra
+- Keep scope to NHL/NBA production-readiness
+- Do not reopen MLB/NFL/NCAAF work
+- If a proposed change has broad behavioral impact, stop and show me the diff before applying
+
+Priority order:
+
+1. Build the internal KPI dashboard / reporting layer
+Create an internal-only view or report that shows, at minimum:
+- total picks
+- wins / losses / pushes
+- win rate
+- units won
+- ROI
+- picks per day
+- avg implied probability
+- avg model probability
+- avg edge
+- avg EV
+- brier score
+- log loss
+- Tier A / B / C counts
+- candidate count
+- surfaced count
+- pass count
+- candidate-to-published conversion rate
+- CLV sample size / avg CLV / CLV hit rate where available
+- red-flag counts (high-edge picks, blocked picks, odds-out-of-range picks)
+
+2. Break out every metric by market and league
+At minimum:
+- nba moneyline
+- nba spread
+- nba total
+- nhl moneyline
+- nhl spread
+- nhl total
+
+3. Add Tier A vs Tier B comparison reporting
+I want to see clearly whether Tier A is actually outperforming Tier B by:
+- win rate
+- ROI
+- units won
+- avg edge
+- avg EV
+
+4. Reduce pick volume where the data says we should
+Use the KPI evidence to identify noisy markets and recommend:
+- tighter thresholds
+- higher pass rates
+- or temporary market gating
+Do not blindly tune everything at once.
+
+5. Review calibration honesty
+Compare:
+- implied probability vs realized win rate
+- model probability vs realized win rate
+- edge/EV vs realized outcomes
+Identify where the model is overstating confidence.
+
+6. Expand CLV coverage if practical
+If feasible within scope, extend CLV support beyond moneyline to spread and total.
+If not feasible cleanly in this pass, document exactly what blocks it.
+
+Deliverables:
+1. exact files changed
+2. exact commands run
+3. validation / typecheck / test results
+4. KPI report output or screenshots
+5. list of weak markets and recommended actions
+6. list of strong markets and why
+7. remaining risks
+
+Success criteria:
+- we have one internal source of truth for model quality
+- every important metric is visible by league and market
+- Tier A vs Tier B performance is measurable
+- noisy markets are identifiable
+- pick volume/selectivity can be managed based on evidence, not guesswork
+
+Do not deploy when done. Present findings and recommendations first.
