@@ -7,7 +7,12 @@
     "hello": "tsx ./src/hello.ts",
     "seed-products": "tsx ./src/seed-products.ts",
     "backfill-validation-metrics": "tsx ./src/backfill-validation-metrics.ts",
+    "kpi-report": "tsx ./src/kpiReport.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@workspace/db": "workspace:*",
+    "drizzle-orm": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
