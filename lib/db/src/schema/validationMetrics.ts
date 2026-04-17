@@ -36,6 +36,13 @@ export const validationMetricsTable = pgTable(
     passRate: numeric("pass_rate").notNull().default("0"),
     picksPerDay: numeric("picks_per_day").notNull().default("0"),
     modelVersion: text("model_version").notNull().default("v1"),
+    // Internal audit label. NULL = clean / publishable on the public track
+    // record. Non-null values (e.g. "pre_fix_contaminated") preserve the
+    // raw row for internal analytics while signaling that the public read
+    // surface should exclude it. Backfilled by
+    // scripts/src/label-pre-fix-validation-metrics.ts using the
+    // PUBLIC_TRACK_RECORD_CUTOFFS config; never rewritten by the live pipeline.
+    dataQuality: text("data_quality"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -44,6 +51,7 @@ export const validationMetricsTable = pgTable(
     index("validation_metrics_date_idx").on(t.runDate),
     index("validation_metrics_league_market_idx").on(t.league, t.market),
     index("validation_metrics_window_idx").on(t.windowDays),
+    index("validation_metrics_data_quality_idx").on(t.dataQuality),
   ]
 );
 

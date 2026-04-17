@@ -160,6 +160,31 @@ export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {
   nba_total: 0.10,
 };
 
+/**
+ * Per-league cutoff for the PUBLIC track-record surface. Any pick or
+ * validation_metrics row whose date is STRICTLY BEFORE this cutoff (for
+ * the corresponding league) is treated as "pre-fix contaminated" and
+ * excluded from public-facing performance/history endpoints.
+ *
+ * Raw rows are NEVER deleted or rewritten — they remain intact in the
+ * database for internal audit and analytics. Only the public read surface
+ * is filtered. The cutoff is the single deterministic source of truth and
+ * is also what the backfill script uses to set the `data_quality` label
+ * on existing validation_metrics rows.
+ *
+ * NHL pre-fix contamination: the line-shopping bug in `pickBestLines`
+ * (Task #4) over-stated NHL spread/total edges through 2026-04-11 (the
+ * 04-11 NHL day posted +21.56u / 134.8% ROI on inflated lines). Cutoff is
+ * therefore 2026-04-12 — the first clean NHL day under the matched-pair
+ * line shopping fix.
+ */
+export const PUBLIC_TRACK_RECORD_CUTOFFS: Partial<Record<string, string>> = {
+  nhl: "2026-04-12",
+};
+
+/** Label written into `validation_metrics.data_quality` for rows excluded by the cutoff. */
+export const DATA_QUALITY_PRE_FIX = "pre_fix_contaminated" as const;
+
 export type League = "nba" | "ncaam" | "nhl";
 export type MarketType = "moneyline" | "spread" | "total";
 export type Side = "home" | "away" | "over" | "under";
