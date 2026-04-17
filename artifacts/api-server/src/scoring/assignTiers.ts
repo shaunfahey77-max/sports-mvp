@@ -9,6 +9,7 @@ import {
   MIN_EDGE_TO_CANDIDATE,
   MIN_EV_TO_CANDIDATE,
   MARKET_MIN_EDGE,
+  MARKET_DISABLED,
   DEFAULT_ODDS_RANGE,
   ODDS_RANGE_OVERRIDE,
 } from "../config/scoringModelConfig";
@@ -53,6 +54,16 @@ export function applyRiskControls(input: TierInput): string | null {
     if (input.publishOdds < range.min || input.publishOdds > range.max) {
       return "odds_out_of_range";
     }
+  }
+
+  // Hard market gate — evaluated after odds-range so the existing
+  // 'odds_out_of_range' reason is preserved for downstream analytics, but
+  // before edge / EV / market-quality so disabled markets never compete on
+  // those metrics. Re-evaluate gating in scoringModelConfig.MARKET_DISABLED.
+  const disabledKey =
+    input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
+  if (disabledKey != null && MARKET_DISABLED[disabledKey]) {
+    return "market_disabled";
   }
 
   if (input.marketQuality < 0.3) {

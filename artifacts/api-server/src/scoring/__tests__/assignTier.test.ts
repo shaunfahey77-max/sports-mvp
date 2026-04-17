@@ -22,10 +22,14 @@ test("assignTier: nba_spread override (0.95) — below override lands in B, at/a
   assert.equal(assignTier({ ...base, rankScore: 0.98 }).tier, "A");
 });
 
-test("assignTier: nba_moneyline override (0.88) — below override lands in B, at/above lands in A", () => {
+test("assignTier: nba_moneyline override (0.88) — currently shadowed by MARKET_DISABLED gate (Phase 0.75B)", () => {
+  // The TIER_A_THRESHOLD_OVERRIDE for nba_moneyline (0.88) is still wired up,
+  // but MARKET_DISABLED["nba_moneyline"] = true short-circuits to PASS for
+  // every rank score. When the gate is removed, restore the original
+  // rankScore=0.87 → "B" and rankScore=0.88 → "A" expectations below.
   const base = { ...CLEAN, league: "nba" as const, marketType: "moneyline" as const };
-  assert.equal(assignTier({ ...base, rankScore: 0.87 }).tier, "B");
-  assert.equal(assignTier({ ...base, rankScore: 0.88 }).tier, "A");
+  assert.equal(assignTier({ ...base, rankScore: 0.87 }).tier, "PASS");
+  assert.equal(assignTier({ ...base, rankScore: 0.88 }).selectionReason, "market_disabled");
 });
 
 test("assignTier: nhl_total override (0.94) preserved — unchanged by NBA calibration", () => {
@@ -34,11 +38,44 @@ test("assignTier: nhl_total override (0.94) preserved — unchanged by NBA calib
   assert.equal(assignTier({ ...base, rankScore: 0.94 }).tier, "A");
 });
 
-test("assignTier: NHL moneyline/spread still use global 0.65 floor (no override)", () => {
-  const ml = { ...CLEAN, league: "nhl" as const, marketType: "moneyline" as const, rankScore: 0.70 };
+test("assignTier: MARKET_DISABLED short-circuits to PASS regardless of rank score / edge / ev", () => {
+  // nhl_moneyline + nba_moneyline are gated in scoringModelConfig as of Phase 0.75B.
+  for (const [league, marketType] of [
+    ["nhl", "moneyline"] as const,
+    ["nba", "moneyline"] as const,
+  ]) {
+    const r = assignTier({
+      ...CLEAN,
+      league,
+      marketType,
+      rankScore: 0.99, // would normally be Tier A
+      edge: 0.30,
+      ev: 0.10,
+    });
+    assert.equal(r.tier, "PASS", `${league}/${marketType} should be PASS`);
+    assert.equal(r.selectionReason, "market_disabled", `${league}/${marketType} reason`);
+  }
+});
+
+test("assignTier: non-disabled markets are unaffected by MARKET_DISABLED check", () => {
+  // nhl_spread is NOT in MARKET_DISABLED — should still tier normally.
+  const r = assignTier({
+    ...CLEAN,
+    league: "nhl",
+    marketType: "spread",
+    rankScore: 0.70,
+  });
+  assert.equal(r.tier, "A");
+});
+
+test("assignTier: NHL spread still uses global 0.65 floor (no override); NHL moneyline is gated", () => {
+  // NHL spread has no TIER_A override and isn't market_disabled — global 0.65 floor applies.
   const sp = { ...CLEAN, league: "nhl" as const, marketType: "spread" as const, rankScore: 0.70 };
-  assert.equal(assignTier(ml).tier, "A");
   assert.equal(assignTier(sp).tier, "A");
+  // NHL moneyline is currently disabled (Phase 0.75B). When re-enabled, restore
+  // the original rankScore=0.70 → "A" expectation.
+  const ml = { ...CLEAN, league: "nhl" as const, marketType: "moneyline" as const, rankScore: 0.70 };
+  assert.equal(assignTier(ml).selectionReason, "market_disabled");
 });
 
 test("assignTier: odds-range guardrail is OFF by default — extreme odds are not rejected", () => {
@@ -83,8 +120,13 @@ test("assignTier: odds-range guardrail rejects out-of-range odds with exact 'odd
 });
 
 test("assignTier: odds-range override widens moneyline range for NBA/NHL heavy favorites", () => {
-  // NBA moneyline override is [-2000, +600]: a -1500 favorite is legitimate,
-  // but a +800 dog should be rejected. Confirms per-market overrides fire.
+  // The odds-range guardrail still runs BEFORE MARKET_DISABLED, so the
+  // 'odds_out_of_range' reason is preserved even for currently-gated markets.
+  // A legit favorite that passes the odds range will then be caught by the
+  // gate and labeled 'market_disabled' — both behaviors are asserted below.
+
+  // NBA moneyline override is [-2000, +600]: -1500 passes the odds range,
+  // then is force-PASSED by the market gate.
   const legitFav = assignTier({
     ...CLEAN,
     league: "nba",
@@ -93,13 +135,10 @@ test("assignTier: odds-range override widens moneyline range for NBA/NHL heavy f
     publishOdds: -1500,
     enableOddsRangeGuardrail: true,
   });
-  // Key property: the guardrail did not fire. Tier bucket is determined
-  // downstream by the NBA-ML TIER_A override (0.88), which puts 0.70 in B —
-  // that's fine, the point is the candidate wasn't rejected as
-  // 'odds_out_of_range'.
   assert.notEqual(legitFav.selectionReason, "odds_out_of_range");
-  assert.notEqual(legitFav.tier, "PASS");
+  assert.equal(legitFav.selectionReason, "market_disabled");
 
+  // +800 still exceeds the override range, so odds_out_of_range wins.
   const altLineDog = assignTier({
     ...CLEAN,
     league: "nba",
@@ -111,7 +150,8 @@ test("assignTier: odds-range override widens moneyline range for NBA/NHL heavy f
   assert.equal(altLineDog.tier, "PASS");
   assert.equal(altLineDog.selectionReason, "odds_out_of_range");
 
-  // NHL moneyline override is [-800, +600]: -1200 exceeds the band.
+  // NHL moneyline override is [-800, +600]: -1200 exceeds the band, so
+  // odds_out_of_range wins over market_disabled (taxonomy stability).
   const nhlHeavyFav = assignTier({
     ...CLEAN,
     league: "nhl",

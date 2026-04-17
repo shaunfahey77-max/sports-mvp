@@ -131,6 +131,22 @@ export const LEAGUE_MARKET_QUALITY = {
   nhl: { moneyline: 0.25, spread: 0.90, total: 0.15 },
 } as const;
 
+/**
+ * Hard market gate. When `true`, every candidate for that league_market
+ * is force-PASSED with selection_reason="market_disabled" before any other
+ * risk control runs. Use this (not a contrived MARKET_MIN_EDGE) when the
+ * intent is "do not surface this market to users at all".
+ *
+ * Set during Phase 0.75B based on KPI report findings:
+ *   - nhl_moneyline: 0/6 resolved post-fix (-100% ROI)
+ *   - nba_moneyline: 22% wr, -47% ROI on 9 resolved post-fix
+ * Re-evaluate after the next 7-day post-fix settlement window.
+ */
+export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
+  nhl_moneyline: true,
+  nba_moneyline: true,
+};
+
 // Per-market minimum edge overrides — stricter than the global floor.
 // Values at or above 0.50 effectively disable a market (edge is capped below that).
 export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {

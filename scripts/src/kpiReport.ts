@@ -70,7 +70,7 @@ function parseArgs(argv: string[]): Args {
   return out;
 }
 
-interface PickRow {
+export interface PickRow {
   id: number;
   date: string;
   league: string;
@@ -138,7 +138,7 @@ const EMPTY_METRIC: MetricBlock = {
   redFlags: { highEdgePicks: 0, extremeEdgePicks: 0, oddsOutOfRange: 0 },
 };
 
-function computeMetrics(picks: PickRow[]): MetricBlock {
+export function computeMetrics(picks: PickRow[]): MetricBlock {
   if (picks.length === 0) return { ...EMPTY_METRIC, tierCounts: {} };
 
   const resolved = picks.filter((p) => p.result !== "pending");
@@ -573,9 +573,16 @@ async function main() {
   void sql;
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error("kpiReport failed:", err);
-    process.exit(1);
-  });
+// Run main() only when invoked directly as a script. Importing this module
+// (e.g. from the parity test) must NOT trigger DB queries or process.exit.
+const isDirectInvocation =
+  import.meta.url === `file://${process.argv[1]}` ||
+  process.argv[1]?.endsWith("kpiReport.ts");
+if (isDirectInvocation) {
+  main()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error("kpiReport failed:", err);
+      process.exit(1);
+    });
+}

@@ -8,6 +8,7 @@
     "seed-products": "tsx ./src/seed-products.ts",
     "backfill-validation-metrics": "tsx ./src/backfill-validation-metrics.ts",
     "kpi-report": "tsx ./src/kpiReport.ts",
+    "test": "tsx --test ./src/__tests__/kpiParity.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
