@@ -108,6 +108,7 @@ function featureRow(o: Partial<{ restAdvantage: number }> = {}) {
     awayLast5TotalAvg: 0,
     homeLast10TotalAvg: 0,
     awayLast10TotalAvg: 0,
+    scoredGamesSampleSize: 0,
     ...o,
   };
 }

@@ -54,6 +54,8 @@ interface TeamFeatureData {
   roadATS: number;
   overRate: number;
   sampleSize: number;
+  /** Real count of recent games with final scores; non-stubbed. */
+  scoredGames: number;
   goalsForAvg: number;
   goalsAgainstAvg: number;
   last5TotalAvg: number;
@@ -65,8 +67,25 @@ async function computeTeamFeatures(
   league: string,
   gameDate: string
 ): Promise<TeamFeatureData> {
+  // League-aware history window. Daily-cadence leagues (NBA, NHL, MLB)
+  // historically used 14 days; weekly-cadence leagues (NFL, NCAAF) need
+  // a much wider window to accumulate the >=3 scored games required for
+  // the v2 PPG-differential gate to fire (NFL teams play roughly once
+  // per week, so a 14-day window typically yields only 1-2 finals — see
+  // .local/football-redesign-plan.md). Rest-day computation always
+  // takes the MOST RECENT prior game, so widening the window doesn't
+  // change rest semantics; it just makes more historical scores
+  // available for PPG / totals averages.
+  //
+  // NBA/NHL/MLB are intentionally left at 14 to preserve their existing
+  // model behavior exactly per the v2 redesign scope contract.
+  const HISTORY_DAYS_BY_LEAGUE: Record<string, number> = {
+    nfl: 90,
+    ncaaf: 120,
+  };
+  const historyDays = HISTORY_DAYS_BY_LEAGUE[league] ?? 14;
+  const historyStart = addDays(gameDate, -historyDays);
   const ninetyDaysAgo = addDays(gameDate, -90);
-  const fourteenDaysAgo = addDays(gameDate, -14);
 
   // --- Recent historical games for this team ---
   let recentGames: Array<{
@@ -76,7 +95,7 @@ async function computeTeamFeatures(
     awayScore: number | null;
   }> = [];
 
-  // --- Rest days: last game before gameDate in past 14 days ---
+  // --- Rest days: most recent prior game within the league window ---
   let restDays = 7;
   try {
     recentGames = await db
@@ -90,7 +109,7 @@ async function computeTeamFeatures(
       .where(
         and(
           eq(gameSnapshotsTable.league, league),
-          gte(gameSnapshotsTable.snapshotDate, fourteenDaysAgo),
+          gte(gameSnapshotsTable.snapshotDate, historyStart),
           lt(gameSnapshotsTable.snapshotDate, gameDate)
         )
       );
@@ -166,6 +185,7 @@ async function computeTeamFeatures(
     roadATS,
     overRate,
     sampleSize,
+    scoredGames,
     goalsForAvg,
     goalsAgainstAvg,
     last5TotalAvg,
@@ -207,6 +227,11 @@ export async function computeAllFeatures(
         awayTeamOverRate: awayData.overRate,
         restAdvantage,
         atsSampleSize: Math.max(homeData.sampleSize, awayData.sampleSize),
+        // Real count of recent games with final scores (max-of-home/away).
+        // Distinct from `atsSampleSize` (currently a stubbed-zero placeholder
+        // pending a real ATS data feed). Models gate points-derived features
+        // (PPG-for/against, totals averages) on THIS field, not the ATS one.
+        scoredGamesSampleSize: Math.max(homeData.scoredGames, awayData.scoredGames),
         homeGoalsForAvg: homeData.goalsForAvg,
         awayGoalsForAvg: awayData.goalsForAvg,
         homeGoalsAgainstAvg: homeData.goalsAgainstAvg,

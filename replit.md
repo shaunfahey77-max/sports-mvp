@@ -326,36 +326,72 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **Gating**: `MARKET_DISABLED` keeps `nfl_spread`, `nfl_moneyline`,
   `nfl_total` all `true`. `LEAGUE_MARKET_QUALITY.nfl` set to inert 0.10
   across the board until evidence justifies otherwise.
-- **NFL spread model — v1 BUILT (still gated, no deploy)**:
-  - `prediction/nflSpreadModel.ts`: vig-free moneyline → expected margin
-    via inverse normal CDF, `MARGIN_STD_DEV = 13.45`, HFA in points form
-    (`HOME_ADVANTAGE.nfl * MARGIN_STD_DEV`), `restAdvantage` adjustment
-    at `REST_ADV_POINTS_PER_DAY = 0.20`, normal CDF for cover prob,
-    output clamped to [0.05, 0.95].
-  - Wired into `scorePicks.getModel` switch as `nfl_spread`.
-  - `SPREAD_LINE_ABS_MAX.nfl = 21` (rejects alt-line / first-half / team-
-    total leakage; admits every realistic main spread).
-  - Calibration: identity sigmoid `(a=1, b=0)` until backtest tunes.
-  - Coverage: 8 unit tests in `scoring/__tests__/nflSpreadModel.test.ts`
-    pin probability sum-to-1, HFA application in points form, rest
-    adjustment direction + magnitude, clamp behavior, and pick'em HFA.
-- **Still gated**: `MARKET_DISABLED.nfl_spread = true` and `nfl` not in
-  cron `LEAGUES`. The new `nfl_spread` switch case exists so an internal
-  backtest harness can invoke the model directly without flipping the
-  production gates.
-- **Backtest result (2025 season, 225 games, 450 candidates) — KEEP GATED**:
-  ROI **-6.2%**, win rate 47.2% (vs 52.4% break-even), Brier 0.2565 (≈ baseline
-  0.250), Tier C catastrophic at -23.6% ROI. avg model prob = 0.500 vs avg
-  implied prob = 0.510 — model isn't picking up the home-favoritism asymmetry
-  the market prices in. Calibration is centered correctly in [0.45, 0.55]
-  but tails are tiny. Full report: `.local/backtest-reports/SUMMARY.md`
-  + `nfl-2025.txt`. Reproduce: `pnpm --filter @workspace/scripts run football-backtest-report -- --league nfl --start 2025-09-01 --end 2026-02-10`.
-- **Next steps before any future re-evaluation**:
-  1. Investigate why avg model prob centers exactly on 0.500 — model is
-     not learning the home-side bias the market reflects.
-  2. Future feature work (requires extending `GameFeatures`): bye-week
-     boost, divisional flag, primetime indicator, indoor/outdoor + weather.
-  3. Re-run the report before considering any gate flip.
+- **NFL spread model — v1 BUILT then SUPERSEDED by v2 (still gated, no deploy)**:
+  - v1 (historical): vig-free moneyline → expected margin via inverse
+    normal CDF, `MARGIN_STD_DEV = 13.45`, HFA in points form
+    (`HOME_ADVANTAGE.nfl * MARGIN_STD_DEV`) added on top, `restAdvantage`
+    at 0.20 pts/day, normal CDF for cover prob, output clamped to
+    [0.05, 0.95]. Wired into `scorePicks.getModel` as `nfl_spread`.
+    `SPREAD_LINE_ABS_MAX.nfl = 21`. Identity-sigmoid calibration.
+  - v1 backtest (2025 season, 225 games, 450 candidates): ROI **-6.2%**,
+    win rate 47.2%, Brier 0.2565 (≈ baseline 0.250), avg model prob =
+    0.500 vs avg implied prob = 0.510. Diagnosis: prior was vig-free ML,
+    HFA was a double-count on top of that, and the only feature signal
+    was a tiny ±0.6 pt rest term — model could not deviate meaningfully
+    from the market. Full report: `.local/backtest-reports/SUMMARY.md`
+    + `nfl-2025.txt`.
+- **NFL spread model — v2 redesign COMPLETE (2026-04-21, still gated, no deploy)**:
+  - `prediction/nflSpreadModel.ts` v2 changes vs v1:
+    1. REMOVED additive HFA after `probToMargin(fairHome)` — the
+       vig-free ML already prices it in. `HOME_ADVANTAGE.nfl` import
+       dropped from this file (still defined in `scoringModelConfig`
+       for other models).
+    2. ADDED home/road ATS form adjustment (mirrors `nbaSpreadModel`):
+       `ATS_FORM_MAX_ADJ = 2.5` pts max when `atsSampleSize >= 10`.
+    3. ADDED recent points-for / points-against differential adjustment:
+       `(homeNet - awayNet) * PPG_DIFF_WEIGHT(0.30)`, capped
+       `±PPG_DIFF_MAX_ADJ(5.0)`, gated on `scoredGamesSampleSize >= 3`
+       (handles Week-1 / preseason — see "GameFeatures sample fields"
+       note below for why this is NOT gated on `atsSampleSize`).
+    4. KEPT `REST_ADV_POINTS_PER_DAY = 0.20` (no retune without data).
+  - **GameFeatures sample fields** (introduced as part of this pass):
+    `atsSampleSize` is currently a stubbed-zero placeholder in
+    `featureEngine.ts` pending a non-self-referential ATS data feed
+    (see comments at lines ~141-148 of `featureEngine.ts`). A new
+    `scoredGamesSampleSize` field is now populated from the real count
+    of recent games with final scores (`scoredGames` in
+    `computeTeamFeatures`). NFL v2's PPG gate uses this real field so
+    the feature actually fires in the live pipeline; ATS gating remains
+    on `atsSampleSize` and is therefore dormant until the real ATS feed
+    lands. NBA spread / NHL total / MLB / NCAAF models are unchanged
+    and continue to read `atsSampleSize` as before. New ncaaf test
+    `featureRow` updated to include `scoredGamesSampleSize: 0` for
+    type-correctness; behavior unchanged.
+  - Combined feature stack can now shift expected margin by up to
+    roughly ±9 pts (vs v1's ~±0.6 pts) — ~15× more independent
+    expressiveness. Market-derived prior is preserved in full but no
+    longer dominates.
+  - Coverage: 19 unit tests in `scoring/__tests__/nflSpreadModel.test.ts`
+    (now wired into the `api-tests` workflow): probability sum-to-1
+    invariant, neutral-market prob-equals-0.5 (HFA-must-not-double-count
+    regression), feature direction + magnitude for rest / ATS / PPG,
+    sample-size gating for both ATS and PPG, magnitude clamping for
+    both, sign handling, additive composition + calibration sanity,
+    Week-1 / preseason gates, and a v2-expressiveness assertion that
+    combined max features must move cover prob by >5pp at a fixed line.
+  - Production posture unchanged: `MARKET_DISABLED.nfl_spread = true`,
+    NFL still excluded from cron `LEAGUES`. `nfl_spread` switch case
+    exists only so an internal backtest harness can invoke the model
+    without flipping production gates.
+- **Remaining steps before any future re-evaluation**:
+  1. Re-run the backtest report against v2 (after Phase B candidate-
+     filter work for NCAAF lands). Two independent windows.
+  2. Investigate the inverted Tier C signal — likely a feature-eng or
+     calibration bug, not a tier-threshold bug.
+  3. Future feature work (requires extending `GameFeatures`): bye-week
+     boost beyond rest-day proxy, divisional flag, primetime/Thursday-
+     night indicator, indoor/outdoor + weather, injury report.
+  4. Re-run before considering any gate flip.
 
 ### Backtest tooling (added Apr 2026)
 - `scripts/src/footballBacktestReport.ts` — read-only NFL/NCAAF backtest

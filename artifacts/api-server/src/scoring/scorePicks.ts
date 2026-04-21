@@ -25,6 +25,15 @@ export interface GameFeatures {
   awayTeamOverRate: number;
   restAdvantage: number;
   atsSampleSize: number;
+  /**
+   * Count of recent games (per team, max-of-home/away) for which we have
+   * actual final scores in our snapshot store. Distinct from `atsSampleSize`,
+   * which is currently a stubbed-zero placeholder pending a real ATS data
+   * feed (see `featureEngine.ts`). Use this gate for points-derived features
+   * (PPG-for, PPG-against, totals averages) — those values come from real
+   * historical scores and are non-stubbed.
+   */
+  scoredGamesSampleSize: number;
   homeGoalsForAvg: number;
   awayGoalsForAvg: number;
   homeGoalsAgainstAvg: number;

@@ -47,12 +47,12 @@ isValidation = true
 name = "api-tests"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts src/scoring/__tests__/ncaafTeamAbbreviations.test.ts"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts src/scoring/__tests__/ncaafTeamAbbreviations.test.ts src/scoring/__tests__/nflSpreadModel.test.ts src/scoring/__tests__/ncaafSpreadModel.test.ts"
 
 [agent]
 stack = "PNPM_WORKSPACE"

@@ -1,5 +1,5 @@
 /**
- * NFL Spread Prediction Model — v1 (Phase 0.75E build)
+ * NFL Spread Prediction Model — v2 (2026-04-21 redesign pass)
  *
  * Branch only, internal only, NO DEPLOY. The market itself remains gated
  * via `MARKET_DISABLED.nfl_spread = true` until a historical backtest
@@ -7,29 +7,62 @@
  * `LEAGUES` list, so this model only runs when explicitly invoked
  * (e.g. by an internal backtest harness).
  *
- * Approach (mirrors `nhlSpreadModel`):
- *   1. Take the vig-free moneyline as the market's home win probability.
- *   2. Map that probability to an expected margin via the inverse normal
- *      CDF, scaled by NFL's historical margin standard deviation.
- *   3. Add a points-form home-field advantage (NFL HFA in points is the
- *      product of the prob-form HFA from `HOME_ADVANTAGE.nfl` and the
- *      margin std dev — this keeps the parameter source in one place).
- *   4. Adjust for rest advantage. NFL has no true back-to-back, but does
- *      have short weeks (Thursday after Sunday) — `restAdvantage` already
- *      captures this asymmetry as `homeTeamRestDays - awayTeamRestDays`.
- *   5. Translate expected margin → cover probability with the normal CDF
- *      around the published spread.
+ * --- Why v2: ---
+ *   The 2025 v1 backtest (.local/backtest-reports/nfl-2025.txt) returned
+ *   ROI -6.2% with average model edge ~ 0. Diagnosis: v1's "model" was
+ *   essentially a near-arbitrage between two sides of the same market —
+ *   it derived expected margin from the vig-free moneyline, then added
+ *   a constant home-field advantage on top (which was already priced
+ *   into the moneyline = double-counted), then applied a tiny rest term
+ *   (0.2 pts/day, max ~±1.4 pts shift). With no independent feature
+ *   signal, the model could not deviate meaningfully from the market.
  *
- * Constants:
- *   - MARGIN_STD_DEV = 13.45  (historical NFL final-margin σ, multiple
- *     decades of data; matches the value commonly cited in academic
- *     football analytics literature.)
- *   - REST_ADV_POINTS_PER_DAY = 0.20  (small, conservative — tighter than
- *     popular sportsbook rules-of-thumb until a backtest tunes it.)
+ *   Full plan: `.local/football-redesign-plan.md`.
  *
- * Future enhancements (deferred to post-backtest, will require extending
- * `GameFeatures`): bye-week boost, divisional-game adjustment, primetime
- * indicator, indoor/outdoor + weather, ranked-vs-unranked at college.
+ * --- v2 changes vs v1: ---
+ *   1. REMOVED the additive HFA after probToMargin(fairHome). The vig-
+ *      free moneyline already prices in the market's full home-side
+ *      premium. The previous `+ hfaPoints` line was a double-count.
+ *   2. ADDED home/road ATS form adjustment (mirrors nbaSpreadModel.ts):
+ *      ±2.5 pts max when atsSampleSize >= 10.
+ *   3. ADDED recent points-for / points-against differential adjustment:
+ *      `(homeNet - awayNet) * 0.30`, capped ±5 pts, gated on
+ *      `scoredGamesSampleSize >= 3` so Week-1 / preseason games (where no
+ *      team-strength signal exists) don't get a spurious adjustment.
+ *      We deliberately do NOT gate this on `atsSampleSize` — that field
+ *      is currently a stubbed-zero placeholder in `featureEngine.ts`
+ *      pending a real ATS data feed, and using it would dormancy-gate
+ *      the PPG feature in the live pipeline. PPG averages themselves
+ *      come from real historical scores and are non-stubbed.
+ *   4. KEPT real rest at 0.20 pts/day (preserved v1 weight; no retune
+ *      without backtest evidence).
+ *
+ *   Combined feature stack can now shift expected margin by up to
+ *   roughly ±9 pts (vs v1's ~±0.6 pts), giving the model ~15× more
+ *   independent expressiveness. The market-derived prior is preserved
+ *   in full but no longer dominates — features can now express real
+ *   directional signal.
+ *
+ * --- Constants: ---
+ *   - MARGIN_STD_DEV = 13.45  (historical NFL final-margin σ; matches
+ *     the value commonly cited in academic football analytics.)
+ *   - REST_ADV_POINTS_PER_DAY = 0.20  (small, conservative — preserved
+ *     from v1 since we have no backtest data justifying a retune yet.)
+ *   - ATS_FORM_MAX_ADJ = 2.5   (mirrors NBA spread model.)
+ *   - ATS_MIN_SAMPLE = 10      (threshold for ATS ratio to be meaningful.)
+ *   - PPG_DIFF_WEIGHT = 0.30   (points of margin per net-PPG-differential
+ *     pt. A typical strong-vs-weak NFL matchup has a ~10 net-PPG gap →
+ *     +3.0 pts margin shift, which is meaningful but not extreme.)
+ *   - PPG_DIFF_MAX_ADJ = 5.0   (cap to prevent extreme early-season
+ *     blowout-skewed averages from dominating.)
+ *   - PPG_MIN_SAMPLE = 3       (need at least 3 games of data before
+ *     PPG averages carry signal; lower than the ATS threshold because
+ *     PPG has better signal-to-noise than win-rate ratios.)
+ *
+ * Future enhancements (deferred to v3, will require extending
+ * `GameFeatures`): bye-week boost beyond rest-day proxy, divisional
+ * adjustment, primetime/Thursday-night flag, indoor/outdoor + weather,
+ * injury-report adjustment.
  *
  * Probability clamps preserve symmetric numerical safety with the NHL
  * spread model (0.05 / 0.95). The clamp is intentionally generous: NFL
@@ -39,11 +72,14 @@
 
 import type { GameMarketInput, ModelOutput } from "../scoring/scorePicks";
 import { removeTwoSidedVig } from "../scoring/marketProb";
-import { HOME_ADVANTAGE } from "../config/scoringModelConfig";
 
-const LEAGUE = "nfl";
 export const MARGIN_STD_DEV = 13.45;
 export const REST_ADV_POINTS_PER_DAY = 0.20;
+export const ATS_FORM_MAX_ADJ = 2.5;
+export const ATS_MIN_SAMPLE = 10;
+export const PPG_DIFF_WEIGHT = 0.30;
+export const PPG_DIFF_MAX_ADJ = 5.0;
+export const PPG_MIN_SAMPLE = 3;
 
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {
   if (game.publishSpread == null) return {};
@@ -53,12 +89,48 @@ export async function predict(game: GameMarketInput): Promise<ModelOutput> {
     game.awayPublishMl
   );
 
-  const hfaPoints = HOME_ADVANTAGE[LEAGUE] * MARGIN_STD_DEV;
-  let expectedMargin = probToMargin(fairHome, MARGIN_STD_DEV) + hfaPoints;
+  // v2: market-derived prior, used as-is. The vig-free moneyline already
+  // contains the market's full home-side premium; do NOT add an extra
+  // HOME_ADVANTAGE term on top (that was the v1 double-count).
+  let expectedMargin = probToMargin(fairHome, MARGIN_STD_DEV);
 
+  // --- v2 feature stack: independent signals layered on the prior. ---
   const f = game.features;
   if (f) {
+    // Real rest. NFL has no true back-to-back, but has short weeks
+    // (Thursday after Sunday) and bye-week recoveries that the market
+    // does not always fully price.
     expectedMargin += f.restAdvantage * REST_ADV_POINTS_PER_DAY;
+
+    // ATS form. Recent home/road ATS records are independent of the
+    // pricing on this game (they reflect prior games' results) and
+    // represent a real coverage edge when meaningful sample exists.
+    // Mirrors the NBA spread model exactly so behavior is consistent
+    // across leagues.
+    if (f.atsSampleSize >= ATS_MIN_SAMPLE) {
+      const homeATSAdj = (f.homeTeamHomeATS - 0.5) * ATS_FORM_MAX_ADJ * 2;
+      const awayATSAdj = (f.awayTeamRoadATS - 0.5) * ATS_FORM_MAX_ADJ * 2;
+      expectedMargin += clamp(
+        homeATSAdj - awayATSAdj,
+        -ATS_FORM_MAX_ADJ,
+        ATS_FORM_MAX_ADJ
+      );
+    }
+
+    // Recent points-for / points-against differential. The single
+    // strongest predictor in football beyond the market price itself.
+    // Gated on `scoredGamesSampleSize` — the count of recent games for
+    // which we have actual final scores in our snapshot store. This is
+    // intentionally distinct from `atsSampleSize` (currently a stubbed
+    // placeholder, which would dormancy-gate this feature in the live
+    // pipeline if used). Capped to prevent extreme early-season
+    // blowout-skewed averages from dominating.
+    if (f.scoredGamesSampleSize >= PPG_MIN_SAMPLE) {
+      const homeNet = f.homeGoalsForAvg - f.homeGoalsAgainstAvg;
+      const awayNet = f.awayGoalsForAvg - f.awayGoalsAgainstAvg;
+      const ppgAdj = (homeNet - awayNet) * PPG_DIFF_WEIGHT;
+      expectedMargin += clamp(ppgAdj, -PPG_DIFF_MAX_ADJ, PPG_DIFF_MAX_ADJ);
+    }
   }
 
   // `publishSpread` is the home team's spread (negative if home favored).
