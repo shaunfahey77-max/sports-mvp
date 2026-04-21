@@ -47,6 +47,15 @@ export const DEFAULT_CALIBRATION_PARAMS: Record<string, Record<string, Calibrati
   mlb: {
     moneyline: { method: "sigmoid", version: "v1", sigmoidA: 1.0, sigmoidB: 0.0 },
   },
+  // NFL Phase 0.75E foundation: identity sigmoid (a=1, b=0) on spread.
+  // The model is market-anchored (vig-free moneyline → expected margin
+  // via inverse normal CDF), so initial calibration is a no-op until
+  // backtested. Moneyline and total stay stubbed-disabled and need no
+  // calibration entries. The market itself remains gated via
+  // MARKET_DISABLED.nfl_spread = true.
+  nfl: {
+    spread: { method: "sigmoid", version: "v1", sigmoidA: 1.0, sigmoidB: 0.0 },
+  },
 };
 
 function defaultIsotonicBuckets(): Array<{ low: number; high: number; calibrated: number }> {

@@ -102,6 +102,11 @@ export const SPREAD_LINE_ABS_MAX: Partial<Record<string, number>> = {
   nba: 25,
   ncaam: 35,
   nhl: 2.0,
+  // NFL Phase 0.75E: main spread runs from pick'em to ~±14, occasionally
+  // ±17. Cap at ±21 (3 TDs) to reject alt-line / first-half / team-total
+  // leakage while admitting every realistic main spread including the
+  // rare blowout favorites.
+  nfl: 21,
 };
 export const TOTAL_LINE_RANGE: Partial<Record<string, { min: number; max: number }>> = {
   nba: { min: 180, max: 280 },

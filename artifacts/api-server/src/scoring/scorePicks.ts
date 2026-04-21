@@ -114,6 +114,12 @@ async function getModel(league: League, marketType: MarketType): Promise<ModelFn
       return (await import("../prediction/nhlTotalModel")).predict;
     case "mlb_moneyline":
       return (await import("../prediction/mlbMoneylineModel")).predict;
+    case "nfl_spread":
+      // NFL Phase 0.75E: model is built but the market remains gated via
+      // MARKET_DISABLED.nfl_spread = true and NFL is not in cron LEAGUES.
+      // This case exists so internal backtest harnesses can invoke the
+      // model directly without flipping the production gates.
+      return (await import("../prediction/nflSpreadModel")).predict;
     default:
       throw new Error(`No model for ${league}_${marketType}`);
   }

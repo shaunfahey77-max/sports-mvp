@@ -279,17 +279,29 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **Gating**: `MARKET_DISABLED` keeps `nfl_spread`, `nfl_moneyline`,
   `nfl_total` all `true`. `LEAGUE_MARKET_QUALITY.nfl` set to inert 0.10
   across the board until evidence justifies otherwise.
-- **Next steps for NFL spread build (when ready)**:
-  1. Add NFL spread features to `featureEngine.ts` (rest days incl. Thu/Mon
-     short weeks, bye, primetime indicator, divisional flag, indoor/outdoor +
-     weather where available).
-  2. Build `nflSpreadModel.ts` mirroring `nhlSpreadModel.ts` shape: vig-free
-     market anchor → expected margin via `probToMargin`, NFL-specific margin
-     std dev (~13.5 pts historically), HFA in points form, then normal CDF
-     for cover probability.
-  3. Add NFL spread plausibility ranges (`SPREAD_LINE_ABS_MAX.nfl` ≈ 21).
-  4. Add `nfl_spread` calibration entry, identity sigmoid initially.
-  5. Backtest against a historical NFL season before flipping
-     `MARKET_DISABLED.nfl_spread` off.
-  6. Wire `nfl` into cron `LEAGUES` only when preseason approaches AND
+- **NFL spread model — v1 BUILT (still gated, no deploy)**:
+  - `prediction/nflSpreadModel.ts`: vig-free moneyline → expected margin
+    via inverse normal CDF, `MARGIN_STD_DEV = 13.45`, HFA in points form
+    (`HOME_ADVANTAGE.nfl * MARGIN_STD_DEV`), `restAdvantage` adjustment
+    at `REST_ADV_POINTS_PER_DAY = 0.20`, normal CDF for cover prob,
+    output clamped to [0.05, 0.95].
+  - Wired into `scorePicks.getModel` switch as `nfl_spread`.
+  - `SPREAD_LINE_ABS_MAX.nfl = 21` (rejects alt-line / first-half / team-
+    total leakage; admits every realistic main spread).
+  - Calibration: identity sigmoid `(a=1, b=0)` until backtest tunes.
+  - Coverage: 8 unit tests in `scoring/__tests__/nflSpreadModel.test.ts`
+    pin probability sum-to-1, HFA application in points form, rest
+    adjustment direction + magnitude, clamp behavior, and pick'em HFA.
+- **Still gated**: `MARKET_DISABLED.nfl_spread = true` and `nfl` not in
+  cron `LEAGUES`. The new `nfl_spread` switch case exists so an internal
+  backtest harness can invoke the model directly without flipping the
+  production gates.
+- **Next steps before flipping the gate off**:
+  1. Backtest against a historical NFL season — measure realized cover
+     rate vs model prob in 5pt buckets, check for systematic over/under-
+     confidence, fit the calibration sigmoid against that.
+  2. Once calibration is fit, flip `MARKET_DISABLED.nfl_spread` off.
+  3. Wire `nfl` into cron `LEAGUES` only when preseason approaches AND
      the model has cleared backtest.
+  4. Future feature work (requires extending `GameFeatures`): bye-week
+     boost, divisional flag, primetime indicator, indoor/outdoor + weather.
