@@ -545,6 +545,29 @@ export const NCAAF_TEAM_ALIASES: Record<string, string> = {
   // Independents
   'Connecticut': 'UConn Huskies',
   'UConn': 'UConn Huskies',
+
+  // -----------------------------------------------------------------------
+  // Feed-form aliases (Phase A normalization, 2026-04-21).
+  //
+  // Several FBS programs are stored under one canonical key in the abbrev
+  // map (e.g. "Massachusetts Minutemen", "Louisiana-Monroe Warhawks") but
+  // arrive from upstream feeds in a different full-form spelling
+  // ("UMass Minutemen", "UL Monroe Warhawks"). Existing aliases above
+  // cover the school-only short form ("UMass", "UL Monroe") but not the
+  // school+nickname form, so the school+nickname strings fell through to
+  // the fuzzy fallback in the 2025 NCAAF backtest. The entries below are
+  // the exact strings observed in `.local/backtest-reports/ncaaf-2025.txt`
+  // that map to FBS programs.
+  //
+  // Per the football redesign plan this is FBS-coverage repair only. We
+  // explicitly do NOT add aliases for FCS opponents here — those games
+  // are intended to be filtered out of the candidate set instead.
+  'UMass Minutemen': 'Massachusetts Minutemen',
+  'UL Monroe Warhawks': 'Louisiana-Monroe Warhawks',
+  'Florida International Panthers': 'FIU Panthers',
+  'Southern Mississippi Golden Eagles': 'Southern Miss Golden Eagles',
+  'Delaware Blue Hens': 'Delaware Fightin Blue Hens',
+  'Sam Houston State Bearkats': 'Sam Houston Bearkats',
 };
 
 const ABBREV_LOOKUP: Record<string, Record<string, string>> = {
@@ -615,35 +638,69 @@ function assertAliasesResolve(
 assertNoAbbrevCollisions('ncaaf', NCAAF_TEAM_ABBREVS);
 assertAliasesResolve('ncaaf', NCAAF_TEAM_ABBREVS, NCAAF_TEAM_ALIASES);
 
-export function getTeamAbbrev(teamName: string, league: string): string {
+/**
+ * Resolution source for a team-name lookup. Exposed so that backtests and
+ * normalization-coverage tests can assert deterministic resolution
+ * (i.e. that no FBS team falls into the `'fuzzy'` bucket).
+ *
+ *   - 'canonical': exact match against the league's abbrev map.
+ *   - 'alias':     resolved via the league's alias map (deterministic).
+ *   - 'fuzzy':     last-resort heuristic ("last word, lowercased, max 4
+ *                  chars"). Unsafe for NCAAF — collapses Ohio State /
+ *                  Oklahoma State / Oregon State all to "stat".
+ */
+export type AbbrevSource = 'canonical' | 'alias' | 'fuzzy';
+
+export interface ResolvedAbbrev {
+  abbrev: string;
+  source: AbbrevSource;
+}
+
+/**
+ * Resolve a team name to an abbrev, returning both the code and the
+ * resolution path. Prefer this over `getTeamAbbrev` whenever the caller
+ * needs to enforce that fuzzy fallback never fires (e.g. backtest
+ * harnesses, NCAAF normalization-coverage tests).
+ *
+ * The resolution order matches `getTeamAbbrev`'s historical behavior so
+ * existing callers get identical abbrevs:
+ *   1. Exact canonical match.
+ *   2. Trim + canonical match.
+ *   3. Alias map (with trim).
+ *   4. Fuzzy fallback (warns once for ncaaf).
+ */
+export function resolveTeamAbbrev(
+  teamName: string,
+  league: string
+): ResolvedAbbrev {
   const abbrevMap = ABBREV_LOOKUP[league] ?? NBA_TEAM_ABBREVS;
   const aliasMap = ALIAS_LOOKUP[league];
 
   // 1. Exact canonical match (the common case for Odds API responses).
   const direct = abbrevMap[teamName];
-  if (direct) return direct;
+  if (direct) return { abbrev: direct, source: 'canonical' };
 
-  // 2. Trim + alias resolution. The trim handles whitespace coming from
-  //    historical CSV imports; alias resolution handles "Ohio St" /
-  //    "OSU" / "Miami (FL)" variants.
+  // 2. Trim + canonical match. Handles whitespace from historical CSVs.
   const trimmed = teamName.trim();
   if (trimmed !== teamName) {
     const trimmedDirect = abbrevMap[trimmed];
-    if (trimmedDirect) return trimmedDirect;
+    if (trimmedDirect) return { abbrev: trimmedDirect, source: 'canonical' };
   }
+
+  // 3. Alias resolution. Handles "Ohio St" / "OSU" / "Miami (FL)" /
+  //    feed-form variants like "UMass Minutemen" → "Massachusetts Minutemen".
   if (aliasMap) {
     const canonical = aliasMap[trimmed] ?? aliasMap[teamName];
     if (canonical) {
       const viaAlias = abbrevMap[canonical];
-      if (viaAlias) return viaAlias;
+      if (viaAlias) return { abbrev: viaAlias, source: 'alias' };
     }
   }
 
-  // 3. Last-resort fuzzy fallback (last word, lowercased, max 4 chars).
-  //    Retained for backward compat with leagues that don't maintain a
-  //    full map (e.g. ncaam) and to avoid throwing on unknown inputs.
-  //    For ncaaf this should rarely fire in practice and is a signal
-  //    that an alias is missing — log so backtests can spot regressions.
+  // 4. Last-resort fuzzy fallback. Retained for back-compat with leagues
+  //    that don't maintain a full map (e.g. ncaam) and to avoid throwing
+  //    on unknown inputs. For ncaaf this should never fire on FBS teams
+  //    in production — it's a signal that an alias is missing.
   if (league === 'ncaaf') {
     // eslint-disable-next-line no-console
     console.warn(
@@ -652,7 +709,11 @@ export function getTeamAbbrev(teamName: string, league: string): string {
     );
   }
   const word = trimmed.split(' ').pop() ?? trimmed;
-  return word.toLowerCase().slice(0, 4);
+  return { abbrev: word.toLowerCase().slice(0, 4), source: 'fuzzy' };
+}
+
+export function getTeamAbbrev(teamName: string, league: string): string {
+  return resolveTeamAbbrev(teamName, league).abbrev;
 }
 
 // Full team lists for synthetic data generation

@@ -283,13 +283,32 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
   mostly FCS opponents in week-1 FBS-vs-FCS games (Idaho State, Sam Houston,
   Lafayette, Delaware, etc.). Full report: `.local/backtest-reports/SUMMARY.md`
   + `ncaaf-2025.txt`. Reproduce: `pnpm --filter @workspace/scripts run football-backtest-report -- --league ncaaf --start 2025-08-23 --end 2026-01-13`.
-- **Next steps before any future re-evaluation**:
-  1. Add the FCS opponents that appeared in 2025 to `NCAAF_TEAM_ABBREVS`
-     (or `NCAAF_TEAM_ALIASES` if they collide), or filter FBS-vs-FCS
-     games out of the candidate set.
-  2. Investigate the inverted tier signal — likely a feature-engineering
+- **Phase A normalization repair COMPLETE (2026-04-21)**:
+  Football redesign plan: `.local/football-redesign-plan.md`. Phase A added
+  6 feed-form aliases for FBS programs whose canonical key didn't match
+  the upstream feed string ("UMass Minutemen" → "Massachusetts Minutemen",
+  "UL Monroe Warhawks" → "Louisiana-Monroe Warhawks", "Florida International
+  Panthers" → "FIU Panthers", "Southern Mississippi Golden Eagles" →
+  "Southern Miss Golden Eagles", "Delaware Blue Hens" → "Delaware Fightin
+  Blue Hens", "Sam Houston State Bearkats" → "Sam Houston Bearkats").
+  New `resolveTeamAbbrev()` helper exposes resolution path
+  ('canonical' | 'alias' | 'fuzzy'); `getTeamAbbrev()` is now a thin
+  wrapper for back-compat. Four new invariants in
+  `src/scoring/__tests__/ncaafTeamAbbreviations.test.ts` (now wired into
+  the `api-tests` workflow): every canonical key resolves via 'canonical',
+  every alias resolves via 'alias', the 2025-backtest fuzzy-fallback FBS
+  fixture resolves non-fuzzy, and FCS strings are still reported as 'fuzzy'
+  for back-compat. Per the redesign plan, FCS coverage is intentionally
+  NOT expanded — FBS-vs-FCS games will be filtered out of future candidate
+  sets at build time instead.
+- **Remaining steps before any future re-evaluation**:
+  1. Filter FBS-vs-FCS games out of the candidate-build path (Phase B).
+  2. NFL feature redesign pass (next): drop double-counted HFA, add real
+     independent features (rest, ATS form, recent points-differential).
+  3. Investigate the inverted tier signal — likely a feature-engineering
      or calibration bug, not a tier-threshold bug.
-  3. Re-run the report, then revisit the gate.
+  4. Re-run the report against two independent windows; only then revisit
+     the gate.
 
 ### NFL Phase 0.75E — Foundation prep (branch only, hidden, NO DEPLOY, no live ingest yet)
 - **Scope**: planning + foundation scaffolding only. No models built yet.

@@ -18,7 +18,29 @@ import {
   NCAAF_TEAM_ABBREVS,
   NCAAF_TEAM_ALIASES,
   getTeamAbbrev,
+  resolveTeamAbbrev,
 } from "../../lib/teamAbbreviations";
+
+/**
+ * The exact FBS-program team strings that fell through to the fuzzy
+ * fallback in the 2025 NCAAF backtest (`.local/backtest-reports/ncaaf-2025.txt`).
+ *
+ * Phase A normalization repair (2026-04-21) added feed-form aliases for
+ * each of these. This fixture pins them as a regression guard: any future
+ * change that re-breaks deterministic resolution for these strings must
+ * fail the test. FCS-only opponents from the same fuzzy list are
+ * deliberately excluded — the football redesign plan calls for filtering
+ * FBS-vs-FCS games out of the candidate set rather than expanding the
+ * canonical map to all ~250 FCS schools.
+ */
+const NCAAF_FBS_FEED_FUZZY_FIXTURE_2025: Array<[string, string]> = [
+  ["UMass Minutemen", "mass"],
+  ["UL Monroe Warhawks", "ulm"],
+  ["Florida International Panthers", "fiu"],
+  ["Southern Mississippi Golden Eagles", "sou"],
+  ["Delaware Blue Hens", "del"],
+  ["Sam Houston State Bearkats", "sam"],
+];
 
 test("ncaaf abbrev map has no collisions (every abbrev unique within league)", () => {
   const seen = new Map<string, string>();
@@ -130,4 +152,88 @@ test("Odds API canonical names resolve directly without fuzzy fallback", () => {
 test("getTeamAbbrev tolerates surrounding whitespace", () => {
   assert.equal(getTeamAbbrev("  Ohio State Buckeyes  ", "ncaaf"), "ohst");
   assert.equal(getTeamAbbrev("  Ohio St  ", "ncaaf"), "ohst");
+});
+
+// ---------------------------------------------------------------------------
+// Phase A normalization invariants (2026-04-21)
+//
+// These tests pin two guarantees that the football redesign plan calls for
+// before any future NCAAF backtest is allowed to run:
+//   1. Every canonical FBS entry resolves via `source: 'canonical'` (no
+//      silent fuzzy collapse on the canonical map itself).
+//   2. The exact feed-form strings observed in the 2025 backtest fuzzy
+//      bucket — the FBS subset — now resolve via `'canonical'` or
+//      `'alias'` (NOT `'fuzzy'`).
+// ---------------------------------------------------------------------------
+
+test("every NCAAF_TEAM_ABBREVS canonical key resolves via source='canonical'", () => {
+  for (const [team, expected] of Object.entries(NCAAF_TEAM_ABBREVS)) {
+    const resolved = resolveTeamAbbrev(team, "ncaaf");
+    assert.equal(
+      resolved.source,
+      "canonical",
+      `canonical key "${team}" should resolve via 'canonical', got '${resolved.source}'`
+    );
+    assert.equal(resolved.abbrev, expected);
+  }
+});
+
+test("every NCAAF_TEAM_ALIASES alias resolves via source='alias' to its canonical abbrev", () => {
+  for (const [alias, canonical] of Object.entries(NCAAF_TEAM_ALIASES)) {
+    const resolved = resolveTeamAbbrev(alias, "ncaaf");
+    assert.equal(
+      resolved.source,
+      "alias",
+      `alias "${alias}" should resolve via 'alias', got '${resolved.source}'`
+    );
+    assert.equal(
+      resolved.abbrev,
+      NCAAF_TEAM_ABBREVS[canonical],
+      `alias "${alias}" should produce abbrev for canonical "${canonical}"`
+    );
+  }
+});
+
+test("2025 backtest FBS-feed-form fuzzy strings now resolve deterministically (no fuzzy)", () => {
+  for (const [feedName, expectedAbbrev] of NCAAF_FBS_FEED_FUZZY_FIXTURE_2025) {
+    const resolved = resolveTeamAbbrev(feedName, "ncaaf");
+    assert.notEqual(
+      resolved.source,
+      "fuzzy",
+      `feed-form name "${feedName}" still falls through to fuzzy; ` +
+        `add a NCAAF_TEAM_ALIASES entry pointing at the canonical key.`
+    );
+    assert.equal(
+      resolved.abbrev,
+      expectedAbbrev,
+      `feed-form name "${feedName}" should resolve to "${expectedAbbrev}", ` +
+        `got "${resolved.abbrev}" via source='${resolved.source}'`
+    );
+  }
+});
+
+test("resolveTeamAbbrev reports 'fuzzy' for genuinely-unknown FCS strings (back-compat)", () => {
+  // FCS schools are intentionally NOT in the canonical map. The fuzzy
+  // path must still return a value (no throw) so production code is
+  // resilient, but it must be reported as 'fuzzy' so callers can detect
+  // and filter these games. The opposite behavior — silently treating
+  // an unknown school as canonical — would be a worse regression.
+  const fcsExamples = [
+    "Bucknell Bison",
+    "Holy Cross Crusaders",
+    "William and Mary Tribe",
+    "Bryant Bulldogs",
+  ];
+  for (const name of fcsExamples) {
+    const resolved = resolveTeamAbbrev(name, "ncaaf");
+    assert.equal(
+      resolved.source,
+      "fuzzy",
+      `FCS-style name "${name}" should be reported as 'fuzzy', got '${resolved.source}'`
+    );
+    assert.ok(
+      resolved.abbrev.length >= 1 && resolved.abbrev.length <= 4,
+      `fuzzy abbrev "${resolved.abbrev}" out of expected length range`
+    );
+  }
 });

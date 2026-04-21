@@ -26,22 +26,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "api-tests"
+args = "api-typecheck-baseline"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "api-typecheck-baseline"
-
-[[workflows.workflow]]
-name = "api-tests"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts"
-
-[workflows.workflow.metadata]
-isValidation = true
+args = "api-tests"
 
 [[workflows.workflow]]
 name = "api-typecheck-baseline"
@@ -53,6 +42,17 @@ args = "bash -c 'errs=$(pnpm --filter @workspace/api-server exec tsc --noEmit 2>
 
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow]]
+name = "api-tests"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts src/scoring/__tests__/ncaafTeamAbbreviations.test.ts"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"
