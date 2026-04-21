@@ -108,10 +108,48 @@ export const MLB_TEAM_ABBREVS: Record<string, string> = {
   'Washington Nationals': 'wsh',
 };
 
+// NFL team abbreviations — Phase 0.75E foundation (branch only, no live ingest yet,
+// hidden from public surface). All 32 franchises with current locations.
+export const NFL_TEAM_ABBREVS: Record<string, string> = {
+  'Buffalo Bills': 'buf',
+  'Miami Dolphins': 'mia',
+  'New England Patriots': 'ne',
+  'New York Jets': 'nyj',
+  'Baltimore Ravens': 'bal',
+  'Cincinnati Bengals': 'cin',
+  'Cleveland Browns': 'cle',
+  'Pittsburgh Steelers': 'pit',
+  'Houston Texans': 'hou',
+  'Indianapolis Colts': 'ind',
+  'Jacksonville Jaguars': 'jax',
+  'Tennessee Titans': 'ten',
+  'Denver Broncos': 'den',
+  'Kansas City Chiefs': 'kc',
+  'Las Vegas Raiders': 'lv',
+  'Los Angeles Chargers': 'lac',
+  'Dallas Cowboys': 'dal',
+  'New York Giants': 'nyg',
+  'Philadelphia Eagles': 'phi',
+  'Washington Commanders': 'was',
+  'Chicago Bears': 'chi',
+  'Detroit Lions': 'det',
+  'Green Bay Packers': 'gb',
+  'Minnesota Vikings': 'min',
+  'Atlanta Falcons': 'atl',
+  'Carolina Panthers': 'car',
+  'New Orleans Saints': 'no',
+  'Tampa Bay Buccaneers': 'tb',
+  'Arizona Cardinals': 'ari',
+  'Los Angeles Rams': 'lar',
+  'San Francisco 49ers': 'sf',
+  'Seattle Seahawks': 'sea',
+};
+
 const ABBREV_LOOKUP: Record<string, Record<string, string>> = {
   nba: NBA_TEAM_ABBREVS,
   nhl: NHL_TEAM_ABBREVS,
   mlb: MLB_TEAM_ABBREVS,
+  nfl: NFL_TEAM_ABBREVS,
 };
 
 export function getTeamAbbrev(teamName: string, league: string): string {
@@ -127,3 +165,4 @@ export function getTeamAbbrev(teamName: string, league: string): string {
 export const NBA_TEAMS: TeamInfo[] = Object.entries(NBA_TEAM_ABBREVS).map(([name, abbrev]) => ({ name, abbrev }));
 export const NHL_TEAMS: TeamInfo[] = Object.entries(NHL_TEAM_ABBREVS).map(([name, abbrev]) => ({ name, abbrev }));
 export const MLB_TEAMS: TeamInfo[] = Object.entries(MLB_TEAM_ABBREVS).map(([name, abbrev]) => ({ name, abbrev }));
+export const NFL_TEAMS: TeamInfo[] = Object.entries(NFL_TEAM_ABBREVS).map(([name, abbrev]) => ({ name, abbrev }));

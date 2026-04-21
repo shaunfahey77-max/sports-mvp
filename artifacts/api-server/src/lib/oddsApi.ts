@@ -7,6 +7,12 @@ export const SPORT_KEYS: Record<string, string> = {
   nba: "basketball_nba",
   nhl: "icehockey_nhl",
   mlb: "baseball_mlb",
+  // NFL Phase 0.75E foundation: registered for future ingest only.
+  // The cron LEAGUES list intentionally does NOT include "nfl" yet —
+  // adding it would burn API credits hitting empty offseason endpoints
+  // (NFL preseason starts ~early August 2026). Wire into cron once the
+  // nfl_spread model lands and preseason approaches.
+  nfl: "americanfootball_nfl",
 };
 
 export interface OddsOutcome {

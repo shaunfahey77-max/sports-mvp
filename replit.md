@@ -215,3 +215,46 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - **Settlement safety**: `runNightlyValidation` snapshot match now requires
   both home AND away team match (mirrors ESPN backstop), preventing MLB
   doubleheader collisions. Benefits NBA/NHL too.
+
+### MLB Shadow-Mode KPI Report (internal validation, NO DEPLOY)
+- **Run**: `pnpm --filter @workspace/scripts exec tsx src/mlbShadowReport.ts`
+  (or `pnpm --filter @workspace/scripts run mlb-shadow-report`).
+- **Args**: `[--start YYYY-MM-DD] [--end YYYY-MM-DD] [--json-only]`.
+- **What it covers**: daily candidate vs surfaced funnel; W-L-P, ROI, win
+  rate, Brier on settled `scored_picks`; edge percentiles + histogram across
+  all candidates; calibration buckets (model_prob → realized win rate); tier
+  counts; selection-reason breakdown.
+- **Read-only**: queries `candidate_bets` + `scored_picks` for `league='mlb'`
+  only. Does not write the DB and never touches public route code.
+- **Unit tests**: `scripts/src/__tests__/mlbShadowReport.test.ts`.
+
+### NFL Phase 0.75E — Foundation prep (branch only, hidden, NO DEPLOY, no live ingest yet)
+- **Scope**: planning + foundation scaffolding only. No models built yet.
+  Spread will be the first market wired (per project direction); moneyline
+  and total deferred.
+- **Public visibility**: `DEFAULT_PRODUCTION_LEAGUES` unchanged. NFL is
+  also kept out of `cronService` `LEAGUES` to avoid burning Odds API
+  credits on offseason endpoints (NFL preseason ~early August 2026).
+  Regression-guarded by `src/scoring/__tests__/nflVisibility.test.ts`.
+- **Wiring**: `SPORT_KEYS.nfl=americanfootball_nfl`,
+  `ESPN_SPORT_PATH.nfl=football/nfl`, `NFL_TEAM_ABBREVS` (32 teams),
+  `featureEngine` ABBREV_LOOKUP entry, `League` type, placeholder
+  `HOME_ADVANTAGE.nfl=0.045` (~2.5pt HFA in prob terms — to be tuned
+  against backtest).
+- **Gating**: `MARKET_DISABLED` keeps `nfl_spread`, `nfl_moneyline`,
+  `nfl_total` all `true`. `LEAGUE_MARKET_QUALITY.nfl` set to inert 0.10
+  across the board until evidence justifies otherwise.
+- **Next steps for NFL spread build (when ready)**:
+  1. Add NFL spread features to `featureEngine.ts` (rest days incl. Thu/Mon
+     short weeks, bye, primetime indicator, divisional flag, indoor/outdoor +
+     weather where available).
+  2. Build `nflSpreadModel.ts` mirroring `nhlSpreadModel.ts` shape: vig-free
+     market anchor → expected margin via `probToMargin`, NFL-specific margin
+     std dev (~13.5 pts historically), HFA in points form, then normal CDF
+     for cover probability.
+  3. Add NFL spread plausibility ranges (`SPREAD_LINE_ABS_MAX.nfl` ≈ 21).
+  4. Add `nfl_spread` calibration entry, identity sigmoid initially.
+  5. Backtest against a historical NFL season before flipping
+     `MARKET_DISABLED.nfl_spread` off.
+  6. Wire `nfl` into cron `LEAGUES` only when preseason approaches AND
+     the model has cleared backtest.

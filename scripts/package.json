@@ -8,8 +8,9 @@
     "seed-products": "tsx ./src/seed-products.ts",
     "backfill-validation-metrics": "tsx ./src/backfill-validation-metrics.ts",
     "kpi-report": "tsx ./src/kpiReport.ts",
+    "mlb-shadow-report": "tsx ./src/mlbShadowReport.ts",
     "label-pre-fix": "tsx ./src/label-pre-fix-validation-metrics.ts",
-    "test": "tsx --test ./src/__tests__/kpiParity.test.ts ./src/__tests__/publicTrackRecordCutoff.test.ts",
+    "test": "tsx --test ./src/__tests__/kpiParity.test.ts ./src/__tests__/publicTrackRecordCutoff.test.ts ./src/__tests__/mlbShadowReport.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
