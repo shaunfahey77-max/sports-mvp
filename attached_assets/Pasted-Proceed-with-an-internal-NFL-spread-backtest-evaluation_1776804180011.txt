@@ -1,0 +1,80 @@
+Proceed with an internal NFL spread backtest/evaluation pass.
+
+Goal:
+Evaluate the new NFL spread model v1 internally before any gate flip, cron enablement, or public exposure.
+
+Guardrails:
+- branch only
+- no deploy
+- keep NFL spread gated
+- keep NFL out of cron
+- preserve NBA/NHL/MLB/NCAAF behavior
+- no frontend changes unless strictly needed for internal reporting
+- if a shared-file change risks regressions, stop and show the diff first
+
+Scope:
+- internal-only backtest/evaluation
+- no public enablement
+- no totals or moneyline
+- no feature-expansion pass yet beyond what is required to evaluate the current v1 model honestly
+
+Tasks:
+1. Build or extend an internal backtest harness for NFL spread
+- use existing internal simulation / evaluation patterns where possible
+- run the NFL spread model against historical NFL game data already available in the codebase or connected data sources
+- do not invent synthetic performance
+
+2. Produce an internal evaluation report for NFL spread
+Include:
+- total games evaluated
+- surfaced picks count
+- pass rate
+- candidate-to-surfaced conversion rate
+- win/loss/push counts
+- win rate
+- units won
+- ROI
+- avg implied probability
+- avg model probability
+- avg edge
+- avg EV
+- brier score
+- log loss
+- calibration buckets
+- Tier A / Tier B / Tier C counts if tiers are used in the backtest
+- any red-flag counts (extreme edge, implausible lines, blocked picks)
+
+3. Review calibration honesty
+- compare model probability vs realized outcomes by probability bucket
+- identify whether identity calibration is acceptable as a starting point or obviously too aggressive
+- do not blindly add shrinkage unless the evidence clearly supports it
+
+4. Evaluate surface viability
+- determine whether NFL spread v1 surfaces enough candidates to be product-viable
+- determine whether it is too loose, too tight, or directionally reasonable
+
+5. Keep the runtime safe
+- do not enable NFL on public routes
+- do not add NFL to cron
+- do not ungate NFL spread in production-facing behavior
+
+Deliverables:
+1. exact files changed
+2. exact commands run
+3. validation / test / typecheck results
+4. the NFL spread backtest report
+5. a verdict:
+   - viable as-is
+   - viable with tuning
+   - not viable yet
+6. recommended next action:
+   - keep gated
+   - tune calibration
+   - tune thresholds
+   - expand feature set
+
+Acceptance:
+- internal backtest/evaluation exists
+- no regressions in existing leagues
+- NFL remains hidden/gated
+- no deploy

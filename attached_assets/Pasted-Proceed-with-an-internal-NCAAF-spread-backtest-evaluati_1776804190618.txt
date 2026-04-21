@@ -1,0 +1,88 @@
+Proceed with an internal NCAAF spread backtest/evaluation pass.
+
+Goal:
+Evaluate the new NCAAF spread model v1 internally before any gate flip, cron enablement, or public exposure.
+
+Guardrails:
+- branch only
+- no deploy
+- keep NCAAF spread gated
+- keep NCAAF out of cron
+- preserve NBA/NHL/MLB/NFL behavior
+- no frontend changes unless strictly needed for internal reporting
+- if a shared-file change risks regressions, stop and show the diff first
+
+Scope:
+- internal-only backtest/evaluation
+- no public enablement
+- no totals or moneyline
+- do not expand to a full board if the market-quality subset needs to stay narrow
+- use the new deterministic normalization as the source of truth
+
+Tasks:
+1. Build or extend an internal backtest harness for NCAAF spread
+- use existing internal simulation / evaluation patterns where possible
+- run the NCAAF spread model against historical college football game data already available in the codebase or connected data sources
+- if full-board quality is too noisy, support an internal subset view (for example higher-liquidity / major-market games) but report that explicitly
+
+2. Produce an internal evaluation report for NCAAF spread
+Include:
+- total games evaluated
+- surfaced picks count
+- pass rate
+- candidate-to-surfaced conversion rate
+- win/loss/push counts
+- win rate
+- units won
+- ROI
+- avg implied probability
+- avg model probability
+- avg edge
+- avg EV
+- brier score
+- log loss
+- calibration buckets
+- Tier A / Tier B / Tier C counts if tiers are used in the backtest
+- red-flag counts (extreme edge, implausible lines, normalization mismatches, blocked picks)
+
+3. Validate normalization quality in the backtest
+- explicitly confirm deterministic team normalization handled historical data cleanly
+- report any alias misses, collisions, or fallback warnings
+- if fallback is used, quantify how often and on which teams
+
+4. Review calibration honesty
+- compare model probability vs realized outcomes by bucket
+- determine whether identity calibration is acceptable as a starting point or clearly too optimistic
+
+5. Evaluate market viability
+- determine whether NCAAF spread v1 is viable on the full board or only on a narrowed subset
+- determine whether surface rate is realistic for a public product
+
+6. Keep the runtime safe
+- do not enable NCAAF on public routes
+- do not add NCAAF to cron
+- do not ungate NCAAF spread in production-facing behavior
+
+Deliverables:
+1. exact files changed
+2. exact commands run
+3. validation / test / typecheck results
+4. the NCAAF spread backtest report
+5. a verdict:
+   - viable as-is
+   - viable with tuning
+   - viable only on a narrowed subset
+   - not viable yet
+6. recommended next action:
+   - keep gated
+   - tune calibration
+   - tune thresholds
+   - narrow the market universe
+   - expand feature set
+
+Acceptance:
+- internal backtest/evaluation exists
+- normalization quality is explicitly reported
+- no regressions in existing leagues
+- NCAAF remains hidden/gated
+- no deploy
