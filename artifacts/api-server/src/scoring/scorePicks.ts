@@ -120,6 +120,11 @@ async function getModel(league: League, marketType: MarketType): Promise<ModelFn
       // This case exists so internal backtest harnesses can invoke the
       // model directly without flipping the production gates.
       return (await import("../prediction/nflSpreadModel")).predict;
+    case "ncaaf_spread":
+      // NCAAF Phase 0.75F: same posture as nfl_spread — model is built
+      // for backtest invocation only. MARKET_DISABLED.ncaaf_spread = true
+      // and ncaaf is not in cron LEAGUES.
+      return (await import("../prediction/ncaafSpreadModel")).predict;
     default:
       throw new Error(`No model for ${league}_${marketType}`);
   }

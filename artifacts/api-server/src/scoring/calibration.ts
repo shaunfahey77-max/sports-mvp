@@ -56,6 +56,12 @@ export const DEFAULT_CALIBRATION_PARAMS: Record<string, Record<string, Calibrati
   nfl: {
     spread: { method: "sigmoid", version: "v1", sigmoidA: 1.0, sigmoidB: 0.0 },
   },
+  // NCAAF Phase 0.75F foundation: identity sigmoid for spread, same
+  // rationale as nfl. Market remains gated via
+  // MARKET_DISABLED.ncaaf_spread = true.
+  ncaaf: {
+    spread: { method: "sigmoid", version: "v1", sigmoidA: 1.0, sigmoidB: 0.0 },
+  },
 };
 
 function defaultIsotonicBuckets(): Array<{ low: number; high: number; calibrated: number }> {

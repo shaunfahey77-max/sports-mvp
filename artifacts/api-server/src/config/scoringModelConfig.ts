@@ -107,6 +107,11 @@ export const SPREAD_LINE_ABS_MAX: Partial<Record<string, number>> = {
   // leakage while admitting every realistic main spread including the
   // rare blowout favorites.
   nfl: 21,
+  // NCAAF Phase 0.75F: main spread runs much wider than NFL — top-25 vs
+  // FBS minnows routinely posts -35 to -45. Cap at ±50 to admit every
+  // realistic main spread while still rejecting alt-line / first-half /
+  // team-total leakage.
+  ncaaf: 50,
 };
 export const TOTAL_LINE_RANGE: Partial<Record<string, { min: number; max: number }>> = {
   nba: { min: 180, max: 280 },
