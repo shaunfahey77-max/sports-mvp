@@ -5,7 +5,9 @@
  * API for a date range, runs the scoring model, grades results, and stores
  * in scored_picks.
  *
- * Odds API credit usage: ~10 credits per historical odds call.
+ * Odds API credit usage: ~30 credits per historical odds call (verified
+ * empirically 2026-04 — earlier 10-credit estimate was stale; the
+ * historical endpoint costs more than the current/upcoming endpoints).
  * ESPN scores API: free, no key required.
  */
 

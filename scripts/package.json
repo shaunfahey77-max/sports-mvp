@@ -9,8 +9,11 @@
     "backfill-validation-metrics": "tsx ./src/backfill-validation-metrics.ts",
     "kpi-report": "tsx ./src/kpiReport.ts",
     "mlb-shadow-report": "tsx ./src/mlbShadowReport.ts",
+    "football-backtest-report": "tsx ./src/footballBacktestReport.ts",
+    "run-football-historical-ingest": "tsx ./src/runFootballHistoricalIngest.ts",
+    "probe-odds-api-historical": "tsx ./src/probeOddsApiHistorical.ts",
     "label-pre-fix": "tsx ./src/label-pre-fix-validation-metrics.ts",
-    "test": "tsx --test ./src/__tests__/kpiParity.test.ts ./src/__tests__/publicTrackRecordCutoff.test.ts ./src/__tests__/mlbShadowReport.test.ts",
+    "test": "tsx --test ./src/__tests__/kpiParity.test.ts ./src/__tests__/publicTrackRecordCutoff.test.ts ./src/__tests__/mlbShadowReport.test.ts ./src/__tests__/footballBacktestReport.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

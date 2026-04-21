@@ -276,17 +276,20 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
   not in cron `LEAGUES`. The new `ncaaf_spread` switch case exists so
   an internal backtest harness can invoke the model directly without
   flipping the production gates.
-- **Next steps before flipping the gate off**:
-  1. Backtest against a historical NCAAF season — measure realized
-     cover rate vs model prob in 5pt buckets, check for systematic
-     over/under-confidence (especially in the long tail of huge
-     spreads), fit the calibration sigmoid against that.
-  2. Once calibration is fit, flip `MARKET_DISABLED.ncaaf_spread` off.
-  3. Wire `ncaaf` into cron `LEAGUES` only when preseason approaches
-     AND the model has cleared backtest.
-  4. Future feature work (requires extending `GameFeatures`):
-     bye-week boost, ranked-vs-unranked indicator, conference-strength
-     adjustment, neutral-site flag, weather, primetime.
+- **Backtest result (2025 season, 670 games, 1340 candidates) — KEEP GATED**:
+  ROI -1.3%, win rate 50.5%, Brier 0.2514 (≈ baseline 0.250), tier signal
+  inverted (Tier C +1.7% ROI > Tier A +0.3% ROI). Plus normalization gap:
+  68 of 198 unique team strings (34%) fell through to fuzzy matching —
+  mostly FCS opponents in week-1 FBS-vs-FCS games (Idaho State, Sam Houston,
+  Lafayette, Delaware, etc.). Full report: `.local/backtest-reports/SUMMARY.md`
+  + `ncaaf-2025.txt`. Reproduce: `pnpm --filter @workspace/scripts run football-backtest-report -- --league ncaaf --start 2025-08-23 --end 2026-01-13`.
+- **Next steps before any future re-evaluation**:
+  1. Add the FCS opponents that appeared in 2025 to `NCAAF_TEAM_ABBREVS`
+     (or `NCAAF_TEAM_ALIASES` if they collide), or filter FBS-vs-FCS
+     games out of the candidate set.
+  2. Investigate the inverted tier signal — likely a feature-engineering
+     or calibration bug, not a tier-threshold bug.
+  3. Re-run the report, then revisit the gate.
 
 ### NFL Phase 0.75E — Foundation prep (branch only, hidden, NO DEPLOY, no live ingest yet)
 - **Scope**: planning + foundation scaffolding only. No models built yet.
@@ -321,12 +324,33 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
   cron `LEAGUES`. The new `nfl_spread` switch case exists so an internal
   backtest harness can invoke the model directly without flipping the
   production gates.
-- **Next steps before flipping the gate off**:
-  1. Backtest against a historical NFL season — measure realized cover
-     rate vs model prob in 5pt buckets, check for systematic over/under-
-     confidence, fit the calibration sigmoid against that.
-  2. Once calibration is fit, flip `MARKET_DISABLED.nfl_spread` off.
-  3. Wire `nfl` into cron `LEAGUES` only when preseason approaches AND
-     the model has cleared backtest.
-  4. Future feature work (requires extending `GameFeatures`): bye-week
+- **Backtest result (2025 season, 225 games, 450 candidates) — KEEP GATED**:
+  ROI **-6.2%**, win rate 47.2% (vs 52.4% break-even), Brier 0.2565 (≈ baseline
+  0.250), Tier C catastrophic at -23.6% ROI. avg model prob = 0.500 vs avg
+  implied prob = 0.510 — model isn't picking up the home-favoritism asymmetry
+  the market prices in. Calibration is centered correctly in [0.45, 0.55]
+  but tails are tiny. Full report: `.local/backtest-reports/SUMMARY.md`
+  + `nfl-2025.txt`. Reproduce: `pnpm --filter @workspace/scripts run football-backtest-report -- --league nfl --start 2025-09-01 --end 2026-02-10`.
+- **Next steps before any future re-evaluation**:
+  1. Investigate why avg model prob centers exactly on 0.500 — model is
+     not learning the home-side bias the market reflects.
+  2. Future feature work (requires extending `GameFeatures`): bye-week
      boost, divisional flag, primetime indicator, indoor/outdoor + weather.
+  3. Re-run the report before considering any gate flip.
+
+### Backtest tooling (added Apr 2026)
+- `scripts/src/footballBacktestReport.ts` — read-only NFL/NCAAF backtest
+  report that runs the gated v1 spread models against `game_snapshots`,
+  bypasses `MARKET_DISABLED` for tier assignment ONLY (production
+  `assignTier` unchanged), grades against final scores, and emits the
+  full metric suite (ROI, Brier, log loss, calibration buckets, tier
+  breakdown, edge percentiles, red flags, NCAAF normalization audit).
+  Tests: `scripts/src/__tests__/footballBacktestReport.test.ts` (8 unit
+  tests for `shadowAssignTier`, `auditNcaafNormalization`, `pct`).
+- `scripts/src/runFootballHistoricalIngest.ts` + `probeOddsApiHistorical.ts`
+  — internal tools for populating snapshots via Odds API historical
+  endpoint (30 credits/call). Production cron is unchanged.
+- Historical-ingest snapshots write *before* scoring fires, so the
+  "No model for nfl_moneyline" / "ncaaf_moneyline" errors at the
+  scoring stage are harmless for backtest purposes — snapshots persist,
+  the backtest report does its own scoring/grading from snapshots.
