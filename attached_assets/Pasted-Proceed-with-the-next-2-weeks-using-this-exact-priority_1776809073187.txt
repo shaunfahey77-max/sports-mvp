@@ -1,0 +1,87 @@
+Proceed with the next 2 weeks using this exact priority order.
+
+Overall rule:
+- no deploy
+- no public enablement of new leagues
+- no ungating NFL/NCAAF
+- preserve current production posture
+- keep branch work disciplined and evidence-driven
+
+Priority 1 — NHL/NBA post-tuning launch decision
+Goal:
+Get the first meaningful post-tuning settled report for the current candidate branch and determine whether NHL/NBA are launchable.
+
+Tasks:
+- keep waiting for enough settled post-tuning picks
+- rerun the post-tuning-only KPI report when the sample is meaningful
+- bring back:
+  1. post-tuning-only NHL/NBA summary
+  2. by-market breakdown
+  3. Tier A vs Tier B comparison
+  4. nba_spread viability call
+  5. nhl_spread Tier A improvement call
+  6. nhl_total gate confirmation
+
+Decision:
+- no launch recommendation until that report exists
+
+Priority 2 — MLB shadow-mode accumulation
+Goal:
+Use MLB as the near-term expansion candidate and accumulate internal evidence without public exposure.
+
+Tasks:
+- keep MLB hidden from public-facing routes
+- continue daily mlb-shadow-report runs
+- track:
+  - candidate count
+  - surfaced count
+  - pass rate
+  - edge distribution
+  - settlement results
+  - calibration buckets
+  - tier distribution
+- once enough sample exists, bring back an MLB shadow-mode evaluation summary and recommendation:
+  - keep shadow-only
+  - tune
+  - or prepare for internal enablement review
+
+Priority 3 — Football redesign planning
+Goal:
+Shift NFL and NCAAF from release mode to redesign mode.
+
+NFL redesign tasks:
+- diagnose why nfl_spread v1 centers near 0.500
+- inspect raw model probability distribution before calibration
+- compare model probability vs market implied probability by spread bucket
+- identify missing directional features
+- propose a concrete feature-improvement plan before any second backtest
+
+NCAAF redesign tasks:
+- reduce the 34% fuzzy-fallback problem
+- address FCS/opponent coverage explicitly
+- improve deterministic normalization and alias coverage
+- decide whether future NCAAF backtests should be:
+  - full-board
+  - or narrowed subset only
+
+Deliverable:
+- one football redesign plan covering:
+  - NFL diagnosis
+  - NFL next feature set
+  - NCAAF normalization/data plan
+  - NCAAF market-scope recommendation
+  - re-backtest conditions for both leagues
+
+Priority 4 — No new drift
+Do not:
+- retune NHL/NBA blindly while waiting
+- ungate NFL/NCAAF
+- publicly expose MLB
+- broaden launch scope
+- spend time on cosmetic frontend work unless it directly supports internal evaluation
+
+Expected outputs over the next 2 weeks:
+1. meaningful NHL/NBA post-tuning KPI decision report
+2. MLB shadow-mode evidence summary
+3. football redesign plan
+4. no deploy unless the evidence clearly supports it
