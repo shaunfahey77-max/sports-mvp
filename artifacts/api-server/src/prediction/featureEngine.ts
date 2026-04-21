@@ -20,11 +20,12 @@ import { db } from "@workspace/db";
 import { gameSnapshotsTable } from "@workspace/db";
 import { and, eq, gte, lt } from "drizzle-orm";
 import type { GameMarketInput, GameFeatures } from "../scoring/scorePicks";
-import { NBA_TEAM_ABBREVS, NHL_TEAM_ABBREVS } from "../lib/teamAbbreviations";
+import { NBA_TEAM_ABBREVS, NHL_TEAM_ABBREVS, MLB_TEAM_ABBREVS } from "../lib/teamAbbreviations";
 
 const ABBREV_LOOKUP: Record<string, Record<string, string>> = {
   nba: NBA_TEAM_ABBREVS,
   nhl: NHL_TEAM_ABBREVS,
+  mlb: MLB_TEAM_ABBREVS,
 };
 
 function getAbbrev(teamName: string, league: string): string {

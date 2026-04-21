@@ -112,6 +112,8 @@ async function getModel(league: League, marketType: MarketType): Promise<ModelFn
       return (await import("../prediction/nhlSpreadModel")).predict;
     case "nhl_total":
       return (await import("../prediction/nhlTotalModel")).predict;
+    case "mlb_moneyline":
+      return (await import("../prediction/mlbMoneylineModel")).predict;
     default:
       throw new Error(`No model for ${league}_${marketType}`);
   }

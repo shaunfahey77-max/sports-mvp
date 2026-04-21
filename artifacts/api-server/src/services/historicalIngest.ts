@@ -27,6 +27,7 @@ const MARKETS: MarketType[] = ["moneyline", "spread", "total"];
 const ESPN_SPORT_PATH: Record<string, string> = {
   nba: "basketball/nba",
   nhl: "hockey/nhl",
+  mlb: "baseball/mlb",
 };
 
 function addDays(dateStr: string, n: number): string {

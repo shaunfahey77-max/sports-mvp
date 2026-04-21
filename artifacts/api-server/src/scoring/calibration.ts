@@ -40,6 +40,13 @@ export const DEFAULT_CALIBRATION_PARAMS: Record<string, Record<string, Calibrati
     spread: { method: "isotonic", version: "v2", isotonicBuckets: nhlSpreadIsotonicBuckets() },
     total: { method: "none", version: "v3" },
   },
+  // MLB Phase 0.75D foundation: identity sigmoid (a=1, b=0) on moneyline
+  // since the model itself is market-anchored — no compression needed
+  // until we have realized-result evidence to fit against. Run line and
+  // totals are stubbed disabled in MARKET_DISABLED; no params needed.
+  mlb: {
+    moneyline: { method: "sigmoid", version: "v1", sigmoidA: 1.0, sigmoidB: 0.0 },
+  },
 };
 
 function defaultIsotonicBuckets(): Array<{ low: number; high: number; calibrated: number }> {
@@ -167,6 +174,9 @@ export function getCalibrationConfidence(
     nba: 0.92,
     ncaam: 0.80,
     nhl: 0.87,
+    // MLB Phase 0.75D foundation: confidence held below NBA/NHL until we
+    // have a realized-result sample to validate calibration against.
+    mlb: 0.85,
   };
   return (leagueConfidence[league] ?? 0.75) * extremePenalty;
 }

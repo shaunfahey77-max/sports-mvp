@@ -23,8 +23,16 @@ import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { fetchEspnScores } from "./historicalIngest";
 
-const LEAGUES: League[] = ["nba", "nhl"];
+const LEAGUES: League[] = ["nba", "nhl", "mlb"];
 const MARKETS: MarketType[] = ["moneyline", "spread", "total"];
+
+// Per-league markets override. MLB is in Phase 0.75D foundation: only
+// moneyline is wired (no run line / total models exist). Restricting the
+// markets list at the cron level avoids a `getModel` throw and matches
+// the defensive `MARKET_DISABLED` entries for mlb_spread / mlb_total.
+const MARKETS_BY_LEAGUE: Partial<Record<League, MarketType[]>> = {
+  mlb: ["moneyline"],
+};
 
 // ---------------------------------------------------------------------------
 // Job 1 — Every 10 minutes: ingest latest odds → refresh picks
@@ -125,8 +133,10 @@ async function runOddsIngest(): Promise<void> {
 
       if (snapshots.length === 0) continue;
 
-      // Re-score all upcoming games to pick up updated odds
-      const candidates = await scorePicks(snapshots, MARKETS, "v1", {
+      // Re-score all upcoming games to pick up updated odds. MLB only
+      // runs moneyline in Phase 0.75D — see MARKETS_BY_LEAGUE rationale.
+      const marketsForLeague = MARKETS_BY_LEAGUE[league] ?? MARKETS;
+      const candidates = await scorePicks(snapshots, marketsForLeague, "v1", {
         oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
       });
       // Sort by rankScore DESC before capping so the best picks per league/game are kept
@@ -294,11 +304,22 @@ async function runNightlyValidation(): Promise<void> {
           .from(gameSnapshotsTable)
           .where(and(eq(gameSnapshotsTable.snapshotDate, date), eq(gameSnapshotsTable.league, league)));
 
-        const snap = snapshots.find(
-          (s) =>
+        // Match by home-team name (full or last word) AND require the
+        // away-team to also match. Without the away check, MLB
+        // doubleheaders (two games same day, same home team, different
+        // away team) and naming collisions could silently settle the
+        // wrong snapshot. Mirrors the safer pattern used by the ESPN
+        // backstop sweep below.
+        const awayLast = score.away_team.split(" ").pop()?.toLowerCase() ?? "";
+        const snap = snapshots.find((s) => {
+          const homeMatches =
             s.homeTeam === score.home_team ||
-            s.homeTeam.split(" ").pop()?.toLowerCase() === score.home_team.split(" ").pop()?.toLowerCase()
-        );
+            s.homeTeam.split(" ").pop()?.toLowerCase() ===
+              score.home_team.split(" ").pop()?.toLowerCase();
+          if (!homeMatches) return false;
+          const snapAwayLast = s.awayTeam.split(" ").pop()?.toLowerCase() ?? "";
+          return s.awayTeam === score.away_team || snapAwayLast === awayLast;
+        });
 
         if (!snap) continue;
 

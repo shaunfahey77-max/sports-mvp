@@ -200,3 +200,18 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
   because the 3-day Odds API window expired while the nightly job was not
   firing. Recovered via ESPN backfill; self-healing backstop now prevents
   recurrence.
+
+### MLB Phase 0.75D — Foundation (branch only, hidden, NO DEPLOY)
+- **Scope**: moneyline only. Run line (`mlb_spread`) and totals (`mlb_total`)
+  are stubbed disabled in `MARKET_DISABLED` and the cron skips them via
+  per-league `MARKETS_BY_LEAGUE` (no models exist yet).
+- **Public visibility**: `DEFAULT_PRODUCTION_LEAGUES` in
+  `routes/picks.ts` and `routes/performance.ts` remains `["nba", "nhl"]`.
+  MLB only appears with explicit `?league=mlb`. Regression-guarded by
+  `src/scoring/__tests__/mlbVisibility.test.ts`.
+- **Wiring**: `SPORT_KEYS.mlb=baseball_mlb`, `ESPN_SPORT_PATH.mlb=baseball/mlb`,
+  `MLB_TEAM_ABBREVS` (30 teams + Athletics alias), `mlbMoneylineModel.predict`
+  (market-anchored + small home-field nudge + modest rest adjustment, no B2B).
+- **Settlement safety**: `runNightlyValidation` snapshot match now requires
+  both home AND away team match (mirrors ESPN backstop), preventing MLB
+  doubleheader collisions. Benefits NBA/NHL too.

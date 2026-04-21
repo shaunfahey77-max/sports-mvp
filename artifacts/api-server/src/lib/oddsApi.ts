@@ -6,6 +6,7 @@ const BASE = "https://api.the-odds-api.com/v4";
 export const SPORT_KEYS: Record<string, string> = {
   nba: "basketball_nba",
   nhl: "icehockey_nhl",
+  mlb: "baseball_mlb",
 };
 
 export interface OddsOutcome {

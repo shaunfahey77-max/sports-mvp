@@ -74,8 +74,48 @@ export const NHL_TEAM_ABBREVS: Record<string, string> = {
   'Winnipeg Jets': 'wpg',
 };
 
+export const MLB_TEAM_ABBREVS: Record<string, string> = {
+  'Arizona Diamondbacks': 'ari',
+  'Atlanta Braves': 'atl',
+  'Baltimore Orioles': 'bal',
+  'Boston Red Sox': 'bos',
+  'Chicago Cubs': 'chc',
+  'Chicago White Sox': 'cws',
+  'Cincinnati Reds': 'cin',
+  'Cleveland Guardians': 'cle',
+  'Colorado Rockies': 'col',
+  'Detroit Tigers': 'det',
+  'Houston Astros': 'hou',
+  'Kansas City Royals': 'kc',
+  'Los Angeles Angels': 'laa',
+  'Los Angeles Dodgers': 'lad',
+  'Miami Marlins': 'mia',
+  'Milwaukee Brewers': 'mil',
+  'Minnesota Twins': 'min',
+  'New York Mets': 'nym',
+  'New York Yankees': 'nyy',
+  'Athletics': 'ath',
+  'Oakland Athletics': 'oak',
+  'Philadelphia Phillies': 'phi',
+  'Pittsburgh Pirates': 'pit',
+  'San Diego Padres': 'sd',
+  'San Francisco Giants': 'sf',
+  'Seattle Mariners': 'sea',
+  'St. Louis Cardinals': 'stl',
+  'Tampa Bay Rays': 'tb',
+  'Texas Rangers': 'tex',
+  'Toronto Blue Jays': 'tor',
+  'Washington Nationals': 'wsh',
+};
+
+const ABBREV_LOOKUP: Record<string, Record<string, string>> = {
+  nba: NBA_TEAM_ABBREVS,
+  nhl: NHL_TEAM_ABBREVS,
+  mlb: MLB_TEAM_ABBREVS,
+};
+
 export function getTeamAbbrev(teamName: string, league: string): string {
-  const map = league === 'nba' ? NBA_TEAM_ABBREVS : NHL_TEAM_ABBREVS;
+  const map = ABBREV_LOOKUP[league] ?? NBA_TEAM_ABBREVS;
   const found = map[teamName];
   if (found) return found;
   // Fuzzy: first word, lowercased, max 4 chars
@@ -86,3 +126,4 @@ export function getTeamAbbrev(teamName: string, league: string): string {
 // Full team lists for synthetic data generation
 export const NBA_TEAMS: TeamInfo[] = Object.entries(NBA_TEAM_ABBREVS).map(([name, abbrev]) => ({ name, abbrev }));
 export const NHL_TEAMS: TeamInfo[] = Object.entries(NHL_TEAM_ABBREVS).map(([name, abbrev]) => ({ name, abbrev }));
+export const MLB_TEAMS: TeamInfo[] = Object.entries(MLB_TEAM_ABBREVS).map(([name, abbrev]) => ({ name, abbrev }));

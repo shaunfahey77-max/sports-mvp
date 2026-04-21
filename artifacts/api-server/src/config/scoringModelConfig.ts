@@ -73,6 +73,10 @@ export const DEFAULT_ODDS_RANGE = { min: -350, max: 350 } as const;
 export const ODDS_RANGE_OVERRIDE: Partial<Record<string, { min: number; max: number }>> = {
   nba_moneyline: { min: -2000, max: 600 },
   nhl_moneyline: { min: -800, max: 600 },
+  // MLB main moneylines run from heavy favorites (~ -300, ace vs. weak SP)
+  // to underdogs around +250. Anything outside this band is alt-line / first-5
+  // / prop leak and should be dropped before tier assignment.
+  mlb_moneyline: { min: -400, max: 350 },
 };
 
 /**
@@ -81,7 +85,7 @@ export const ODDS_RANGE_OVERRIDE: Partial<Record<string, { min: number; max: num
  * / historical code paths leave the guardrail off entirely so their bit-
  * for-bit reproducibility is preserved.
  */
-export const ODDS_RANGE_GUARDRAIL_LEAGUES = ["nba", "nhl"] as const;
+export const ODDS_RANGE_GUARDRAIL_LEAGUES = ["nba", "nhl", "mlb"] as const;
 
 /**
  * Per-league plausibility ranges for the line POINT (not price). Any
@@ -135,6 +139,10 @@ export const HOME_ADVANTAGE = {
   nba: 0.035,
   ncaam: 0.045,
   nhl: 0.025,
+  // MLB has the smallest home-field advantage of the four majors
+  // (historical home win rate ~54%). The market mostly prices it in;
+  // we apply only a tiny additional nudge.
+  mlb: 0.020,
 } as const;
 
 export const LEAGUE_MARKET_QUALITY = {
@@ -143,6 +151,10 @@ export const LEAGUE_MARKET_QUALITY = {
   // NHL spread (puck line ±1.5) has demonstrated 72%+ win rate — highest confidence market.
   // NHL moneyline and total show 37–50% win rates with no edge — penalized heavily.
   nhl: { moneyline: 0.25, spread: 0.90, total: 0.15 },
+  // MLB Phase 0.75D foundation — only moneyline is wired. Run line and
+  // totals are stubbed via MARKET_DISABLED below; their quality scores
+  // here are inert (no model) but kept low to mark them as not-ready.
+  mlb: { moneyline: 0.85, spread: 0.10, total: 0.10 },
 } as const;
 
 /**
@@ -169,6 +181,12 @@ export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   nhl_moneyline: true,
   nba_moneyline: true,
   nhl_total: true,
+  // MLB Phase 0.75D foundation: moneyline only. Run line (mlb_spread) and
+  // totals (mlb_total) are explicitly disabled here as a defensive marker
+  // — the cron path also skips them via per-league markets list. No models
+  // exist for these markets yet; do not enable without wiring SP data.
+  mlb_spread: true,
+  mlb_total: true,
 };
 
 // Per-market minimum edge overrides — stricter than the global floor.
@@ -213,7 +231,7 @@ export const PUBLIC_TRACK_RECORD_CUTOFFS: Partial<Record<string, string>> = {
 /** Label written into `validation_metrics.data_quality` for rows excluded by the cutoff. */
 export const DATA_QUALITY_PRE_FIX = "pre_fix_contaminated" as const;
 
-export type League = "nba" | "ncaam" | "nhl";
+export type League = "nba" | "ncaam" | "nhl" | "mlb";
 export type MarketType = "moneyline" | "spread" | "total";
 export type Side = "home" | "away" | "over" | "under";
 export type Tier = "A" | "B" | "C" | "PASS";
