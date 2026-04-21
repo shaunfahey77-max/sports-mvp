@@ -1,0 +1,92 @@
+Proceed with NCAAF foundation as the next internal build step.
+
+Goal:
+Add NCAAF foundation and NCAAF spread first, with internal-only ingest, prediction, scoring, gating, validation, and tests. Do not enable NCAAF publicly. Do not build moneyline or totals beyond safe placeholders/stubs.
+
+Guardrails:
+- branch only
+- no deploy
+- no public enablement
+- preserve NBA/NHL/MLB/NFL behavior
+- no unrelated frontend/auth/billing/migration drift
+- if a shared-file change risks regressions in existing leagues, stop and show me the diff first
+
+Scope for this pass:
+- NCAAF foundation
+- spread only
+- internal testing readiness
+- moneyline and totals disabled/stubbed
+
+Implementation areas:
+1. odds ingestion and normalization
+- add NCAAF odds parsing for main spread market only
+- normalize team names consistently
+- ensure deterministic game-key generation
+- reject malformed/duplicate mappings
+- distinguish main spread from alt spread / team total / 1H / quarter markets where possible
+
+2. prediction model
+- create artifacts/api-server/src/prediction/ncaafSpreadModel.ts
+- real feature-driven spread model only
+- no hash/noise placeholder logic
+- fail safe and surface nothing if required inputs are missing
+
+3. feature engine support
+- add NCAAF-safe features only where deterministic data exists
+- likely: team strength proxy, offense/defense proxy, home field, rest, schedule-strength proxy, travel/weather hooks if clean
+- do not create fake features from prior picks/results
+
+4. scoring pipeline support
+- add NCAAF spread scoring path
+- ensure exact line matching between model probability and market line
+- ensure NCAAF respects existing guardrails and gating structure
+
+5. market probability / ranking compatibility
+- verify NCAAF spread uses proper two-sided fair-prob / no-vig logic
+- ensure it works inside the current absolute-cap framework without loosening globals
+
+6. config
+- add NCAAF spread config entries:
+  - market enabled flag
+  - odds bounds
+  - spread plausibility bounds
+  - min edge
+  - min EV
+  - Tier A override if needed
+  - optional market-quality subset control if needed
+- keep moneyline and totals disabled
+
+7. tier assignment / gating
+- ensure NCAAF spread participates cleanly in the same gating/tier system
+- no auto-surfacing because the league is new
+
+8. validation / settlement
+- ensure NCAAF spread grading works correctly
+- add focused tests for home favorite / away dog / push cases
+
+9. routes / visibility
+- keep NCAAF hidden from public-facing output by default
+- support internal review only if explicitly enabled
+- ensure performance/KPI compatibility once picks exist
+
+10. tests
+Add focused tests for:
+- odds parsing
+- team normalization
+- deterministic game keys
+- spread prediction invocation
+- line matching
+- scoring path
+- settlement/grading
+- gating / tier behavior
+- no leakage into surfaced picks when disabled
+
+Acceptance criteria:
+- NCAAF spread can ingest, score, and settle internally
+- NCAAF remains hidden from public-facing output by default
+- no regressions in existing leagues
+- tests pass
+- typecheck remains within the current baseline tolerance
+- exact files changed and exact commands run are reported
+
+Do not deploy when done.

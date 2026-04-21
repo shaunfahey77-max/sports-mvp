@@ -31,6 +31,9 @@ const ESPN_SPORT_PATH: Record<string, string> = {
   // NFL Phase 0.75E foundation: registered for future ESPN backstop use.
   // Not actively called until NFL is added to cron LEAGUES.
   nfl: "football/nfl",
+  // NCAAF Phase 0.75F foundation: registered for future ESPN backstop use.
+  // Not actively called until NCAAF is added to cron LEAGUES.
+  ncaaf: "football/college-football",
 };
 
 function addDays(dateStr: string, n: number): string {

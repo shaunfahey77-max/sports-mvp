@@ -228,6 +228,41 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
   only. Does not write the DB and never touches public route code.
 - **Unit tests**: `scripts/src/__tests__/mlbShadowReport.test.ts`.
 
+### NCAAF Phase 0.75F — Foundation prep (branch only, hidden, NO DEPLOY, no live ingest yet)
+- **Scope**: planning + foundation scaffolding only. No models built yet.
+  Spread will be the first market wired (mirrors NFL plan); moneyline
+  and total deferred.
+- **Public visibility**: `DEFAULT_PRODUCTION_LEAGUES` unchanged.
+  NCAAF is also kept out of `cronService` `LEAGUES` to avoid burning
+  Odds API credits on offseason endpoints (NCAAF Week 0 is ~late
+  August 2026). Regression-guarded by
+  `src/scoring/__tests__/ncaafVisibility.test.ts`.
+- **Wiring**: `SPORT_KEYS.ncaaf=americanfootball_ncaaf`,
+  `ESPN_SPORT_PATH.ncaaf=football/college-football`, `League` type,
+  placeholder `HOME_ADVANTAGE.ncaaf=0.060` (~3.0pt HFA — larger than
+  NFL, to be tuned against backtest).
+- **Team abbreviations**: deliberately not maintained — NCAAF FBS has
+  ~134 teams. Following the NCAAM precedent, the fuzzy fallback in
+  `getTeamAbbrev` handles college team names. A maintained map can be
+  added later if surfacing requires consistent abbreviations.
+- **Gating**: `MARKET_DISABLED` keeps `ncaaf_spread`, `ncaaf_moneyline`,
+  `ncaaf_total` all `true`. `LEAGUE_MARKET_QUALITY.ncaaf` set to inert
+  0.10 across the board until evidence justifies otherwise.
+- **Next steps for NCAAF spread build (when ready)**:
+  1. Add NCAAF spread features to `featureEngine.ts` (rest days, bye,
+     conference flag, ranked-vs-unranked indicator, neutral-site flag,
+     altitude / venue notes where relevant).
+  2. Build `ncaafSpreadModel.ts` mirroring `nhlSpreadModel.ts` shape with
+     NCAAF-specific margin std dev (~16.5 pts historically — wider than
+     NFL due to talent gaps).
+  3. Add NCAAF spread plausibility ranges
+     (`SPREAD_LINE_ABS_MAX.ncaaf` ≈ 45 to handle blowout favorites).
+  4. Add `ncaaf_spread` calibration entry, identity sigmoid initially.
+  5. Backtest against a historical NCAAF season before flipping
+     `MARKET_DISABLED.ncaaf_spread` off.
+  6. Wire `ncaaf` into cron `LEAGUES` only when preseason approaches AND
+     the model has cleared backtest.
+
 ### NFL Phase 0.75E — Foundation prep (branch only, hidden, NO DEPLOY, no live ingest yet)
 - **Scope**: planning + foundation scaffolding only. No models built yet.
   Spread will be the first market wired (per project direction); moneyline

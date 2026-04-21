@@ -149,6 +149,11 @@ export const HOME_ADVANTAGE = {
   // points-based shift; total / moneyline will use the prob form. Final
   // value pending the first NFL spread model build + backtest.
   nfl: 0.045,
+  // NCAAF Phase 0.75F foundation placeholder. College football HFA runs
+  // larger than NFL — historically ~3.0 points (~0.06 in win prob terms),
+  // and notably stronger at top-tier home stadiums. Final value pending
+  // first ncaaf_spread model build + backtest.
+  ncaaf: 0.060,
 } as const;
 
 export const LEAGUE_MARKET_QUALITY = {
@@ -166,6 +171,11 @@ export const LEAGUE_MARKET_QUALITY = {
   // gated via MARKET_DISABLED below; quality scores are inert until the
   // nfl_spread model lands and posts settled-result evidence.
   nfl: { moneyline: 0.10, spread: 0.10, total: 0.10 },
+  // NCAAF Phase 0.75F foundation — no models built yet. Same shape as
+  // NFL: spread will be the first market wired; moneyline + total
+  // deferred. All three are gated via MARKET_DISABLED below; quality
+  // scores are inert until the ncaaf_spread model lands.
+  ncaaf: { moneyline: 0.10, spread: 0.10, total: 0.10 },
 } as const;
 
 /**
@@ -207,6 +217,12 @@ export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   nfl_spread: true,
   nfl_moneyline: true,
   nfl_total: true,
+  // NCAAF Phase 0.75F foundation: no models built yet. Same gating
+  // posture as NFL — all three markets disabled, cron LEAGUES excludes
+  // "ncaaf", spread is the planned first-market build.
+  ncaaf_spread: true,
+  ncaaf_moneyline: true,
+  ncaaf_total: true,
 };
 
 // Per-market minimum edge overrides — stricter than the global floor.
@@ -251,7 +267,7 @@ export const PUBLIC_TRACK_RECORD_CUTOFFS: Partial<Record<string, string>> = {
 /** Label written into `validation_metrics.data_quality` for rows excluded by the cutoff. */
 export const DATA_QUALITY_PRE_FIX = "pre_fix_contaminated" as const;
 
-export type League = "nba" | "ncaam" | "nhl" | "mlb" | "nfl";
+export type League = "nba" | "ncaam" | "nhl" | "mlb" | "nfl" | "ncaaf";
 export type MarketType = "moneyline" | "spread" | "total";
 export type Side = "home" | "away" | "over" | "under";
 export type Tier = "A" | "B" | "C" | "PASS";

@@ -13,6 +13,11 @@ export const SPORT_KEYS: Record<string, string> = {
   // (NFL preseason starts ~early August 2026). Wire into cron once the
   // nfl_spread model lands and preseason approaches.
   nfl: "americanfootball_nfl",
+  // NCAAF Phase 0.75F foundation: registered for future ingest only.
+  // Same offseason gating rationale as NFL — NCAAF Week 0 is ~late
+  // August 2026. Cron LEAGUES does NOT include "ncaaf" until a spread
+  // model exists and the project approves the flip.
+  ncaaf: "americanfootball_ncaaf",
 };
 
 export interface OddsOutcome {
