@@ -77,3 +77,21 @@ id = "733DHcNU6vD21sZxl7yz0"
 uri = "file://.local/health-reports/mlb-2026-current.txt"
 type = "text"
 title = "MLB Shadow Report — 2026 current window"
+
+[[outputs]]
+id = "BMpMfDW-abOli2fk8xisi"
+uri = "file://screenshots/landing-desktop-final-top.jpg"
+type = "image"
+title = "Homepage — desktop"
+
+[[outputs]]
+id = "vxuUaDTUbUXjPSclHD6oj"
+uri = "file://screenshots/landing-mobile-final.jpg"
+type = "image"
+title = "Homepage — mobile"
+
+[[outputs]]
+id = "4GYyJi0xRzzDMJdD1xTUW"
+uri = "file://screenshots/subscribe-desktop.jpg"
+type = "image"
+title = "Subscribe page — desktop"
