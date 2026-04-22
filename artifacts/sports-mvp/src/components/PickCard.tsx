@@ -7,6 +7,8 @@ import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
 import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, getResultColorClass, cn } from "@/lib/utils";
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
+const SERIF = "'Playfair Display', serif";
+
 function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: string; size?: number }) {
   const [imgError, setImgError] = useState(false);
 
@@ -24,7 +26,7 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
   }
   return (
     <div
-      className="flex items-center justify-center rounded text-[10px] font-black font-display text-white bg-[#0033A0]"
+      className="flex items-center justify-center rounded text-[10px] font-black font-display text-[#FFC107] bg-[#1A3066] border border-[#FFC107]/20"
       style={{ width: size, height: size }}
     >
       {abbrev.slice(0, 3)}
@@ -97,14 +99,14 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
       <div>
         <div className="text-xl font-bold font-display tracking-tight flex items-baseline gap-2">
           <span className={cn(
-            pickIsOver || pickIsUnder ? "text-[#00897B]" : "text-foreground"
-          )}>
+            pickIsOver || pickIsUnder ? "text-[#7FD4C5]" : "text-white"
+          )} style={{ fontFamily: SERIF }}>
             {pick.pick.toUpperCase()}
           </span>
           {pick.publishLine !== undefined && pick.publishLine !== null && (
-            <span className="text-muted-foreground">{Number(pick.publishLine) > 0 ? `+${pick.publishLine}` : pick.publishLine}</span>
+            <span className="text-white/50">{Number(pick.publishLine) > 0 ? `+${pick.publishLine}` : pick.publishLine}</span>
           )}
-          <span className="text-primary">{formatOdds(Number(pick.publishOdds))}</span>
+          <span className="text-[#FFC107]">{formatOdds(Number(pick.publishOdds))}</span>
         </div>
       </div>
 
@@ -114,7 +116,7 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
             Edge
             <InfoTooltip content="How much our probability exceeds the true market probability after removing the book's margin. Higher edge = more value." />
           </div>
-          <div className={cn("font-bold text-sm", Number(pick.edge) > 0 ? "text-[#388E3C]" : "text-foreground")}>
+          <div className={cn("font-bold text-sm", Number(pick.edge) > 0 ? "text-[#4ADE80]" : "text-white/70")}>
             {formatPercentage(Number(pick.edge))}
           </div>
         </div>
@@ -123,7 +125,7 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
             EV
             <InfoTooltip content="Expected Value — estimated profit per $100 wagered based on our calibrated win probability vs. the offered odds." />
           </div>
-          <div className={cn("font-bold text-sm", Number(pick.ev) > 0 ? "text-[#388E3C]" : "text-foreground")}>
+          <div className={cn("font-bold text-sm", Number(pick.ev) > 0 ? "text-[#4ADE80]" : "text-white/70")}>
             {formatPercentage(Number(pick.ev))}
           </div>
         </div>
@@ -138,7 +140,7 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
       {(pick.clvImpliedDelta !== null && pick.clvImpliedDelta !== undefined && Number(pick.clvImpliedDelta) !== 0) && (
         <div className="text-[10px] text-muted-foreground flex items-center gap-1">
           <span>CLV:</span>
-          <span className={Number(pick.clvImpliedDelta) > 0 ? "text-[#388E3C]" : "text-[#D32F2F]"}>
+          <span className={Number(pick.clvImpliedDelta) > 0 ? "text-[#4ADE80]" : "text-[#F87171]"}>
             {Number(pick.clvImpliedDelta) > 0 ? '+' : ''}{(Number(pick.clvImpliedDelta) * 100).toFixed(1)}%
           </span>
           <InfoTooltip content="Closing Line Value — how much the market moved in our favor after we published the pick. Positive CLV = we beat the closing line." />
@@ -166,7 +168,7 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
       {onLogPick && (
         <button
           onClick={onLogPick}
-          className="w-full text-[10px] font-bold uppercase tracking-wider text-[#4488FF] hover:text-[#FFC107] border-t border-[#1A3066] pt-2 transition-colors text-center"
+          className="w-full text-[10px] font-bold uppercase tracking-[0.2em] text-[#FFC107]/70 hover:text-[#FFC107] border-t border-[#1A3066] pt-2.5 transition-colors text-center"
         >
           + Log This Pick
         </button>

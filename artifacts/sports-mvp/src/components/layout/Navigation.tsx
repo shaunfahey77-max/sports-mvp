@@ -10,7 +10,7 @@ const SERIF = "'Playfair Display', serif";
 const TIER_ICONS: Record<string, typeof Star> = { free: Shield, mvp: Star, mvp_pro: Crown };
 const TIER_COLORS: Record<string, string> = {
   free: "text-white/50",
-  mvp: "text-[#4488FF]",
+  mvp: "text-[#C4D0E0]",
   mvp_pro: "text-[#FFC107]",
 };
 const TIER_LABELS: Record<string, string> = { free: "Free", mvp: "MVP", mvp_pro: "MVP Pro" };
@@ -99,7 +99,7 @@ export function Navigation() {
                     tier === "mvp_pro"
                       ? "text-[#FFC107] border-[#FFC107]/40 hover:bg-[#FFC107]/10"
                       : tier === "mvp"
-                      ? "text-[#4488FF] border-[#4488FF]/40 hover:bg-[#4488FF]/10"
+                      ? "text-[#C4D0E0] border-[#C4D0E0]/40 hover:bg-[#C4D0E0]/10"
                       : "text-white/60 border-white/15 hover:bg-white/5"
                   )}
                 >

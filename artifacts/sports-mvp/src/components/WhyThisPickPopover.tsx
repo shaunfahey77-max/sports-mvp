@@ -60,7 +60,7 @@ export function WhyThisPickPopover({ input }: { input: WhyPickInput }) {
     <Popover>
       <PopoverTrigger asChild>
         <button
-          className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#4488FF] hover:text-[#FFC107] transition-colors border border-[#1A3066] hover:border-[#FFC107]/40 rounded px-2 py-1 bg-[#0D1B3E] hover:bg-[#112454]"
+          className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#FFC107]/70 hover:text-[#FFC107] transition-colors border border-[#1A3066] hover:border-[#FFC107]/40 rounded px-2 py-1 bg-[#0D1B3E] hover:bg-[#112454]"
           onClick={(e) => e.stopPropagation()}
         >
           <Sparkles size={10} />
@@ -68,7 +68,7 @@ export function WhyThisPickPopover({ input }: { input: WhyPickInput }) {
         </button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-80 bg-[#0D1B3E] border border-[#1A3066] p-0 shadow-[0_0_30px_rgba(0,51,160,0.3)]"
+        className="w-80 bg-[#0D1B3E] border border-[#1A3066] p-0 shadow-[0_0_30px_rgba(255,193,7,0.12)]"
         align="start"
         side="top"
       >

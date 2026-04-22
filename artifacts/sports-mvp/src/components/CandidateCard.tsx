@@ -7,6 +7,8 @@ import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
 import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, cn } from "@/lib/utils";
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
+const SERIF = "'Playfair Display', serif";
+
 function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: string; size?: number }) {
   const [imgError, setImgError] = useState(false);
 
@@ -24,7 +26,7 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
   }
   return (
     <div
-      className="flex items-center justify-center rounded text-[10px] font-black font-display text-white bg-[#0033A0]"
+      className="flex items-center justify-center rounded text-[10px] font-black font-display text-[#FFC107] bg-[#1A3066] border border-[#FFC107]/20"
       style={{ width: size, height: size }}
     >
       {abbrev.slice(0, 3)}
@@ -96,13 +98,13 @@ export function CandidateCard({ bet, highlight = false }: { bet: CandidateBet; h
 
       <div>
         <div className="text-xl font-bold font-display tracking-tight flex items-baseline gap-2">
-          <span className={cn(sideIsOver || sideIsUnder ? "text-[#00897B]" : "text-foreground")}>
+          <span className={cn(sideIsOver || sideIsUnder ? "text-[#7FD4C5]" : "text-white")} style={{ fontFamily: SERIF }}>
             {bet.side.toUpperCase()}
           </span>
           {bet.publishLine !== undefined && bet.publishLine !== null && (
-            <span className="text-muted-foreground">{Number(bet.publishLine) > 0 ? `+${bet.publishLine}` : bet.publishLine}</span>
+            <span className="text-white/50">{Number(bet.publishLine) > 0 ? `+${bet.publishLine}` : bet.publishLine}</span>
           )}
-          <span className="text-primary">{formatOdds(Number(bet.publishOdds))}</span>
+          <span className="text-[#FFC107]">{formatOdds(Number(bet.publishOdds))}</span>
         </div>
         {bet.selectionReason && (
           <p className="text-[11px] text-muted-foreground mt-1 leading-snug">{bet.selectionReason}</p>
@@ -115,7 +117,7 @@ export function CandidateCard({ bet, highlight = false }: { bet: CandidateBet; h
             Edge
             <InfoTooltip content="Our probability minus the market's fair probability. Represents the true value we see vs. what the book implies." />
           </div>
-          <div className={cn("font-bold text-sm", Number(bet.edge) > 0 ? "text-[#388E3C]" : "text-foreground")}>
+          <div className={cn("font-bold text-sm", Number(bet.edge) > 0 ? "text-[#4ADE80]" : "text-white/70")}>
             {formatPercentage(Number(bet.edge))}
           </div>
         </div>
@@ -124,7 +126,7 @@ export function CandidateCard({ bet, highlight = false }: { bet: CandidateBet; h
             EV
             <InfoTooltip content="Expected Value — projected profit per $100 wagered if this bet were placed repeatedly at these odds." />
           </div>
-          <div className={cn("font-bold text-sm", Number(bet.ev) > 0 ? "text-[#388E3C]" : "text-foreground")}>
+          <div className={cn("font-bold text-sm", Number(bet.ev) > 0 ? "text-[#4ADE80]" : "text-white/70")}>
             {formatPercentage(Number(bet.ev))}
           </div>
         </div>

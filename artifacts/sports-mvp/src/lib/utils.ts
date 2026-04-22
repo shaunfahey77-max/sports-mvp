@@ -22,39 +22,42 @@ export function formatDecimal(val?: number | null, decimals = 2): string {
 
 export function getLeagueColor(league: string): string {
   switch (league.toLowerCase()) {
-    case 'nba': return '#C9082A';
-    case 'nhl': return '#006BB6';
-    case 'ncaam': return '#CC8800';
-    default: return '#0033A0';
+    case 'nba': return '#E0526A';
+    case 'nhl': return '#7FB7E0';
+    case 'ncaam': return '#FFC107';
+    case 'ncaaf': return '#FFC107';
+    case 'nfl': return '#E0526A';
+    case 'mlb': return '#7FB7E0';
+    default: return '#FFC107';
   }
 }
 
 export function getMarketColorClass(market: string): string {
   switch (market.toLowerCase()) {
-    case 'moneyline': return 'bg-[#0033A0] text-white border-transparent';
-    case 'spread': return 'bg-[#5C35CC] text-white border-transparent';
-    case 'total': return 'bg-[#00897B] text-white border-transparent';
-    default: return 'bg-muted text-muted-foreground';
+    case 'moneyline': return 'bg-[#1A3066] text-[#FFD54F] border-transparent';
+    case 'spread': return 'bg-[#2A1F4A] text-[#C4B5E8] border-transparent';
+    case 'total': return 'bg-[#1A3D38] text-[#7FD4C5] border-transparent';
+    default: return 'bg-[#1A3066] text-white/70 border-transparent';
   }
 }
 
 export function getTierColorClass(tier: string): string {
   switch (tier.toUpperCase()) {
     case 'A': return 'bg-[#FFC107] text-[#060D1F] border-transparent font-bold';
-    case 'B': return 'bg-[#0033A0] text-white border-transparent font-bold';
-    case 'C': return 'bg-[#424242] text-white border-transparent font-bold';
-    case 'PASS': return 'bg-[#1A3066] text-[#8899CC] border-[#1A3066] font-medium';
+    case 'B': return 'bg-[#3D4A6B] text-white border-transparent font-bold';
+    case 'C': return 'bg-[#1A3066] text-white/80 border-transparent font-bold';
+    case 'PASS': return 'bg-[#0D1B3E] text-[#8899CC] border-[#1A3066] font-medium';
     default: return 'bg-muted text-muted-foreground';
   }
 }
 
 export function getResultColorClass(result?: string | null): string {
-  if (!result) return 'text-[#424242]';
+  if (!result) return 'text-white/40';
   switch (result.toLowerCase()) {
-    case 'win': return 'text-[#388E3C]';
-    case 'loss': return 'text-[#D32F2F]';
+    case 'win': return 'text-[#4ADE80]';
+    case 'loss': return 'text-[#F87171]';
     case 'push': return 'text-[#FFC107]';
-    case 'pending': return 'text-[#424242]';
+    case 'pending': return 'text-white/40';
     default: return 'text-muted-foreground';
   }
 }

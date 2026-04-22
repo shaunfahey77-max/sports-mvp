@@ -5,6 +5,8 @@ import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, cn }
 import { parseGameMatchup, getTeamLogoUrl } from "@/lib/teamLogos";
 import { Star } from "lucide-react";
 
+const SERIF = "'Playfair Display', serif";
+
 function findTopCandidate(candidates: CandidateBet[]): CandidateBet | null {
   const eligible = candidates.filter(c => c.tier === 'A' || c.tier === 'B');
   if (!eligible.length) return candidates[0] ?? null;
@@ -63,7 +65,7 @@ export function TopPickCallout({ picks = [], candidates = [] }: TopPickCalloutPr
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-3">
             <Star size={14} className="text-[#FFC107] fill-[#FFC107]" />
-            <span className="text-[#FFC107] text-xs font-bold font-display tracking-widest uppercase">Top Pick of the Day</span>
+            <span className="text-[#FFC107] text-[11px] font-bold tracking-[0.25em] uppercase">Top Pick of the Day</span>
             <Badge className="bg-[#FFC107] text-[#060D1F] text-[10px] font-bold border-transparent px-1.5 py-0">
               TIER {tier}
             </Badge>
@@ -94,12 +96,12 @@ export function TopPickCallout({ picks = [], candidates = [] }: TopPickCalloutPr
             <Badge className={cn(getMarketColorClass(market), "text-[10px] px-1.5 py-0")}>
               {market.toUpperCase()}
             </Badge>
-            <div className="text-2xl font-black font-display tracking-tight flex items-baseline gap-2">
-              <span>{side.toUpperCase()}</span>
+            <div className="text-2xl font-black tracking-tight flex items-baseline gap-2" style={{ fontFamily: SERIF }}>
+              <span className="text-white">{side.toUpperCase()}</span>
               {publishLine !== null && publishLine !== undefined && (
-                <span className="text-muted-foreground text-xl">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>
+                <span className="text-white/50 text-xl">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>
               )}
-              <span className="text-[#4488FF] text-xl">{formatOdds(publishOdds)}</span>
+              <span className="text-[#FFC107] text-xl">{formatOdds(publishOdds)}</span>
             </div>
           </div>
         </div>
@@ -109,17 +111,17 @@ export function TopPickCallout({ picks = [], candidates = [] }: TopPickCalloutPr
             <div className="text-[10px] uppercase text-muted-foreground tracking-wider flex items-center justify-center gap-0.5">
               Edge <InfoTooltip content="Our probability minus the market's fair probability, after vig removal." />
             </div>
-            <div className="text-2xl font-black font-display text-[#388E3C]">{formatPercentage(edge)}</div>
+            <div className="text-2xl font-black text-[#4ADE80]" style={{ fontFamily: SERIF }}>{formatPercentage(edge)}</div>
           </div>
           <div className="text-center">
             <div className="text-[10px] uppercase text-muted-foreground tracking-wider flex items-center justify-center gap-0.5">
               EV <InfoTooltip content="Expected profit per $100 wagered at this pick's calibrated probability." />
             </div>
-            <div className="text-2xl font-black font-display text-[#388E3C]">{formatPercentage(ev)}</div>
+            <div className="text-2xl font-black text-[#4ADE80]" style={{ fontFamily: SERIF }}>{formatPercentage(ev)}</div>
           </div>
           <div className="text-center">
             <div className="text-[10px] uppercase text-muted-foreground tracking-wider">Rank</div>
-            <div className="text-2xl font-black font-display text-foreground">{rankScore.toFixed(2)}</div>
+            <div className="text-2xl font-black text-white" style={{ fontFamily: SERIF }}>{rankScore.toFixed(2)}</div>
           </div>
         </div>
       </div>
