@@ -3,11 +3,13 @@ import { Link, useLocation } from "wouter";
 import { useAuth } from "@clerk/react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { Crown, Star, Shield, ChevronDown, User, LogOut, Settings } from "lucide-react";
+import { Crown, Star, Shield, ChevronDown, LogOut, Settings } from "lucide-react";
+
+const SERIF = "'Playfair Display', serif";
 
 const TIER_ICONS: Record<string, typeof Star> = { free: Shield, mvp: Star, mvp_pro: Crown };
 const TIER_COLORS: Record<string, string> = {
-  free: "text-muted-foreground",
+  free: "text-white/50",
   mvp: "text-[#4488FF]",
   mvp_pro: "text-[#FFC107]",
 };
@@ -41,36 +43,50 @@ export function Navigation() {
   }, []);
 
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="container mx-auto flex h-16 items-center justify-between px-4">
-        <Link href="/" className="flex items-center gap-2 mr-8">
-          <img src="/logo-nav.png" alt="SportsMVP" className="h-12 object-contain" />
+    <nav className="sticky top-0 z-50 w-full border-b border-[#1A3066] bg-[#060D1F]/95 backdrop-blur supports-[backdrop-filter]:bg-[#060D1F]/80">
+      <div className="container mx-auto flex h-16 items-center justify-between px-6">
+        <Link href="/" aria-label="SportsMVP home" className="flex items-center gap-3 mr-8 shrink-0">
+          <img src="/logo-nav.png" alt="SportsMVP" className="h-9 object-contain" />
+          <span
+            className="hidden sm:inline text-lg font-bold tracking-wide text-white"
+            style={{ fontFamily: SERIF }}
+          >
+            SportsMVP
+          </span>
         </Link>
 
-        <div className="flex gap-6 md:gap-10 flex-1">
-          {links.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={cn(
-                "text-sm font-medium transition-colors hover:text-foreground/80",
-                location === link.href ? "text-foreground" : "text-foreground/60"
-              )}
-            >
-              {link.label}
-            </Link>
-          ))}
+        <div className="flex gap-5 md:gap-8 flex-1 overflow-x-auto scrollbar-none">
+          {links.map((link) => {
+            const active = location === link.href;
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={cn(
+                  "relative whitespace-nowrap text-sm font-medium transition-colors py-2",
+                  active
+                    ? "text-[#FFC107]"
+                    : "text-white/60 hover:text-white"
+                )}
+              >
+                {link.label}
+                {active && (
+                  <span className="absolute -bottom-[17px] left-0 right-0 h-[2px] bg-[#FFC107]" />
+                )}
+              </Link>
+            );
+          })}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {!isLoaded ? null : isSignedIn ? (
             <>
               {tier === "free" && (
                 <Link
                   href="/subscribe"
-                  className="hidden md:flex items-center gap-1 text-xs font-bold text-[#FFC107] hover:text-[#e6b000] transition-colors border border-[#FFC107]/30 rounded px-2.5 py-1"
+                  className="hidden md:flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-[#060D1F] bg-[#FFC107] hover:bg-[#FFD54F] transition-colors rounded-sm px-3 py-1.5"
                 >
-                  <Crown size={11} />
+                  <Crown size={12} />
                   Upgrade
                 </Link>
               )}
@@ -79,12 +95,12 @@ export function Navigation() {
                 <button
                   onClick={() => setMenuOpen((o) => !o)}
                   className={cn(
-                    "flex items-center gap-1.5 text-xs font-bold transition-colors px-2.5 py-1.5 rounded border",
+                    "flex items-center gap-1.5 text-xs font-bold transition-colors px-2.5 py-1.5 rounded-sm border",
                     tier === "mvp_pro"
-                      ? "text-[#FFC107] border-[#FFC107]/30 hover:bg-[#FFC107]/10"
+                      ? "text-[#FFC107] border-[#FFC107]/40 hover:bg-[#FFC107]/10"
                       : tier === "mvp"
-                      ? "text-[#4488FF] border-[#4488FF]/30 hover:bg-[#4488FF]/10"
-                      : "text-muted-foreground border-border hover:bg-muted"
+                      ? "text-[#4488FF] border-[#4488FF]/40 hover:bg-[#4488FF]/10"
+                      : "text-white/60 border-white/15 hover:bg-white/5"
                   )}
                 >
                   <TierIcon size={13} />
@@ -93,17 +109,17 @@ export function Navigation() {
                 </button>
 
                 {menuOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-44 rounded-lg border border-[#1A3066] bg-[#0D1B3E] shadow-xl py-1 z-50">
-                    <div className="px-3 py-2 border-b border-[#1A3066] mb-1">
+                  <div className="absolute right-0 top-full mt-2 w-48 rounded-sm border border-[#1A3066] bg-[#0D1B3E] shadow-2xl py-1 z-50">
+                    <div className="px-3 py-2.5 border-b border-[#1A3066] mb-1">
                       <div className={cn("flex items-center gap-1.5 text-xs font-bold", TIER_COLORS[tier])}>
-                        <TierIcon size={11} />
+                        <TierIcon size={12} />
                         {TIER_LABELS[tier]} Plan
                       </div>
                     </div>
                     <Link
                       href="/account"
                       onClick={() => setMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-xs text-foreground/70 hover:text-foreground hover:bg-white/5 transition-colors"
+                      className="flex items-center gap-2 px-3 py-2 text-xs text-white/70 hover:text-white hover:bg-white/5 transition-colors"
                     >
                       <Settings size={12} />
                       Account
@@ -135,13 +151,13 @@ export function Navigation() {
             <>
               <Link
                 href="/sign-in"
-                className="text-sm font-medium text-foreground/60 hover:text-foreground transition-colors"
+                className="text-sm font-medium text-white/60 hover:text-white transition-colors"
               >
                 Sign In
               </Link>
               <Link
                 href="/sign-up"
-                className="text-xs font-bold bg-[#0033A0] hover:bg-[#0041cc] text-white px-3 py-1.5 rounded transition-colors"
+                className="text-[11px] font-bold uppercase tracking-widest bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F] px-3 py-1.5 rounded-sm transition-colors"
               >
                 Start Free
               </Link>

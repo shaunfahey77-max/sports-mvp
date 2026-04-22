@@ -113,3 +113,27 @@ id = "ljP5NzvQsRyyBdf7_RsYH"
 uri = "file://screenshots/subscribe-mobile-polish.jpg"
 type = "image"
 title = "Subscribe page — mobile (final)"
+
+[[outputs]]
+id = "U_jgZBXQVQqNeUm-qlEVD"
+uri = "file://screenshots/performance-desktop.jpg"
+type = "image"
+title = "Performance — desktop (premium redesign)"
+
+[[outputs]]
+id = "tkJfI8tyCNhr8ORJtU8gL"
+uri = "file://screenshots/history-desktop.jpg"
+type = "image"
+title = "History — desktop (premium redesign)"
+
+[[outputs]]
+id = "thi56p7CURHXXBXPV1eMW"
+uri = "file://screenshots/performance-mobile.jpg"
+type = "image"
+title = "Performance — mobile"
+
+[[outputs]]
+id = "oTZ0RYdp4sM1Y2jnrnWN-"
+uri = "file://screenshots/history-mobile.jpg"
+type = "image"
+title = "History — mobile"
