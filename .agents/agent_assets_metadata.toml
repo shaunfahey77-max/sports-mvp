@@ -42,3 +42,15 @@ id = "uIWXFjkB1tDx0OVzXeJI6"
 uri = "file://.local/backtest-reports/nfl-2025-v2.1.txt"
 type = "text"
 title = "NFL Spread v2.1 — Raw Backtest Report"
+
+[[outputs]]
+id = "3D0XCnrxtv2vDy7E3WJ2a"
+uri = "file://.local/backtest-reports/nfl-2025-v2.1-tier-sweep-VERDICT.md"
+type = "text"
+title = "NFL v2.1 Tier-A Threshold Sweep — Verdict"
+
+[[outputs]]
+id = "Jpwwnu3gRHOBmY7bZC0kM"
+uri = "file://.local/backtest-reports/nfl-2025-v2.1-tier-sweep.txt"
+type = "text"
+title = "NFL v2.1 Tier-A Threshold Sweep — Raw Report"
