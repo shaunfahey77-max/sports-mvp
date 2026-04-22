@@ -18,3 +18,15 @@ id = "Ttf5KTsdDtYqDp6qTK9bb"
 uri = "file://sportsmvp-redirect.zip"
 type = "unspecified"
 title = "SportsMVP Netlify Redirect"
+
+[[outputs]]
+id = "GAstkb3t_4dJaMjRPjPka"
+uri = "file://.local/backtest-reports/nfl-2025-v2-VERDICT.md"
+type = "text"
+title = "NFL Spread v2 — Second Backtest Verdict"
+
+[[outputs]]
+id = "atMS-ymKAKnHyyVJd1qEd"
+uri = "file://.local/backtest-reports/nfl-2025-v2.txt"
+type = "text"
+title = "NFL Spread v2 — Raw Backtest Report"
