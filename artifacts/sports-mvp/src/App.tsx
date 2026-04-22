@@ -114,6 +114,7 @@ function Router() {
       <Route path="/account" component={() => <ProtectedRoute><Account /></ProtectedRoute>} />
       <Route path="/privacy" component={Privacy} />
       <Route path="/terms" component={Terms} />
+      <Route path="/methodology" component={() => <Redirect to="/#methodology" />} />
       <Route component={NotFound} />
     </Switch>
   );
