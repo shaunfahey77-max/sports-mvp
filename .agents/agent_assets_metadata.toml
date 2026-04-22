@@ -1,5 +1,10 @@
 uploads = []
-generated = []
+
+[[generated]]
+id = "MWcXn7GJWH6ZKc7Kal35F"
+uri = "file://artifacts/mockup-sandbox/public/images/inside-edge-hero.png"
+type = "image"
+title = "Premium navy and gold sports club"
 
 [[outputs]]
 id = "vNJWiaeHfGNIJXh_YSrJZ"

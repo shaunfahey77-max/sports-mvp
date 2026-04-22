@@ -139,6 +139,33 @@ async function getModel(league: League, marketType: MarketType): Promise<ModelFn
   }
 }
 
+/**
+ * Returns true when a prediction model is registered for the given
+ * league/market combination. Used by scorePicks to silently skip
+ * markets a league does not model (e.g. mlb_spread, mlb_total) so
+ * historical ingest and live scoring don't crash on otherwise-valid
+ * snapshots. Keep this list in sync with getModel above.
+ */
+function hasModel(league: League, marketType: MarketType): boolean {
+  switch (`${league}_${marketType}`) {
+    case "nba_moneyline":
+    case "nba_spread":
+    case "nba_total":
+    case "ncaam_moneyline":
+    case "ncaam_spread":
+    case "ncaam_total":
+    case "nhl_moneyline":
+    case "nhl_spread":
+    case "nhl_total":
+    case "mlb_moneyline":
+    case "nfl_spread":
+    case "ncaaf_spread":
+      return true;
+    default:
+      return false;
+  }
+}
+
 async function scoreMarket(
   game: GameMarketInput,
   marketType: MarketType,
@@ -351,6 +378,12 @@ export async function scorePicks(
 
   for (const game of gamesWithFeatures) {
     for (const market of markets) {
+      // Skip markets that have no registered model for this league
+      // (e.g. mlb_spread, mlb_total). Avoids "No model for X" crashes
+      // during historical ingest of leagues that only model a subset of
+      // markets. Live cron is unaffected because the market list passed
+      // in already excludes disabled markets.
+      if (!hasModel(game.league, market)) continue;
       const candidates = await scoreMarket(game, market, modelVersion);
       allCandidates.push(...candidates);
     }
