@@ -19,12 +19,13 @@ function formatPrice(amount: number) {
 
 function PlanCard({
   name, tierKey, description, features, monthlyPrice, yearlyPrice,
-  highlight, currentTier, onSelect, loading, pricesLoading,
+  highlight, currentTier, onSelect, loading, pricesLoading, billingNote,
 }: {
   name: string; tierKey: string; description: string; features: string[];
   monthlyPrice?: Price; yearlyPrice?: Price;
   highlight?: boolean; currentTier: string; onSelect: (priceId: string) => void; loading: string | null;
   pricesLoading?: boolean;
+  billingNote?: string;
 }) {
   const [interval, setInterval] = useState<'month' | 'year'>('month');
   const price = interval === 'month' ? monthlyPrice : yearlyPrice;
@@ -39,7 +40,14 @@ function PlanCard({
         </div>
       )}
       <div>
-        <h3 className="text-lg font-black font-display text-white mb-1">{name}</h3>
+        <div className="flex items-baseline justify-between gap-2 mb-1">
+          <h3 className="text-lg font-black font-display text-white">{name}</h3>
+          {billingNote && (
+            <span className="text-[9px] text-white/40 uppercase tracking-widest font-mono whitespace-nowrap">
+              {billingNote}
+            </span>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
 
@@ -131,22 +139,34 @@ export function Subscribe() {
   }
 
   return (
-    <PageLayout title="Choose Your Plan" subtitle="Unlock premium picks and tools — cancel anytime" tagline="BET LIKE AN MVP.">
+    <PageLayout title="Choose your level of access." subtitle="Start free. Upgrade when the picks prove themselves. Cancel any time." tagline="MATH, NOT MYSTIQUE.">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
         <PlanCard
-          name="Free"
+          name="Guest Pass"
           tierKey="free"
-          description="Get started with one top pick per day."
-          features={["1 pick per day (Tier A only)", "Basic Edge + EV stats", "Public performance history"]}
+          description="Verify the model before you commit."
+          features={[
+            "Today's #1 Tier-A pick (delayed)",
+            "Public tier badge + final result",
+            "Full performance history",
+          ]}
           currentTier={tier}
           onSelect={handleSelect}
           loading={loading}
         />
         <PlanCard
-          name="MVP"
+          name="Members"
           tierKey="mvp"
-          description="All picks across NBA and NHL every day."
-          features={["Unlimited picks (all tiers)", "Full Edge + EV + CLV data", "Parlay Builder access", "Bet Tracker with Kelly calculator"]}
+          billingNote="Billed as MVP"
+          description="Full daily slate plus the math behind every pick."
+          features={[
+            "Every Tier A / B / C pick, every day",
+            "Full edge, EV, model & market probability",
+            "CLV tracked on every pick",
+            "Best line across all sportsbooks",
+            "Parlay Builder + Bet Tracker (Kelly)",
+            "Re-scored every 10 minutes",
+          ]}
           monthlyPrice={getPrice(mvp, 'month')}
           yearlyPrice={getPrice(mvp, 'year')}
           highlight
@@ -156,10 +176,18 @@ export function Subscribe() {
           pricesLoading={pricesLoading}
         />
         <PlanCard
-          name="MVP Pro"
+          name="Inner Circle"
           tierKey="mvp_pro"
-          description="Everything in MVP plus advanced pro tools."
-          features={["Everything in MVP", "5 + 6-leg parlays (teasers)", "Priority model updates", "Early access to new features"]}
+          billingNote="Billed as MVP Pro"
+          description="Programmatic access for serious analysts."
+          features={[
+            "Everything in Members",
+            "Email alerts on every Tier-A surface",
+            "Line-movement notifications",
+            "Early publish access (before public)",
+            "Programmatic API access",
+            "Priority support",
+          ]}
           monthlyPrice={getPrice(mvpPro, 'month')}
           yearlyPrice={getPrice(mvpPro, 'year')}
           currentTier={tier}

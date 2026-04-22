@@ -2,12 +2,16 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
-import { Star, TrendingUp, Shield, Zap, BarChart2, Clock, BookOpen, CheckCircle, ChevronRight, ArrowRight } from "lucide-react";
+import {
+  Star, Shield, Crown, ChevronRight, Lock, TrendingUp, Zap, Clock,
+  Check, ArrowRight, Cpu, Database, BarChart2, Activity, CheckCircle2,
+} from "lucide-react";
 import { parseGameMatchup, getTeamLogoUrl } from "@/lib/teamLogos";
 import { formatOdds } from "@/lib/utils";
 import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
 
 const STAT_WINDOW = 47;
+const SERIF = "'Playfair Display', serif";
 
 function useLandingStats() {
   return useQuery({
@@ -25,135 +29,52 @@ const BASELINE_STATS = {
   roi: 0.2710,
   unitsWon: 165.1,
   avgEv: 0.232,
-  totalPicks: 609,
 };
 
 function buildStats(perf: any) {
-  if (!perf) return [
-    { label: "Win Rate", value: "—", color: "#388E3C" },
-    { label: `ROI (${STAT_WINDOW} Days)`, value: "—", color: "#388E3C" },
-    { label: "Units Won", value: "—", color: "#388E3C" },
-    { label: "Avg EV / Pick", value: "—", color: "#FFC107" },
-  ];
-  const hasResults = (perf.wins + perf.losses) > 0;
+  const hasResults = perf && (perf.wins + perf.losses) > 0;
   const winRate = hasResults ? perf.wins / (perf.wins + perf.losses) : BASELINE_STATS.winRate;
   const roi = hasResults ? (perf.roi ?? 0) : BASELINE_STATS.roi;
   const units = hasResults ? (perf.unitsWon ?? 0) : BASELINE_STATS.unitsWon;
   const avgEv = hasResults ? (perf.avgEv ?? 0) : BASELINE_STATS.avgEv;
-  return [
-    { label: "Win Rate", value: `${(winRate * 100).toFixed(1)}%`, color: "#388E3C" },
-    { label: `ROI (${STAT_WINDOW} Days)`, value: `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%`, color: "#388E3C" },
-    { label: "Units Won", value: `${units >= 0 ? "+" : ""}${units.toFixed(0)}U`, color: "#388E3C" },
-    { label: "Avg EV / Pick", value: `+${(avgEv * 100).toFixed(1)}%`, color: "#FFC107" },
-  ];
+  return {
+    winRate: `${(winRate * 100).toFixed(1)}%`,
+    roi: `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%`,
+    units: `${units >= 0 ? "+" : ""}${units.toFixed(1)}`,
+    avgEv: `${avgEv >= 0 ? "+" : ""}${(avgEv * 100).toFixed(1)}%`,
+    isLive: hasResults,
+  };
 }
 
-const FEATURES = [
-  {
-    icon: BarChart2,
-    title: "Calibrated ML Models",
-    desc: "Every pick is scored by a multi-stage pipeline — market probability, edge calculation, EV, and ranking. No gut calls.",
-  },
-  {
-    icon: TrendingUp,
-    title: "Best Lines Across All Books",
-    desc: "We query DraftKings, FanDuel, BetMGM, Caesars, and more every 10 minutes to find the best available price for every market.",
-  },
-  {
-    icon: Shield,
-    title: "CLV Tracking",
-    desc: "Closing Line Value is the gold standard for measuring pick quality. We track every pick's CLV delta so you know if you're beating the market.",
-  },
-  {
-    icon: Zap,
-    title: "Real-Time Updates",
-    desc: "Odds refresh every 10 minutes automatically. If the line moves before tipoff, your picks re-score with the latest data.",
-  },
-  {
-    icon: BookOpen,
-    title: "Transparent Methodology",
-    desc: "We publish our EV formula, Brier score, and calibration methodology. No black boxes. The math is always visible.",
-  },
-  {
-    icon: Clock,
-    title: "Daily Auto-Scoring",
-    desc: "Results are validated every morning at 3:30 AM. Win/loss/push recorded automatically with final scores from the sportsbook APIs.",
-  },
-];
-
-const PLANS = [
-  {
-    name: "Free",
-    price: "$0",
-    period: "forever",
-    accent: "#424242",
-    accentBg: "rgba(66,66,66,0.15)",
-    items: ["Today's #1 top pick (daily)", "Tier badge only", "No metrics or history", "Web access"],
-    cta: "Start Free",
-    ctaHref: "/sign-up",
-    ctaStyle: "border border-[#424242] text-white hover:bg-white/5",
-    popular: false,
-  },
-  {
-    name: "MVP",
-    price: "$19.99",
-    period: "/month",
-    annual: "$149/year",
-    accent: "#0033A0",
-    accentBg: "rgba(0,51,160,0.2)",
-    items: [
-      "All A / B / C tier picks daily",
-      "Full EV, edge, and rank metrics",
-      "CLV tracking on every pick",
-      "45-day performance dashboard",
-      "Pick history with results",
-      "Best lines across all sportsbooks",
-      "Picks updated every 10 minutes",
-    ],
-    cta: "Get MVP",
-    ctaHref: "/subscribe",
-    ctaStyle: "bg-[#0033A0] text-white hover:bg-[#0040CC]",
-    popular: true,
-  },
-  {
-    name: "MVP Pro",
-    price: "$39.99",
-    period: "/month",
-    annual: "$299/year",
-    accent: "#FFC107",
-    accentBg: "rgba(255,193,7,0.12)",
-    items: [
-      "Everything in MVP",
-      "Email alerts for A-tier picks",
-      "Line movement notifications",
-      "Early picks (before public release)",
-      "API access for your own tools",
-      "Priority support",
-    ],
-    cta: "Get MVP Pro",
-    ctaHref: "/subscribe",
-    ctaStyle: "bg-[#FFC107] text-[#060D1F] hover:bg-[#FFD54F] font-bold",
-    popular: false,
-  },
-];
-
+/* ---------------- NAV ---------------- */
 function LandingNav() {
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-[#1A3066]/80 bg-[#060D1F]/95 backdrop-blur">
-      <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2">
-          <img src="/logo-nav.png" alt="SportsMVP" className="h-12 object-contain" />
+    <nav className="sticky top-0 z-40 border-b border-[#FFC107]/20 bg-[#060D1F]/90 backdrop-blur-md">
+      <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-3">
+          <img
+            src="/shield-logo.png"
+            alt="SportsMVP"
+            className="h-10 w-auto object-contain drop-shadow-[0_0_12px_rgba(255,193,7,0.35)]"
+          />
+          <span className="text-xl font-bold tracking-wide text-white" style={{ fontFamily: SERIF }}>
+            SportsMVP
+          </span>
         </Link>
         <div className="hidden md:flex items-center gap-8">
-          <a href="#how-it-works" className="text-sm text-white/60 hover:text-white transition-colors font-medium">How It Works</a>
-          <a href="#features" className="text-sm text-white/60 hover:text-white transition-colors font-medium">Features</a>
-          <a href="#pricing" className="text-sm text-white/60 hover:text-white transition-colors font-medium">Pricing</a>
-          <Link href="/sign-in" className="text-sm text-white/60 hover:text-white transition-colors font-medium">Today's Picks</Link>
+          <a href="#methodology" className="text-sm font-medium text-white/70 hover:text-[#FFC107] transition-colors">Methodology</a>
+          <a href="#track-record" className="text-sm font-medium text-white/70 hover:text-[#FFC107] transition-colors">Track Record</a>
+          <a href="#membership" className="text-sm font-medium text-white/70 hover:text-[#FFC107] transition-colors">Membership</a>
         </div>
-        <div className="flex items-center gap-3">
-          <Link href="/sign-in" className="text-sm text-white/70 hover:text-white transition-colors font-medium hidden md:block">Sign In</Link>
-          <Link href="/sign-up" className="inline-flex items-center gap-1.5 bg-[#0033A0] hover:bg-[#0040CC] text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
-            Start Free <ArrowRight size={14} />
+        <div className="flex items-center gap-4">
+          <Link href="/sign-in" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
+            Sign In
+          </Link>
+          <Link
+            href="/sign-up"
+            className="text-sm font-bold bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F] px-5 py-2.5 rounded-sm transition-colors uppercase tracking-wider"
+          >
+            Become a Member
           </Link>
         </div>
       </div>
@@ -161,142 +82,101 @@ function LandingNav() {
   );
 }
 
-function HeroSection({ stats, picksTracked }: { stats: ReturnType<typeof buildStats>; picksTracked: number }) {
+/* ---------------- HERO ---------------- */
+function HeroSection({ stats }: { stats: ReturnType<typeof buildStats> }) {
   return (
-    <section className="relative overflow-hidden py-20 lg:py-28">
-      {/* Sportsbook background image */}
-      <div className="absolute inset-0">
+    <section className="relative pt-20 pb-28 overflow-hidden">
+      {/* background */}
+      <div className="absolute inset-0 z-0">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#060D1F]/85 to-[#060D1F] z-10" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#060D1F] via-transparent to-[#060D1F] z-10" />
         <img
           src="/sportsbook-hero.jpg"
           alt=""
-          className="w-full h-full object-cover object-center"
+          className="w-full h-full object-cover object-center opacity-35"
         />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#060D1F]/90 via-[#060D1F]/65 to-[#060D1F]/25" />
-        <div className="absolute inset-0 bg-gradient-to-t from-[#060D1F]/80 via-transparent to-transparent" />
       </div>
 
-      <div className="relative max-w-7xl mx-auto px-6 grid lg:grid-cols-2 gap-12 items-center">
-        <div>
-          <div className="inline-flex items-center gap-2 bg-[#FFC107]/10 border border-[#FFC107]/30 rounded-full px-4 py-1.5 mb-6">
-            <Star size={12} className="text-[#FFC107] fill-[#FFC107]" />
-            <span className="text-[#FFC107] text-xs font-bold tracking-widest uppercase">NBA + NHL · April 2026</span>
+      <div className="max-w-7xl mx-auto px-6 relative z-20">
+        <div className="max-w-3xl">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#FFC107]/30 bg-[#FFC107]/5 mb-6">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#FFC107] animate-pulse" />
+            <span className="text-xs font-bold text-[#FFC107] uppercase tracking-widest">
+              Live Models · NBA + NHL
+            </span>
           </div>
-          <div className="flex items-center gap-5 mb-6">
-            <img
-              src="/shield-logo.png"
-              alt="SportsMVP Shield"
-              className="h-28 lg:h-36 w-auto object-contain drop-shadow-[0_0_24px_rgba(255,193,7,0.35)] shrink-0"
-            />
-            <h1 className="text-5xl lg:text-6xl font-black font-display leading-[1.05] tracking-tight text-white">
-              Bet Like<br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#0033A0] via-[#4488FF] to-[#FFC107]">
-                an MVP.
-              </span>
-            </h1>
-          </div>
-          <p className="text-lg text-white/70 leading-relaxed mb-8 max-w-lg">
-            SportsMVP uses calibrated machine learning models to identify positive expected-value picks across NBA and NHL markets.
-            No gut calls. No hype. Just math — updated every 10 minutes.
+
+          <h1
+            className="text-5xl md:text-7xl font-bold leading-[1.05] mb-6 text-white"
+            style={{ fontFamily: SERIF }}
+          >
+            The math-driven edge,{" "}
+            <span className="italic text-[#FFC107]">made transparent.</span>
+          </h1>
+
+          <p className="text-xl text-white/70 mb-10 leading-relaxed max-w-2xl font-light">
+            SportsMVP is an analyst's instrument, not a tipster service. We run calibrated
+            machine-learning models against live sportsbook odds to find statistically
+            significant positive expected-value plays — and publish every result.
           </p>
-          <div className="flex flex-wrap gap-4">
-            <Link href="/sign-up" className="inline-flex items-center gap-2 bg-[#0033A0] hover:bg-[#0040CC] text-white font-bold px-8 py-4 rounded-xl text-base transition-colors shadow-[0_0_30px_rgba(0,51,160,0.4)]">
-              Start Free <ChevronRight size={18} />
+
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-8">
+            <Link
+              href="/sign-up"
+              className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#FFC107] to-[#B38700] hover:from-[#FFD54F] hover:to-[#FFC107] text-[#060D1F] font-bold uppercase tracking-widest text-sm transition-all shadow-[0_0_30px_rgba(255,193,7,0.2)] hover:shadow-[0_0_40px_rgba(255,193,7,0.4)] flex items-center justify-center gap-2 rounded-sm"
+            >
+              Become a Member <ChevronRight size={16} />
             </Link>
-            <a href="#pricing" className="inline-flex items-center gap-2 border border-white/20 text-white/80 hover:bg-white/5 font-medium px-8 py-4 rounded-xl text-base transition-colors">
-              See Pricing
+            <a
+              href="#methodology"
+              className="w-full sm:w-auto px-8 py-4 border border-white/20 hover:bg-white/5 text-white/80 font-medium uppercase tracking-widest text-sm transition-colors rounded-sm text-center"
+            >
+              View Methodology
             </a>
           </div>
-          <p className="text-white/40 text-sm mt-4">No credit card required for free tier</p>
+
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/50 font-mono">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-[#388E3C]" />
+              Brier-scored probability
+            </div>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-[#388E3C]" />
+              Closing line value tracked
+            </div>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-[#388E3C]" />
+              Every pick graded publicly
+            </div>
+          </div>
         </div>
 
-        {/* Right: floating stats */}
-        <div className="hidden lg:grid grid-cols-2 gap-4">
-          {stats.map((s) => (
-            <div key={s.label} className="bg-[#0D1B3E]/80 backdrop-blur border border-[#1A3066] rounded-2xl p-5 text-center">
-              <div className="text-3xl font-black font-display mb-1" style={{ color: s.color }}>{s.value}</div>
-              <div className="text-white/50 text-xs font-medium uppercase tracking-wider">{s.label}</div>
+        {/* Floating perf stats — real data */}
+        <div className="mt-16 grid grid-cols-2 md:grid-cols-4 gap-px bg-[#FFC107]/20 border border-[#FFC107]/30 rounded-sm overflow-hidden">
+          {[
+            { label: "Win Rate", value: stats.winRate, color: "#388E3C" },
+            { label: `ROI · ${STAT_WINDOW}d`, value: stats.roi, color: "#388E3C" },
+            { label: "Units Won", value: stats.units, color: "#388E3C" },
+            { label: "Avg EV / Pick", value: stats.avgEv, color: "#FFC107" },
+          ].map((s) => (
+            <div key={s.label} className="bg-[#0D1B3E]/95 backdrop-blur p-5 text-center">
+              <div className="text-3xl md:text-4xl font-black" style={{ color: s.color, fontFamily: SERIF }}>{s.value}</div>
+              <div className="text-white/50 text-[10px] md:text-xs font-bold uppercase tracking-widest mt-1">{s.label}</div>
             </div>
           ))}
-          <div className="col-span-2 bg-[#0D1B3E]/80 backdrop-blur border border-[#1A3066] rounded-2xl p-4 text-center">
-            <div className="text-white/40 text-xs uppercase tracking-wider mb-1">Live Track Record · {STAT_WINDOW} Days</div>
-            <div className="text-white text-sm font-medium">{picksTracked > 0 ? `${picksTracked} picks tracked` : "Loading..."} · Updated daily</div>
-          </div>
+        </div>
+        <div className="mt-3 text-center text-white/40 text-xs">
+          {stats.isLive ? "Live performance" : "Baseline shown — live data publishes after first graded slate"} · rolling {STAT_WINDOW}-day window
         </div>
       </div>
     </section>
   );
 }
 
-function StatsMobileBar({ stats }: { stats: ReturnType<typeof buildStats> }) {
-  return (
-    <section className="lg:hidden bg-[#0D1B3E] border-y border-[#1A3066]">
-      <div className="max-w-7xl mx-auto px-6 py-6 grid grid-cols-2 gap-4">
-        {stats.map((s) => (
-          <div key={s.label} className="text-center">
-            <div className="text-2xl font-black font-display" style={{ color: s.color }}>{s.value}</div>
-            <div className="text-white/50 text-xs font-medium uppercase tracking-wider mt-0.5">{s.label}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function TodaysTopPick() {
-  const today = new Date().toISOString().split("T")[0];
-  const { data, isLoading } = useQuery({
-    queryKey: ["landing-top-pick", today],
-    queryFn: async () => {
-      const res = await axios.get(`/picks?date=${today}&tier=A&result=pending&limit=1`);
-      return res.data;
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const pick = data?.picks?.[0] ?? null;
-
-  return (
-    <section className="relative py-20 bg-[#060D1F] overflow-hidden">
-      {/* Section glow */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[400px] rounded-full bg-[#FFC107]/8 blur-[100px]" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[250px] rounded-full bg-[#0033A0]/15 blur-[80px]" />
-      </div>
-      <div className="max-w-7xl mx-auto px-6 relative">
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center gap-2 text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-3">
-            <Star size={12} className="fill-[#FFC107]" /> Live Today
-          </div>
-          <h2 className="text-3xl font-black font-display text-white">Today's Top Pick</h2>
-          <p className="text-white/50 mt-2 text-sm">Updated every 10 minutes with the latest sportsbook odds</p>
-        </div>
-
-        <div className="max-w-2xl mx-auto">
-          {isLoading ? (
-            <div className="h-40 rounded-2xl bg-[#0D1B3E] animate-pulse" />
-          ) : pick ? (
-            <TopPickCard pick={pick} />
-          ) : (
-            <div className="text-center text-white/40 py-12 border border-dashed border-[#1A3066] rounded-2xl">
-              No picks available yet — check back soon.
-            </div>
-          )}
-        </div>
-
-        <div className="text-center mt-8">
-          <Link href="/sign-up" className="inline-flex items-center gap-2 text-[#4488FF] hover:text-[#6699FF] font-semibold text-sm transition-colors">
-            Get all today's picks <ArrowRight size={14} />
-          </Link>
-        </div>
-      </div>
-    </section>
-  );
-}
-
+/* ---------------- TODAY'S TOP PICK ---------------- */
 function TeamLogoWithFallback({ league, abbrev, size = 36 }: { league: string; abbrev: string; size?: number }) {
   const [imgError, setImgError] = useState(false);
   const src = getTeamLogoUrl(league, abbrev);
-
   if (src && !imgError) {
     return (
       <img
@@ -311,26 +191,10 @@ function TeamLogoWithFallback({ league, abbrev, size = 36 }: { league: string; a
   }
   return (
     <div
-      className="flex items-center justify-center rounded text-[11px] font-black font-display text-white bg-[#0033A0]"
+      className="flex items-center justify-center rounded text-[11px] font-black text-white bg-[#0033A0]"
       style={{ width: size, height: size }}
     >
       {abbrev.slice(0, 3).toUpperCase()}
-    </div>
-  );
-}
-
-function MatchupLogos({ pick, matchup }: { pick: any; matchup: any }) {
-  return (
-    <div className="flex items-center justify-center gap-3 mb-3">
-      <div className="flex items-center gap-1.5">
-        <TeamLogoWithFallback league={pick.league} abbrev={matchup.awayAbbrev} size={36} />
-        <span className={`text-lg font-black font-display ${pick.pick === 'away' ? 'text-white' : 'text-white/40'}`}>{matchup.awayAbbrev.toUpperCase()}</span>
-      </div>
-      <span className="text-white/30 text-sm">@</span>
-      <div className="flex items-center gap-1.5">
-        <TeamLogoWithFallback league={pick.league} abbrev={matchup.homeAbbrev} size={36} />
-        <span className={`text-lg font-black font-display ${pick.pick === 'home' ? 'text-white' : 'text-white/40'}`}>{matchup.homeAbbrev.toUpperCase()}</span>
-      </div>
     </div>
   );
 }
@@ -341,323 +205,534 @@ function TopPickCard({ pick }: { pick: any }) {
   const ev = parseFloat(pick.ev ?? "0");
   const publishOdds = parseFloat(pick.publishOdds ?? "0");
   const publishLine = pick.publishLine ? parseFloat(pick.publishLine) : null;
+  const modelProb = parseFloat(pick.modelProbCalibrated ?? "0.5");
+  const marketProb = parseFloat(pick.marketProbFair ?? "0.5");
 
   return (
-    <div className="relative rounded-2xl border border-[#FFC107]/30 bg-gradient-to-br from-[#0D1B3E] via-[#112454] to-[#0D1B3E] p-6 shadow-[0_0_60px_rgba(255,193,7,0.12)] overflow-hidden">
-      <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
-        style={{ backgroundImage: "repeating-linear-gradient(45deg,#FFC107 0,#FFC107 1px,transparent 0,transparent 50%)", backgroundSize: "12px 12px" }}
-      />
-      <div className="relative text-center">
-        <div className="flex items-center justify-center gap-2 mb-4">
-          <Star size={13} className="text-[#FFC107] fill-[#FFC107]" />
-          <span className="text-[#FFC107] text-xs font-bold tracking-widest uppercase">Top Pick of the Day</span>
-          <span className="bg-[#FFC107] text-[#060D1F] text-[10px] font-black px-1.5 py-0.5 rounded font-display">TIER {pick.tier}</span>
-        </div>
+    <div className="bg-[#060D1F] border border-[#FFC107]/30 p-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] relative overflow-hidden rounded-sm">
+      <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFC107]/5 rounded-bl-full pointer-events-none" />
 
-        {matchup && (
-          <MatchupLogos pick={pick} matchup={matchup} />
+      <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-6 relative">
+        <div className="flex items-center gap-3">
+          <span className="px-3 py-1 bg-[#FFC107] text-[#060D1F] text-xs font-bold uppercase tracking-widest rounded-sm">
+            Tier {pick.tier ?? "A"}
+          </span>
+          <span className="text-white/50 text-sm uppercase tracking-wider">
+            {pick.league?.toUpperCase()} {pick.market}
+          </span>
+        </div>
+        <span className="text-[#388E3C] font-mono text-sm flex items-center gap-1">
+          <TrendingUp size={14} /> {(ev * 100).toFixed(1)}% EV
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between mb-8 relative">
+        {matchup ? (
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <TeamLogoWithFallback league={pick.league} abbrev={matchup.awayAbbrev} size={40} />
+              <span className={`font-black ${pick.pick === "away" ? "text-white" : "text-white/40"}`}>
+                {matchup.awayAbbrev.toUpperCase()}
+              </span>
+            </div>
+            <span className="text-white/30 italic" style={{ fontFamily: SERIF }}>at</span>
+            <div className="flex items-center gap-2">
+              <TeamLogoWithFallback league={pick.league} abbrev={matchup.homeAbbrev} size={40} />
+              <span className={`font-black ${pick.pick === "home" ? "text-white" : "text-white/40"}`}>
+                {matchup.homeAbbrev.toUpperCase()}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="text-white/60 text-sm">{pick.gameKey}</div>
         )}
-
-        <div className="flex items-baseline justify-center gap-3 mb-5">
-          <span className="text-3xl font-black font-display text-white">{pick.pick.toUpperCase()}</span>
-          {publishLine !== null && <span className="text-2xl font-bold text-white/60">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>}
-          <span className="text-2xl font-bold text-[#4488FF]">{formatOdds(publishOdds)}</span>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4 pt-4 border-t border-[#1A3066]">
-          <div className="text-center">
-            <div className="text-[10px] uppercase text-white/40 tracking-wider mb-1">Edge</div>
-            <div className="text-xl font-black font-display text-[#388E3C]">{(edge * 100).toFixed(1)}%</div>
-          </div>
-          <div className="text-center">
-            <div className="text-[10px] uppercase text-white/40 tracking-wider mb-1">EV</div>
-            <div className="text-xl font-black font-display text-[#388E3C]">{(ev * 100).toFixed(1)}%</div>
-          </div>
-          <div className="text-center">
-            <div className="text-[10px] uppercase text-white/40 tracking-wider mb-1">League</div>
-            <div className="text-xl font-black font-display text-white">{pick.league.toUpperCase()}</div>
+        <div className="text-right">
+          <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Our Play</div>
+          <div className="text-xl font-bold text-white">
+            {pick.pick?.toString().toUpperCase()}
+            {publishLine !== null && (
+              <span className="text-white/60 ml-2">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>
+            )}
+            <span className="text-[#FFC107] font-normal ml-2">{formatOdds(publishOdds)}</span>
           </div>
         </div>
+      </div>
 
-        <div className="flex justify-center mt-4 pt-3 border-t border-[#1A3066]">
-          <WhyThisPickPopover input={{
-            modelProb: parseFloat(pick.modelProbCalibrated ?? "0.5"),
-            marketProb: parseFloat(pick.marketProbFair ?? "0.5"),
-            edge,
-            ev,
-            tier: pick.tier ?? "A",
-            rankScore: parseFloat(pick.rankScore ?? "0.8"),
-            market: pick.market ?? "total",
-            league: pick.league ?? "nhl",
-            pick: pick.pick ?? "under",
-            publishOdds,
-            publishLine,
-          }} />
+      <div className="grid grid-cols-3 gap-4 bg-[#0D1B3E] p-4 rounded-sm border border-white/5 relative">
+        <div>
+          <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Market Prob</div>
+          <div className="text-lg font-mono text-white">{(marketProb * 100).toFixed(1)}%</div>
         </div>
+        <div>
+          <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Model Prob</div>
+          <div className="text-lg font-mono text-[#FFC107]">{(modelProb * 100).toFixed(1)}%</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">True Edge</div>
+          <div className="text-lg font-mono text-[#388E3C]">+{(edge * 100).toFixed(1)}%</div>
+        </div>
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-white/5 flex justify-end relative">
+        <WhyThisPickPopover input={{
+          modelProb,
+          marketProb,
+          edge,
+          ev,
+          tier: pick.tier ?? "A",
+          rankScore: parseFloat(pick.rankScore ?? "0.8"),
+          market: pick.market ?? "total",
+          league: pick.league ?? "nhl",
+          pick: pick.pick ?? "under",
+          publishOdds,
+          publishLine,
+        }} />
       </div>
     </div>
   );
 }
 
-function HowItWorks() {
+function TodaysTopPick() {
+  const today = new Date().toISOString().split("T")[0];
+  const { data, isLoading } = useQuery({
+    queryKey: ["landing-top-pick", today],
+    queryFn: async () => {
+      const res = await axios.get(`/picks?date=${today}&tier=A&result=pending&limit=1`);
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const pick = data?.picks?.[0] ?? null;
+
+  return (
+    <section className="py-20 bg-[#0D1B3E] border-y border-[#FFC107]/10 relative">
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="grid lg:grid-cols-2 gap-12 items-center">
+          <div>
+            <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-3 flex items-center gap-2">
+              <Lock size={14} /> Today's Unlocked Preview
+            </div>
+            <h2 className="text-4xl font-bold mb-6 text-white" style={{ fontFamily: SERIF }}>
+              A glimpse inside the vault.
+            </h2>
+            <p className="text-white/60 mb-8 leading-relaxed font-light text-lg">
+              Members get the entire daily slate the moment our model surfaces it. Here's
+              one Tier-A play from today — published with the same metrics members see:
+              market probability, model probability, and the true edge between them.
+            </p>
+
+            <div className="grid grid-cols-2 gap-6 mb-2">
+              <div className="border-l-2 border-[#FFC107] pl-4">
+                <div className="text-3xl text-white" style={{ fontFamily: SERIF }}>10 min</div>
+                <div className="text-xs text-white/50 uppercase tracking-wide">Refresh cadence</div>
+              </div>
+              <div className="border-l-2 border-[#FFC107] pl-4">
+                <div className="text-3xl text-white" style={{ fontFamily: SERIF }}>3:30 AM</div>
+                <div className="text-xs text-white/50 uppercase tracking-wide">Daily auto-grading</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full">
+            {isLoading ? (
+              <div className="h-72 rounded-sm bg-[#060D1F] animate-pulse border border-white/5" />
+            ) : pick ? (
+              <TopPickCard pick={pick} />
+            ) : (
+              <div className="bg-[#060D1F] border border-dashed border-[#FFC107]/20 p-10 text-center rounded-sm">
+                <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-2">
+                  Awaiting Today's Slate
+                </div>
+                <p className="text-white/50 text-sm">
+                  No Tier-A play has cleared the threshold yet today. The model
+                  re-scores every 10 minutes — check back, or sign up to be notified.
+                </p>
+              </div>
+            )}
+            <div className="mt-4 text-center">
+              <Link href="/sign-up" className="inline-flex items-center gap-2 text-[#FFC107] hover:text-[#FFD54F] text-sm font-bold uppercase tracking-widest transition-colors">
+                See the full slate <ArrowRight size={14} />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- METHODOLOGY ---------------- */
+function MethodologySection() {
   const steps = [
     {
-      num: "01",
+      step: "01",
       title: "Market Snapshots",
-      desc: "Every 10 minutes, we pull live odds from all major US sportsbooks — DraftKings, FanDuel, BetMGM, Caesars, and more. We find the best available line for every game.",
+      desc: "Every 10 minutes we ingest live odds from DraftKings, FanDuel, BetMGM, Caesars and more, plus matched alt-line and total pairs. Real-time ingestion is the baseline for every calculation.",
+      icon: Database,
+      meta: ["8+ sportsbooks", "10-minute cadence"],
     },
     {
-      num: "02",
-      title: "Model Scoring",
-      desc: "Our calibrated ML models compute win probability, edge over the market's fair price, and expected value for every pick. Only positive-EV picks with meaningful edge advance.",
+      step: "02",
+      title: "Calibrated Scoring",
+      desc: "Proprietary models compute true win probability and the edge over each book's implied price. Probabilities are isotonically calibrated and Brier-scored against historical outcomes.",
+      icon: Cpu,
+      meta: ["Brier-scored", "EV calculated"],
     },
     {
-      num: "03",
-      title: "Graded & Published",
-      desc: "Picks are tiered A (strongest), B, or C based on a composite rank score. Every morning at 3:30 AM, prior picks are automatically validated against final scores.",
+      step: "03",
+      title: "Tiered Grading",
+      desc: "Surviving plays are tiered A / B / C by composite rank score. Every published pick is graded against the final score the next morning — wins, losses, pushes, and CLV are all public.",
+      icon: Shield,
+      meta: ["A/B/C tiers", "CLV tracked"],
     },
   ];
 
   return (
-    <section id="how-it-works" className="py-24 bg-[#0D1B3E]">
+    <section id="methodology" className="py-24 relative">
       <div className="max-w-7xl mx-auto px-6">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
-          <div>
-            <div className="text-[#4488FF] text-xs font-bold tracking-widest uppercase mb-3">Process</div>
-            <h2 className="text-4xl font-black font-display text-white mb-4 leading-tight">
-              How SportsMVP Works
-            </h2>
-            <p className="text-white/60 mb-10 leading-relaxed">
-              Every pick is the output of an automated, transparent pipeline — no human handicapper discretion.
-              The model runs 24/7 so you always have the most current information.
-            </p>
-            <div className="space-y-8">
-              {steps.map((step) => (
-                <div key={step.num} className="flex gap-5">
-                  <div className="text-3xl font-black font-display text-[#4488FF]/40 leading-none w-10 shrink-0">{step.num}</div>
-                  <div>
-                    <div className="text-white font-bold mb-1">{step.title}</div>
-                    <div className="text-white/50 text-sm leading-relaxed">{step.desc}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
+        <div className="text-center max-w-2xl mx-auto mb-16">
+          <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-3">
+            The Methodology
           </div>
-          <div className="relative rounded-2xl overflow-hidden bg-[#0D1B3E] border border-[#1A3066] p-6 shadow-2xl">
-            <div className="absolute top-0 right-0 w-64 h-64 rounded-full bg-[#0033A0]/10 blur-[60px] pointer-events-none" />
-            <div className="text-white/30 text-xs font-mono uppercase tracking-wider mb-4">Live Model Output · April 7, 2026</div>
-            {[
-              { game: "MIL @ CHI", market: "Spread", pick: "MIL -4.5", edge: "+4.6%", ev: "+8.2%", tier: "A" },
-              { game: "BOS @ NYR", market: "Moneyline", pick: "BOS ML", edge: "+3.1%", ev: "+5.4%", tier: "B" },
-              { game: "LAL @ DEN", market: "Total", pick: "Over 227.5", edge: "+2.8%", ev: "+4.9%", tier: "B" },
-              { game: "TOR @ PHI", market: "Spread", pick: "PHI -3", edge: "+1.9%", ev: "+3.2%", tier: "C" },
-            ].map((row) => (
-              <div key={row.game} className="flex items-center justify-between py-3 border-b border-[#1A3066]/60 last:border-0">
-                <div>
-                  <div className="text-white text-sm font-semibold">{row.game}</div>
-                  <div className="text-white/40 text-xs">{row.market} · {row.pick}</div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <div className="text-[#388E3C] text-sm font-bold">{row.edge}</div>
-                    <div className="text-white/30 text-[10px]">Edge</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[#388E3C] text-sm font-bold">{row.ev}</div>
-                    <div className="text-white/30 text-[10px]">EV</div>
-                  </div>
-                  <div className={`text-[10px] font-black px-2 py-1 rounded font-display ${
-                    row.tier === 'A' ? 'bg-[#FFC107] text-[#060D1F]' :
-                    row.tier === 'B' ? 'bg-[#0033A0] text-white' :
-                    'bg-[#1A3066] text-white/70'
-                  }`}>{row.tier}</div>
-                </div>
-              </div>
-            ))}
-            <div className="mt-4 pt-3 flex items-center justify-between">
-              <span className="text-white/30 text-xs">Updated 3 mins ago</span>
-              <span className="text-[#388E3C] text-xs font-semibold">● Live</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function FeaturesSection() {
-  return (
-    <section id="features" className="py-24 bg-[#060D1F]">
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="text-center mb-14">
-          <div className="text-[#4488FF] text-xs font-bold tracking-widest uppercase mb-3">What You Get</div>
-          <h2 className="text-4xl font-black font-display text-white">Built for Serious Bettors</h2>
-          <p className="text-white/50 mt-3 max-w-xl mx-auto">Every feature is designed around the principle that you deserve to see the math, not just the pick.</p>
-        </div>
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {FEATURES.map((f) => (
-            <div key={f.title} className="bg-[#0D1B3E] border border-[#1A3066] rounded-2xl p-6 hover:border-[#4488FF]/30 transition-colors group">
-              <div className="w-10 h-10 rounded-xl bg-[#4488FF]/10 flex items-center justify-center mb-4 group-hover:bg-[#4488FF]/20 transition-colors">
-                <f.icon size={20} className="text-[#4488FF]" />
-              </div>
-              <h3 className="text-white font-bold mb-2">{f.title}</h3>
-              <p className="text-white/50 text-sm leading-relaxed">{f.desc}</p>
-            </div>
-          ))}
+          <h2 className="text-4xl font-bold mb-4 text-white" style={{ fontFamily: SERIF }}>
+            No gut calls. Just the pipeline.
+          </h2>
+          <p className="text-white/50 font-light text-lg">
+            Our edge comes from a rigorous, three-stage quantitative pipeline.
+            We publish the formulas, the calibration, and every result.
+          </p>
         </div>
 
-        {/* League cards */}
-        <div className="mt-16 grid grid-cols-2 gap-6">
-          {[
-            {
-              league: "NHL",
-              markets: ["Moneyline", "Puck Line", "Totals"],
-              color: "#4488FF",
-              games: "30 teams · 82 game season",
-              gradient: "from-[#0033A0]/30 to-[#0D1B3E]",
-              icon: "NHL",
-            },
-            {
-              league: "NBA",
-              markets: ["Moneyline", "Spread", "Totals"],
-              color: "#FFC107",
-              games: "30 teams · 82 game season",
-              gradient: "from-[#FFC107]/10 to-[#0D1B3E]",
-              icon: "NBA",
-            },
-          ].map((l) => (
-            <div key={l.league} className={`relative rounded-2xl bg-gradient-to-br ${l.gradient} border border-[#1A3066] p-6 overflow-hidden`}>
-              <div className="absolute top-4 right-4 text-4xl opacity-20 select-none">{l.icon}</div>
-              <div className="text-3xl font-black font-display mb-1" style={{ color: l.color }}>{l.league}</div>
-              <div className="text-white/40 text-xs mb-4">{l.games}</div>
-              <div className="flex flex-wrap gap-2">
-                {l.markets.map((m) => (
-                  <span key={m} className="text-[10px] font-bold px-2 py-1 rounded border border-[#1A3066] text-white/60">{m}</span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function PricingSection() {
-  return (
-    <section id="pricing" className="py-24 bg-[#0D1B3E]">
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="text-center mb-14">
-          <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-3">Simple Pricing</div>
-          <h2 className="text-4xl font-black font-display text-white">Choose Your Level</h2>
-          <p className="text-white/50 mt-3 max-w-lg mx-auto">Start free. Upgrade when the picks prove themselves. Cancel anytime.</p>
-        </div>
-
-        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-          {PLANS.map((plan) => (
+        <div className="grid md:grid-cols-3 gap-8">
+          {steps.map((item) => (
             <div
-              key={plan.name}
-              className="relative rounded-2xl border p-6 flex flex-col"
-              style={{
-                borderColor: plan.popular ? plan.accent : "#1A3066",
-                background: plan.popular
-                  ? `linear-gradient(135deg, #0D1B3E, #112454)`
-                  : "#0D1B3E",
-                boxShadow: plan.popular ? `0 0 40px ${plan.accent}33` : "none",
-              }}
+              key={item.step}
+              className="p-8 border border-white/10 bg-[#0D1B3E]/50 hover:bg-[#0D1B3E] hover:border-[#FFC107]/30 transition-all group rounded-sm"
             >
-              {plan.popular && (
-                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-[#0033A0] text-white text-[10px] font-black px-3 py-1 rounded-full tracking-widest uppercase">
-                  Most Popular
+              <div className="flex justify-between items-start mb-8">
+                <item.icon size={24} className="text-[#FFC107] group-hover:scale-110 transition-transform" />
+                <span className="text-4xl font-bold text-white/10" style={{ fontFamily: SERIF }}>{item.step}</span>
+              </div>
+              <h3 className="text-xl font-bold mb-3 text-white">{item.title}</h3>
+              <p className="text-white/50 text-sm leading-relaxed mb-6">{item.desc}</p>
+              <ul className="space-y-2 border-t border-white/5 pt-4">
+                {item.meta.map((m) => (
+                  <li key={m} className="text-xs font-mono text-white/40 flex items-center gap-2">
+                    <CheckCircle2 className="w-3 h-3 text-[#388E3C]" /> {m}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- LIVE OUTPUT TERMINAL ---------------- */
+function LiveOutputStrip() {
+  return (
+    <section className="py-16 bg-[#060D1F] border-y border-white/5">
+      <div className="max-w-7xl mx-auto px-6 grid lg:grid-cols-5 gap-10 items-center">
+        <div className="lg:col-span-2">
+          <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-3">
+            What members see
+          </div>
+          <h3 className="text-3xl font-bold text-white mb-4" style={{ fontFamily: SERIF }}>
+            The model speaks for itself.
+          </h3>
+          <p className="text-white/50 leading-relaxed font-light">
+            Inside the dashboard, each pick is presented with the raw output that
+            produced it. No commentary. No rationalizing. Just the numbers that drove
+            the call — and the result, once it lands.
+          </p>
+        </div>
+
+        <div className="lg:col-span-3 rounded-sm border border-[#1A3066] bg-[#0D1B3E]/80 backdrop-blur shadow-2xl overflow-hidden font-mono text-xs">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[#1A3066] bg-[#060D1F]/50">
+            <div className="flex gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500/80" />
+              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80" />
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500/80" />
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="px-2 py-0.5 text-[10px] uppercase tracking-widest border border-[#FFC107]/40 text-[#FFC107] rounded-sm">Illustrative sample</span>
+              <span className="text-slate-500">model_output_stream.log</span>
+            </div>
+          </div>
+          <div className="p-4 space-y-2 text-slate-300">
+            <div className="flex text-slate-500"><span className="w-20 shrink-0">14:02:41</span><span>[INFO] fetching_market_snapshots... [OK]</span></div>
+            <div className="flex text-slate-500"><span className="w-20 shrink-0">14:02:43</span><span>[INFO] running_inference: model=nba_spread_v4... [OK]</span></div>
+            <div className="flex"><span className="w-20 shrink-0 text-slate-500">14:02:45</span><span className="text-[#4488FF]">[EVAL] POSITIVE_EV_DETECTED</span></div>
+            <div className="pl-20 space-y-1">
+              <div><span className="text-slate-500">market:</span> "spread"</div>
+              <div><span className="text-slate-500">pick:</span> "BOS -4.5"</div>
+              <div><span className="text-slate-500">book_odds:</span> -110 <span className="text-slate-500">(implied: 52.38%)</span></div>
+              <div><span className="text-slate-500">model_prob:</span> 56.12% <span className="text-slate-500">(calibrated)</span></div>
+              <div><span className="text-slate-500">edge:</span> <span className="text-[#388E3C]">+3.74%</span></div>
+              <div><span className="text-slate-500">ev:</span> <span className="text-[#388E3C]">+7.14%</span></div>
+              <div><span className="text-slate-500">tier:</span> <span className="text-[#FFC107]">"A"</span></div>
+            </div>
+            <div className="flex text-slate-500 pt-2 border-t border-[#1A3066]/50"><span className="w-20 shrink-0">14:02:46</span><span>[INFO] publishing_to_dashboard... [OK]</span></div>
+            <div className="flex"><span className="w-20 shrink-0 text-slate-500">14:02:47</span><span className="text-slate-400 animate-pulse">awaiting_next_tick...</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- TRACK RECORD ---------------- */
+function TrackRecordSection({ stats, picksTracked }: { stats: ReturnType<typeof buildStats>; picksTracked: number }) {
+  return (
+    <section id="track-record" className="py-20 bg-[#FFC107] text-[#060D1F]">
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
+          <div>
+            <div className="text-[#060D1F]/60 text-xs font-bold tracking-widest uppercase mb-2">
+              Public Track Record
+            </div>
+            <h2 className="text-4xl font-bold mb-2" style={{ fontFamily: SERIF }}>
+              Transparency is the product.
+            </h2>
+            <p className="text-[#060D1F]/70 font-medium max-w-xl">
+              We publish every pick the moment it surfaces and grade every result the
+              next morning. No cherry-picked highlight reels.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="px-4 py-2 border border-[#060D1F]/20 rounded-full text-xs font-bold uppercase tracking-widest flex items-center gap-2 bg-[#060D1F]/5">
+              <span className="w-2 h-2 rounded-full bg-[#388E3C] animate-pulse" />
+              Rolling {STAT_WINDOW}-day window
+            </div>
+            <Link
+              href="/performance"
+              className="px-4 py-2 border border-[#060D1F] rounded-full text-xs font-bold uppercase tracking-widest hover:bg-[#060D1F] hover:text-[#FFC107] transition-colors"
+            >
+              Full record →
+            </Link>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[#060D1F]/10 border border-[#060D1F]/10 rounded-sm overflow-hidden">
+          <div className="bg-[#FFC107] p-8 text-center">
+            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.winRate}</div>
+            <div className="text-xs font-bold uppercase tracking-widest opacity-70">Win Rate</div>
+          </div>
+          <div className="bg-[#FFC107] p-8 text-center">
+            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.roi}</div>
+            <div className="text-xs font-bold uppercase tracking-widest opacity-70">ROI</div>
+          </div>
+          <div className="bg-[#FFC107] p-8 text-center">
+            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.units}</div>
+            <div className="text-xs font-bold uppercase tracking-widest opacity-70">Units Won</div>
+          </div>
+          <div className="bg-[#FFC107] p-8 text-center">
+            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.avgEv}</div>
+            <div className="text-xs font-bold uppercase tracking-widest opacity-70">Avg EV / Pick</div>
+          </div>
+        </div>
+
+        <div className="mt-4 text-xs text-[#060D1F]/60 font-medium text-center md:text-left">
+          {stats.isLive
+            ? `Live performance · ${picksTracked} picks tracked in window`
+            : "Baseline shown — live track record publishes after first graded slate"}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- MEMBERSHIP ---------------- */
+function MembershipSection() {
+  const tiers = [
+    {
+      name: "Guest Pass",
+      tagline: "Verify the model before you commit.",
+      price: "Free",
+      priceMeta: "No card required",
+      cta: "Start Free",
+      ctaHref: "/sign-up",
+      ctaStyle: "border border-white/20 hover:bg-white/5 text-white",
+      features: [
+        { ok: true, text: "Today's #1 Tier-A pick (delayed)" },
+        { ok: true, text: "Public tier badge + final result" },
+        { ok: false, text: "No edge / EV / probability metrics" },
+        { ok: false, text: "No full slate or history" },
+      ],
+      highlight: false,
+      badge: null,
+    },
+    {
+      name: "Members",
+      tagline: "Full access to the daily slate and the math behind it.",
+      billingNote: "Billed as MVP",
+      price: "$19.99",
+      priceUnit: "/ mo",
+      priceMeta: "Or $149 billed annually · save 38%",
+      cta: "Become a Member",
+      ctaHref: "/subscribe",
+      ctaStyle: "bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F]",
+      features: [
+        { ok: true, text: "Every Tier A / B / C pick, every day" },
+        { ok: true, text: "Full edge, EV, model & market probability" },
+        { ok: true, text: "CLV tracked on every pick" },
+        { ok: true, text: "Best line across all sportsbooks" },
+        { ok: true, text: "Parlay Builder + Bet Tracker" },
+        { ok: true, text: "Re-scored every 10 minutes" },
+      ],
+      highlight: true,
+      badge: "Most Popular",
+    },
+    {
+      name: "Inner Circle",
+      tagline: "Programmatic access for serious analysts.",
+      billingNote: "Billed as MVP Pro",
+      price: "$39.99",
+      priceUnit: "/ mo",
+      priceMeta: "Or $299 billed annually",
+      cta: "Join Inner Circle",
+      ctaHref: "/subscribe",
+      ctaStyle: "border border-white hover:bg-white hover:text-[#060D1F] text-white",
+      features: [
+        { ok: true, text: "Everything in Members" },
+        { ok: true, text: "Email alerts on every Tier-A surface" },
+        { ok: true, text: "Line-movement notifications" },
+        { ok: true, text: "Early publish access (before public)" },
+        { ok: true, text: "Programmatic API access" },
+        { ok: true, text: "Priority support" },
+      ],
+      highlight: false,
+      badge: null,
+    },
+  ];
+
+  return (
+    <section id="membership" className="py-32 relative">
+      <div className="max-w-7xl mx-auto px-6">
+        <div className="text-center max-w-3xl mx-auto mb-16">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/20 bg-white/5 mb-4 text-xs font-bold uppercase tracking-widest text-white/70">
+            Access Tiers
+          </div>
+          <h2 className="text-4xl md:text-5xl font-bold mb-6 text-white" style={{ fontFamily: SERIF }}>
+            Choose your level of access.
+          </h2>
+          <p className="text-white/60 font-light text-lg">
+            Start free. Upgrade when the picks prove themselves. Cancel any time —
+            no contracts, no pressure.
+          </p>
+        </div>
+
+        <div className="grid lg:grid-cols-3 gap-8 items-stretch">
+          {tiers.map((tier) => (
+            <div
+              key={tier.name}
+              className={`p-8 flex flex-col rounded-sm relative ${
+                tier.highlight
+                  ? "border border-[#FFC107]/50 bg-gradient-to-b from-[#112454] to-[#0D1B3E] lg:-translate-y-4 shadow-[0_20px_50px_rgba(0,0,0,0.5)]"
+                  : "border border-white/10 bg-[#0D1B3E]"
+              }`}
+            >
+              {tier.badge && (
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-[#FFC107] text-[#060D1F] px-4 py-1 text-xs font-bold uppercase tracking-widest rounded-sm">
+                  {tier.badge}
                 </div>
               )}
-              <div className="mb-6">
-                <div className="text-white font-bold text-lg mb-1" style={{ color: plan.popular ? "white" : "rgba(255,255,255,0.7)" }}>
-                  {plan.name}
-                </div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-4xl font-black font-display text-white">{plan.price}</span>
-                  <span className="text-white/50 text-sm">{plan.period}</span>
-                </div>
-                {plan.annual && (
-                  <div className="text-white/40 text-xs mt-1">{plan.annual} · save 38%</div>
+
+              <div className="flex items-baseline justify-between mb-2 gap-3">
+                <h3 className={`text-2xl font-bold ${tier.highlight ? "text-[#FFC107]" : "text-white"}`} style={{ fontFamily: SERIF }}>
+                  {tier.name}
+                </h3>
+                {tier.billingNote && (
+                  <span className="text-[10px] text-white/40 uppercase tracking-widest font-mono whitespace-nowrap">
+                    {tier.billingNote}
+                  </span>
                 )}
+              </div>
+              <p className="text-white/50 text-sm mb-6 min-h-[2.5rem]">{tier.tagline}</p>
+
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-4xl font-bold text-white">{tier.price}</span>
+                {tier.priceUnit && <span className="text-white/50">{tier.priceUnit}</span>}
+              </div>
+              <div className={`text-sm mb-8 font-medium ${tier.highlight ? "text-[#FFC107]" : "text-white/40"}`}>
+                {tier.priceMeta}
               </div>
 
               <ul className="space-y-3 mb-8 flex-1">
-                {plan.items.map((item) => (
-                  <li key={item} className="flex items-start gap-2.5 text-sm">
-                    <CheckCircle size={14} className="shrink-0 mt-0.5" style={{ color: plan.accent }} />
-                    <span className="text-white/70">{item}</span>
+                {tier.features.map((f, i) => (
+                  <li key={i} className={`flex items-start gap-3 text-sm ${f.ok ? "text-white/85" : "text-white/40"}`}>
+                    {f.ok ? (
+                      <Check size={18} className={`shrink-0 mt-0.5 ${tier.highlight ? "text-[#FFC107]" : "text-[#388E3C]"}`} />
+                    ) : (
+                      <span className="w-[18px] h-[18px] flex items-center justify-center text-white/30 shrink-0 mt-0.5">—</span>
+                    )}
+                    <span>{f.text}</span>
                   </li>
                 ))}
               </ul>
 
               <Link
-                href={plan.ctaHref}
-                className={`w-full py-3 rounded-xl text-sm font-bold text-center transition-colors block ${plan.ctaStyle}`}
+                href={tier.ctaHref}
+                className={`w-full py-3 text-center font-bold uppercase tracking-widest text-sm transition-colors rounded-sm ${tier.ctaStyle}`}
               >
-                {plan.cta}
+                {tier.cta}
               </Link>
             </div>
           ))}
         </div>
 
-        <p className="text-center text-white/30 text-xs mt-8">
-          Pricing does not constitute financial advice. Gambling involves risk. Please bet responsibly.
+        <p className="text-center text-white/30 text-xs mt-10 max-w-xl mx-auto">
+          Pricing does not constitute financial advice. Sports wagering involves risk.
+          Please bet responsibly. SportsMVP picks are for informational purposes only.
         </p>
       </div>
     </section>
   );
 }
 
+/* ---------------- FOOTER ---------------- */
 function LandingFooter() {
   return (
-    <footer className="bg-[#060D1F] border-t border-[#1A3066] py-14">
+    <footer className="border-t border-white/10 bg-[#060D1F] pt-16 pb-8">
       <div className="max-w-7xl mx-auto px-6">
         <div className="grid md:grid-cols-4 gap-10 mb-12">
           <div className="md:col-span-2">
-            <img src="/logo-nav.png" alt="SportsMVP" className="h-8 object-contain mb-4" />
+            <div className="flex items-center gap-3 mb-4">
+              <img src="/shield-logo.png" alt="SportsMVP" className="h-10 w-auto object-contain" />
+              <span className="text-xl font-bold text-white" style={{ fontFamily: SERIF }}>SportsMVP</span>
+            </div>
             <p className="text-white/40 text-sm leading-relaxed max-w-sm">
-              SportsMVP is a data-driven sports analytics platform. We use calibrated machine learning models to identify positive expected-value betting opportunities in NBA and NHL markets.
+              SportsMVP is a data-driven sports analytics platform. We use calibrated
+              machine-learning models to identify positive expected-value plays in NBA
+              and NHL markets, and publish every result.
             </p>
             <p className="text-white/25 text-xs mt-4">
-              For entertainment and informational purposes only. Always gamble responsibly.
+              For entertainment and informational purposes only. Always wager responsibly.
             </p>
           </div>
           <div>
             <div className="text-white/60 text-xs font-bold uppercase tracking-wider mb-4">Platform</div>
             <ul className="space-y-2.5">
-              {[
-                { label: "Today's Picks", href: "/sign-in" },
-                { label: "Performance", href: "/performance" },
-                { label: "Pick History", href: "/history" },
-              ].map((l) => (
-                <li key={l.label}>
-                  <Link href={l.href} className="text-white/50 hover:text-white text-sm transition-colors">{l.label}</Link>
-                </li>
-              ))}
+              <li><Link href="/sign-in" className="text-white/50 hover:text-[#FFC107] text-sm transition-colors">Today's Picks</Link></li>
+              <li><Link href="/performance" className="text-white/50 hover:text-[#FFC107] text-sm transition-colors">Performance</Link></li>
+              <li><Link href="/history" className="text-white/50 hover:text-[#FFC107] text-sm transition-colors">Pick History</Link></li>
             </ul>
           </div>
           <div>
             <div className="text-white/60 text-xs font-bold uppercase tracking-wider mb-4">Legal</div>
             <ul className="space-y-2.5">
-              {[
-                { label: "Privacy Policy", href: "/privacy" },
-                { label: "Terms of Service", href: "/terms" },
-              ].map((l) => (
-                <li key={l.label}>
-                  <Link href={l.href} className="text-white/50 hover:text-white text-sm transition-colors">{l.label}</Link>
-                </li>
-              ))}
+              <li><Link href="/privacy" className="text-white/50 hover:text-[#FFC107] text-sm transition-colors">Privacy Policy</Link></li>
+              <li><Link href="/terms" className="text-white/50 hover:text-[#FFC107] text-sm transition-colors">Terms of Service</Link></li>
             </ul>
           </div>
         </div>
-        <div className="border-t border-[#1A3066] pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-white/30 text-xs">© 2026 SportsMVP. All rights reserved. "Bet Like an MVP." is a trademark of SportsMVP.</p>
-          <div className="flex items-center gap-6">
-            <Link href="/privacy" className="text-white/30 hover:text-white/60 text-xs transition-colors">Privacy</Link>
-            <Link href="/terms" className="text-white/30 hover:text-white/60 text-xs transition-colors">Terms</Link>
+        <div className="border-t border-white/10 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <p className="text-white/30 text-xs">© 2026 SportsMVP. All rights reserved.</p>
+          <div className="flex items-center gap-2 text-white/30 text-xs">
+            <Activity className="w-3.5 h-3.5" />
+            <span>Math, not mystique.</span>
           </div>
         </div>
       </div>
@@ -665,20 +740,21 @@ function LandingFooter() {
   );
 }
 
+/* ---------------- ROOT ---------------- */
 export function Landing() {
   const { data: perf } = useLandingStats();
   const stats = buildStats(perf);
   const picksTracked = perf ? (perf.wins ?? 0) + (perf.losses ?? 0) + (perf.pushes ?? 0) : 0;
 
   return (
-    <div className="min-h-screen bg-[#060D1F] text-white">
+    <div className="min-h-screen bg-[#060D1F] text-white selection:bg-[#FFC107] selection:text-[#060D1F]">
       <LandingNav />
-      <HeroSection stats={stats} picksTracked={picksTracked} />
-      <StatsMobileBar stats={stats} />
+      <HeroSection stats={stats} />
       <TodaysTopPick />
-      <HowItWorks />
-      <FeaturesSection />
-      <PricingSection />
+      <MethodologySection />
+      <LiveOutputStrip />
+      <TrackRecordSection stats={stats} picksTracked={picksTracked} />
+      <MembershipSection />
       <LandingFooter />
     </div>
   );
