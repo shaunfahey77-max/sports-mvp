@@ -1,0 +1,20 @@
+Here are the options I see, ranked by what would actually move the product forward without breaking the "no deploy until justified" rule.
+
+Recommended next moves (pick one or none)
+1. NCAAF spread — give it the same treatment NFL just got. It's built on branch, gated, never properly backtested with the windowing fix. Same offline workflow: full-season backtest → calibration verdict → tier sweep → ship-or-pause decision. Lowest risk, highest information value. Need from you: a green light, plus confirmation of the season window (I'd default to 2024-08-24 → 2025-01-15 for the 2024 NCAAF season if data exists).
+
+2. MLB moneyline — verify it's actually defensible before next MLB season. It was built on branch, gated. I don't have a recent backtest verdict on file. Same playbook. Need from you: the green light and which season window you want to evaluate against.
+
+3. NBA/NHL calibration health check on live production picks. These are live, but I haven't audited their realized calibration since the windowing fix landed. Read-only query on the picks/results tables, no code changes. Need from you: nothing, just a go-ahead.
+
+4. Public-site / monetization work (Stripe checkout flow, paywall UX, landing-page conversion, account dashboard). Different muscle entirely — visual / product work rather than modeling. Need from you: what to focus on (signup conversion, paywall placement, dashboard polish, etc.) and whether you want design exploration on the canvas first.
+
+5. Nothing yet. Hold the line, wait for fresh NFL data (2024 season backfill or 2026 preseason) before any further sports-modeling work. That's a perfectly defensible posture given today's verdicts.
+
+What I genuinely need from you to do anything model-related
+Which league/market to look at next (NCAAF spread, MLB moneyline, or NBA/NHL audit).
+Window to evaluate if it's a backtest (or I can default to the most recent completed season).
+Confirmation that "branch-only, gated, no deploy" still applies — I'll assume yes unless you say otherwise.
+For non-model work (site, billing, UX) I'd just need to know which surface you want me on.
+
+My honest recommendation: #1 (NCAAF) is the most natural next step — same script, same workflow, gives you a parallel data point on whether the football pipeline is salvageable at all, and answers it cleanly in one session. If NCAAF also fails to clear the bar, that's strong evidence to pause all football modeling and redirect energy to the public site / billing instead.
