@@ -1,0 +1,59 @@
+NFL Spread v2.1 — Tier-A Threshold Sweep Verdict
+Window: 2025-09-01 → 2026-02-10 (full 2025 NFL season, identical to v2 / v2.1 backtests) Games evaluated: 225 Mode: offline read-only sensitivity sweep, NO DEPLOY Production posture: unchanged — MARKET_DISABLED.nfl_spread = true, NFL not in cron LEAGUES Model code path: v2.1 (no model / feature / calibration changes — only the Tier A rank-score cutoff is varied) Raw report: .local/backtest-reports/nfl-2025-v2.1-tier-sweep.txt Sweep script: scripts/src/nflTierThresholdSweep.ts
+
+Setup
+Universe: 225 games → 450 raw spread candidates (home + away pairs)
+After market-quality / edge / EV gates: 166 surfaced candidates
+Tier B and Tier C are held at production thresholds 0.50 / 0.35 for every row, so the sweep isolates Tier-A tightening only.
+Reference: Tier B [0.50, 0.65) at n=25 → 32.0% win rate, ROI −36.8%, Brier 0.2696.
+The sweep
+Tier A threshold	n	W-L-P	Win rate	ROI	Brier	Mean model prob	Beats Tier B?
+0.65 (current)	110	53-54-3	49.5%	−0.9%	0.2650	0.6069	yes
+0.70	105	51-51-3	50.0%	+0.1%	0.2651	0.6092	yes
+0.75	99	48-48-3	50.0%	−0.0%	0.2656	0.6127	yes
+0.80	72	36-34-2	51.4%	+2.6%	0.2652	0.6266	yes (best)
+0.85	33	15-17-1	46.9%	−6.8%	0.2829	0.6483	no (Brier worsens)
+0.90	3	1-2-0	33.3%	−36.1%	0.3355	0.6793	n/a (n<10)
+0.95	0	—	—	—	—	—	n/a
+What the sweep tells us
+Three honest readings:
+
+There is a marginally positive slice. Tier A at threshold 0.80 gives ROI +2.6% over n=72, with win rate 51.4%, Brier 0.2652 (better than Tier B's 0.2696). It beats Tier B on win rate, ROI, and Brier simultaneously.
+
+The signal is not "sharper at the top." Brier stays in a tight 0.2650–0.2656 band from threshold 0.65 through 0.80 — calibration does not improve as we tighten. The ROI gain comes from filtering out a roughly-balanced subset of losers, not from finding a sharper sub-population. At 0.85 Brier worsens (0.2829) — a sign the very top of the rank-score distribution is mostly variance, not skill.
+
+Win rate is still below the −110 breakeven (52.4%) at every threshold. Positive ROI at 0.80 (+2.6%) is achievable below breakeven only because non-pick'em odds vary; it is not driven by the model picking winners more often than coinflip + vig. That is the definition of fragile.
+
+16. Verdict — NOT CLEARLY DEFENSIBLE. STOP NFL WORK. LEAVE GATED.
+Your stated criterion was: "a smaller Tier A slice becomes clearly positive, better calibrated, and clearly better than Tier B."
+
+Criterion	Verdict
+Clearly positive ROI	NO — best slice is +2.6% over n=72, single season; would need ROI ≥ ~3% on n≥100 with win rate ≥ 52.4% to be defensible
+Better calibrated than the wider slice	NO — Brier is essentially flat 0.2650–0.2656 across 0.65–0.80; calibration does not improve with tightening
+Clearly better than Tier B	yes — but Tier B is itself a particularly weak reference (n=25 at −36.8% ROI), so this bar is low and noisy
+The strongest possible reading is "Tier A at 0.80 looks marginally OK on one season." That is not enough to justify shipping a paid product on. A defensible slice would need:
+
+ROI clearly above zero, ideally ≥ 3%, not within sampling noise of zero.
+Win rate at or above the −110 breakeven (52.4%), so the edge comes from picking winners, not from price selection.
+Replication on a second season (or a properly-held-out window).
+Calibration improvement at the threshold, not flat curves with one bin happening to land profitable.
+Per your instruction: if the sweep does not produce a clearly defensible Tier A slice, stop NFL work. NFL spread work is paused here.
+
+What stays as-is (no change to anything)
+✅ NFL spread model code (v2.1) unchanged.
+✅ Tier A rank-score threshold for nfl_spread NOT promoted to TIER_A_THRESHOLD_OVERRIDE — production stays at the global 0.65, but it doesn't matter because:
+✅ MARKET_DISABLED.nfl_spread = true (gate on).
+✅ NFL absent from cronService.LEAGUES = ["nba","nhl","mlb"] (no live runs).
+✅ No public route exposure, no deploy, no cron change.
+✅ NBA / NHL / MLB / NCAAF model behavior untouched.
+What stays available for a future revisit (not done now)
+The tier-sweep script (scripts/src/nflTierThresholdSweep.ts) is read-only, parameterized, and reusable — anyone who wants to re-run this sweep on a future season's data after fresh model / feature work can do it with one command.
+The marginally-positive 0.80 slice should be re-tested on a 2024 or 2026 season window if/when historical-ingest data exists, before any ungating discussion happens.
+Guardrails honored
+✅ Did not change the model.
+✅ Did not add features.
+✅ Did not change calibration.
+✅ Did not work on totals or moneyline.
+✅ Did not deploy.
+✅ NFL spread remains gated.
+✅ Read-only script: zero DB writes, zero route exposure.
