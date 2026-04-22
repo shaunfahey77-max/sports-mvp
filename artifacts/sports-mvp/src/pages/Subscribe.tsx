@@ -40,14 +40,15 @@ function PlanCard({
         </div>
       )}
       <div>
-        <div className="flex items-baseline justify-between gap-2 mb-1">
-          <h3 className="text-lg font-black font-display text-white">{name}</h3>
-          {billingNote && (
-            <span className="text-[9px] text-white/40 uppercase tracking-widest font-mono whitespace-nowrap">
-              {billingNote}
+        <h3 className="text-lg font-black font-display text-white mb-2">{name}</h3>
+        {billingNote && (
+          <div className="inline-flex items-center gap-1.5 mb-3 px-2.5 py-1 rounded-sm border border-[#FFC107]/40 bg-[#FFC107]/5">
+            <span className="w-1 h-1 rounded-full bg-[#FFC107]" />
+            <span className="text-[11px] text-[#FFC107] font-mono tracking-wide whitespace-nowrap">
+              {billingNote} on your card
             </span>
-          )}
-        </div>
+          </div>
+        )}
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
 

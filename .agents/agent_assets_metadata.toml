@@ -95,3 +95,21 @@ id = "4GYyJi0xRzzDMJdD1xTUW"
 uri = "file://screenshots/subscribe-desktop.jpg"
 type = "image"
 title = "Subscribe page — desktop"
+
+[[outputs]]
+id = "iWBKGECFmBwN3UeCEvzJj"
+uri = "file://screenshots/landing-desktop-polish.jpg"
+type = "image"
+title = "Homepage — desktop (final)"
+
+[[outputs]]
+id = "hcsm7aPTIoL38v6PD_iI_"
+uri = "file://screenshots/subscribe-desktop-polish.jpg"
+type = "image"
+title = "Subscribe page — desktop (final)"
+
+[[outputs]]
+id = "ljP5NzvQsRyyBdf7_RsYH"
+uri = "file://screenshots/subscribe-mobile-polish.jpg"
+type = "image"
+title = "Subscribe page — mobile (final)"

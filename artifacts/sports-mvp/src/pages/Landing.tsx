@@ -622,6 +622,14 @@ function MembershipSection() {
             Start free. Upgrade when the picks prove themselves. Cancel any time —
             no contracts, no pressure.
           </p>
+          <div className="mt-8 mx-auto max-w-2xl border-l-2 border-[#FFC107] pl-5 text-left">
+            <p className="text-white text-base md:text-lg leading-relaxed">
+              <span className="text-[#FFC107] font-semibold">Members get every model-approved bet,</span>{" "}
+              <span className="text-white/90">live edge data,</span> and{" "}
+              <span className="text-white/90">closing-line tracking</span> — all in one feed,
+              graded publicly the next morning.
+            </p>
+          </div>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8 items-stretch">
@@ -640,16 +648,17 @@ function MembershipSection() {
                 </div>
               )}
 
-              <div className="flex items-baseline justify-between mb-2 gap-3">
-                <h3 className={`text-2xl font-bold ${tier.highlight ? "text-[#FFC107]" : "text-white"}`} style={{ fontFamily: SERIF }}>
-                  {tier.name}
-                </h3>
-                {tier.billingNote && (
-                  <span className="text-[10px] text-white/40 uppercase tracking-widest font-mono whitespace-nowrap">
-                    {tier.billingNote}
+              <h3 className={`text-2xl font-bold mb-3 ${tier.highlight ? "text-[#FFC107]" : "text-white"}`} style={{ fontFamily: SERIF }}>
+                {tier.name}
+              </h3>
+              {tier.billingNote && (
+                <div className="inline-flex items-center gap-1.5 mb-4 px-2.5 py-1 rounded-sm border border-[#FFC107]/40 bg-[#FFC107]/5">
+                  <span className="w-1 h-1 rounded-full bg-[#FFC107]" />
+                  <span className="text-[11px] text-[#FFC107] font-mono tracking-wide whitespace-nowrap">
+                    {tier.billingNote} on your card
                   </span>
-                )}
-              </div>
+                </div>
+              )}
               <p className="text-white/50 text-sm mb-6 min-h-[2.5rem]">{tier.tagline}</p>
 
               <div className="flex items-baseline gap-2 mb-1">
