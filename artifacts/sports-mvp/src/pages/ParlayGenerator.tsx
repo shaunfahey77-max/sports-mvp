@@ -54,7 +54,7 @@ function ParlayPickRow({
       className={cn(
         "w-full text-left rounded-lg border p-3 transition-all duration-150 flex items-center gap-3",
         selected
-          ? "bg-[#0D1B3E] border-[#4488FF]/60 shadow-[0_0_12px_rgba(68,136,255,0.12)]"
+          ? "bg-[#0D1B3E] border-[#FFC107]/60 shadow-[0_0_12px_rgba(255,193,7,0.15)]"
           : "bg-card/60 border-border hover:bg-card hover:border-[#1A3066]",
         disabled && !selected && "opacity-40 cursor-not-allowed"
       )}
@@ -62,7 +62,7 @@ function ParlayPickRow({
       <div
         className={cn(
           "shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors",
-          selected ? "bg-[#4488FF] border-[#4488FF]" : "border-[#1A3066] bg-transparent"
+          selected ? "bg-[#FFC107] border-[#FFC107]" : "border-[#1A3066] bg-transparent"
         )}
       >
         {selected && (
@@ -90,7 +90,7 @@ function ParlayPickRow({
         </div>
         <div className="text-right flex items-center gap-1.5 justify-end">
           <span className="text-[10px] text-muted-foreground">
-            EV <span className="text-[#388E3C] font-bold">{formatPercentage(Number(pick.ev))}</span>
+            EV <span className="text-[#4ADE80] font-bold">{formatPercentage(Number(pick.ev))}</span>
           </span>
         </div>
 
@@ -145,7 +145,7 @@ function ParlaySlip({
         {legs.length > 0 && (
           <button
             onClick={onClear}
-            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors border border-[#1A3066] hover:border-[#4488FF]/40 rounded px-2 py-1"
+            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors border border-[#1A3066] hover:border-[#FFC107]/40 rounded px-2 py-1"
           >
             Clear
           </button>
@@ -196,7 +196,7 @@ function ParlaySlip({
                 </div>
                 <button
                   onClick={() => onRemoveLeg(leg.id)}
-                  className="shrink-0 text-muted-foreground hover:text-[#D32F2F] transition-colors p-0.5 rounded"
+                  className="shrink-0 text-muted-foreground hover:text-[#F87171] transition-colors p-0.5 rounded"
                 >
                   <X size={12} />
                 </button>
@@ -224,7 +224,7 @@ function ParlaySlip({
             Combined Odds
             <InfoTooltip content="The product of all leg decimal odds converted back to American format. For a $100 wager, this is what the book would offer." />
           </div>
-          <div className="text-xl font-display font-bold text-[#4488FF]">
+          <div className="text-xl font-display font-bold text-[#FFC107]">
             {hasEnough ? formatOdds(parlay.americanOdds) : "—"}
           </div>
         </div>
@@ -244,7 +244,7 @@ function ParlaySlip({
               EV / $100
               <InfoTooltip content="Expected value on a $100 stake. Positive means this parlay has a mathematical edge over the house based on our model probabilities." />
             </div>
-            <div className={cn("font-bold text-sm", hasEnough ? (evPositive ? "text-[#388E3C]" : "text-[#D32F2F]") : "text-foreground")}>
+            <div className={cn("font-bold text-sm", hasEnough ? (evPositive ? "text-[#4ADE80]" : "text-[#F87171]") : "text-foreground")}>
               {hasEnough ? `${evPositive ? "+" : ""}$${parlay.ev.toFixed(2)}` : "—"}
             </div>
           </div>
@@ -263,7 +263,7 @@ function ParlaySlip({
       {onLogParlay && hasEnough && (
         <button
           onClick={onLogParlay}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded border border-[#4488FF]/40 text-[#4488FF] text-xs font-bold font-display uppercase tracking-wider hover:bg-[#4488FF]/10 transition-colors"
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded border border-[#FFC107]/40 text-[#FFC107] text-xs font-bold font-display uppercase tracking-wider hover:bg-[#FFC107]/10 transition-colors"
         >
           <BookOpen size={12} />
           Log This Parlay
@@ -307,7 +307,7 @@ function HowParlaysWork({ open, onToggle }: { open: boolean; onToggle: () => voi
             </p>
           </div>
           <div>
-            <div className="text-[#388E3C] font-bold font-display mb-1 uppercase text-xs tracking-wider">
+            <div className="text-[#4ADE80] font-bold font-display mb-1 uppercase text-xs tracking-wider">
               Positive EV Matters
             </div>
             <p>
@@ -317,7 +317,7 @@ function HowParlaysWork({ open, onToggle }: { open: boolean; onToggle: () => voi
             </p>
           </div>
           <div>
-            <div className="text-[#4488FF] font-bold font-display mb-1 uppercase text-xs tracking-wider">
+            <div className="text-[#FFC107] font-bold font-display mb-1 uppercase text-xs tracking-wider">
               Correlation Warning
             </div>
             <p>
@@ -411,29 +411,11 @@ export function ParlayGenerator() {
   const proLocked = (n: number) => n >= 5;
 
   return (
-    <PageLayout>
-      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <img src="/logo-shield.png" alt="SportsMVP" className="h-12 w-auto drop-shadow-lg" />
-          <div>
-            <h1 className="text-4xl font-display text-foreground uppercase tracking-tight">
-              Parlay Builder
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              {format(new Date(), "EEEE, MMMM do, yyyy")} · Combine today's top picks
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge className="bg-[#0033A0] text-white border-transparent text-[10px] px-2 py-0.5 font-bold uppercase tracking-wider">
-            MVP+ Feature
-          </Badge>
-          <div className="text-sm font-display font-bold uppercase tracking-widest text-[#4488FF]">
-            Bet Like an MVP.
-          </div>
-        </div>
-      </div>
-
+    <PageLayout
+      title="Parlay Builder"
+      subtitle={`${format(new Date(), "EEEE, MMMM do, yyyy")} · Combine today's top picks`}
+      tagline="MVP+ FEATURE"
+    >
       <HowParlaysWork open={howOpen} onToggle={() => setHowOpen((v) => !v)} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6 items-start">
@@ -457,8 +439,8 @@ export function ParlayGenerator() {
                       locked
                         ? "border-[#1A3066] text-muted-foreground/40 cursor-not-allowed bg-[#112454]/20"
                         : legCountTarget === n
-                        ? "bg-[#0033A0] border-[#0033A0] text-white"
-                        : "border-[#1A3066] text-muted-foreground hover:border-[#4488FF]/40 hover:text-foreground"
+                        ? "bg-[#FFC107] border-[#FFC107] text-[#060D1F]"
+                        : "border-[#1A3066] text-muted-foreground hover:border-[#FFC107]/40 hover:text-foreground"
                     )}
                   >
                     {locked && <Lock size={9} className="shrink-0" />}
@@ -497,8 +479,8 @@ export function ParlayGenerator() {
                   className={cn(
                     "px-2.5 py-1 rounded text-[10px] font-bold uppercase border transition-all",
                     leagueFilter === league
-                      ? "bg-[#112454] border-[#4488FF]/50 text-foreground"
-                      : "border-[#1A3066] text-muted-foreground hover:border-[#4488FF]/30 hover:text-foreground"
+                      ? "bg-[#112454] border-[#FFC107]/50 text-foreground"
+                      : "border-[#1A3066] text-muted-foreground hover:border-[#FFC107]/30 hover:text-foreground"
                   )}
                 >
                   {league ?? "All Leagues"}
@@ -512,8 +494,8 @@ export function ParlayGenerator() {
                   className={cn(
                     "px-2.5 py-1 rounded text-[10px] font-bold uppercase border transition-all",
                     marketFilter === market
-                      ? "bg-[#112454] border-[#4488FF]/50 text-foreground"
-                      : "border-[#1A3066] text-muted-foreground hover:border-[#4488FF]/30 hover:text-foreground"
+                      ? "bg-[#112454] border-[#FFC107]/50 text-foreground"
+                      : "border-[#1A3066] text-muted-foreground hover:border-[#FFC107]/30 hover:text-foreground"
                   )}
                 >
                   {market ?? "All Markets"}

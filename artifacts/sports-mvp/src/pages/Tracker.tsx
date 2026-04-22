@@ -87,7 +87,7 @@ function StatCard({ label, value, sub, positive, tooltip }: {
         {tooltip && <InfoTooltip content={tooltip} />}
       </div>
       <div className={cn("text-xl font-display font-bold",
-        positive === true ? "text-[#388E3C]" : positive === false ? "text-[#D32F2F]" : "text-foreground"
+        positive === true ? "text-[#4ADE80]" : positive === false ? "text-[#F87171]" : "text-foreground"
       )}>
         {value}
       </div>
@@ -114,7 +114,7 @@ function PnLChart({ bets }: { bets: UserBet[] }) {
     );
   }
 
-  const color = isPositive ? "#388E3C" : "#D32F2F";
+  const color = isPositive ? "#4ADE80" : "#F87171";
 
   return (
     <Card className="bg-[#0D1B3E] border-[#1A3066] p-4">
@@ -123,7 +123,7 @@ function PnLChart({ bets }: { bets: UserBet[] }) {
           <div className="text-xs font-bold font-display uppercase tracking-wider">P&amp;L Curve</div>
           <div className="text-[10px] text-muted-foreground">Cumulative profit / loss per settled bet</div>
         </div>
-        <div className={cn("text-lg font-display font-bold", isPositive ? "text-[#388E3C]" : "text-[#D32F2F]")}>
+        <div className={cn("text-lg font-display font-bold", isPositive ? "text-[#4ADE80]" : "text-[#F87171]")}>
           {final >= 0 ? "+" : ""}${final.toFixed(2)}
         </div>
       </div>
@@ -169,14 +169,14 @@ function PnLChart({ bets }: { bets: UserBet[] }) {
 
 const RESULT_COLORS: Record<BetResult, string> = {
   pending: 'text-muted-foreground',
-  win: 'text-[#388E3C]',
-  loss: 'text-[#D32F2F]',
+  win: 'text-[#4ADE80]',
+  loss: 'text-[#F87171]',
   push: 'text-[#FFC107]',
 };
 const RESULT_BG: Record<BetResult, string> = {
   pending: 'border-[#1A3066]',
-  win: 'border-[#388E3C]/40 bg-[#388E3C]/5',
-  loss: 'border-[#D32F2F]/40 bg-[#D32F2F]/5',
+  win: 'border-[#4ADE80]/40 bg-[#4ADE80]/5',
+  loss: 'border-[#F87171]/40 bg-[#F87171]/5',
   push: 'border-[#FFC107]/40 bg-[#FFC107]/5',
 };
 
@@ -211,13 +211,13 @@ function BetCard({ bet, onMarkResult, onDelete }: {
             {bet.result}
           </span>
           {!confirming ? (
-            <button onClick={() => setConfirming(true)} className="text-muted-foreground/40 hover:text-[#D32F2F] transition-colors p-0.5">
+            <button onClick={() => setConfirming(true)} className="text-muted-foreground/40 hover:text-[#F87171] transition-colors p-0.5">
               <Trash2 size={12} />
             </button>
           ) : (
             <div className="flex items-center gap-1">
               <button onClick={() => { onDelete(bet.id); setConfirming(false); }}
-                className="text-[9px] text-[#D32F2F] border border-[#D32F2F]/40 rounded px-1.5 py-0.5 hover:bg-[#D32F2F]/10">
+                className="text-[9px] text-[#F87171] border border-[#F87171]/40 rounded px-1.5 py-0.5 hover:bg-[#F87171]/10">
                 Delete
               </button>
               <button onClick={() => setConfirming(false)} className="text-[9px] text-muted-foreground border border-[#1A3066] rounded px-1.5 py-0.5">
@@ -245,7 +245,7 @@ function BetCard({ bet, onMarkResult, onDelete }: {
           {bet.edge && <span>· Edge {(bet.edge * 100).toFixed(1)}%</span>}
         </div>
         {profitStr && (
-          <span className={cn("font-bold font-display text-sm", bet.profit! >= 0 ? "text-[#388E3C]" : "text-[#D32F2F]")}>
+          <span className={cn("font-bold font-display text-sm", bet.profit! >= 0 ? "text-[#4ADE80]" : "text-[#F87171]")}>
             {profitStr}
           </span>
         )}
@@ -257,8 +257,8 @@ function BetCard({ bet, onMarkResult, onDelete }: {
             <button key={r} onClick={() => onMarkResult(bet.id, r)}
               className={cn(
                 "flex-1 py-1.5 rounded text-[10px] font-bold font-display uppercase border transition-all",
-                r === 'win' ? "border-[#388E3C]/40 text-[#388E3C] hover:bg-[#388E3C]/10"
-                  : r === 'loss' ? "border-[#D32F2F]/40 text-[#D32F2F] hover:bg-[#D32F2F]/10"
+                r === 'win' ? "border-[#4ADE80]/40 text-[#4ADE80] hover:bg-[#4ADE80]/10"
+                  : r === 'loss' ? "border-[#F87171]/40 text-[#F87171] hover:bg-[#F87171]/10"
                   : "border-[#FFC107]/40 text-[#FFC107] hover:bg-[#FFC107]/10"
               )}>
               {r}
@@ -324,27 +324,11 @@ export function Tracker() {
     : '—';
 
   return (
-    <PageLayout>
-      <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <img src="/logo-shield.png" alt="SportsMVP" className="h-12 w-auto drop-shadow-lg" />
-          <div>
-            <h1 className="text-4xl font-display text-foreground uppercase tracking-tight">Bet Tracker</h1>
-            <p className="text-muted-foreground mt-1">
-              {format(new Date(), "EEEE, MMMM do, yyyy")} · Your personal betting ledger
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge className="bg-[#0033A0] text-white border-transparent text-[10px] px-2 py-0.5 font-bold uppercase tracking-wider">
-            MVP+ Feature
-          </Badge>
-          <div className="text-sm font-display font-bold uppercase tracking-widest text-[#4488FF]">
-            Bet Like an MVP.
-          </div>
-        </div>
-      </div>
-
+    <PageLayout
+      title="Bet Tracker"
+      subtitle={`${format(new Date(), "EEEE, MMMM do, yyyy")} · Your personal betting ledger`}
+      tagline="MVP+ FEATURE"
+    >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Bankroll:</span>
@@ -356,7 +340,7 @@ export function Tracker() {
                 value={bankrollStr}
                 onChange={e => setBankrollStr(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleBankrollSave()}
-                className="w-28 bg-[#112454] border border-[#4488FF]/40 rounded px-2 py-1 text-sm text-foreground focus:outline-none"
+                className="w-28 bg-[#112454] border border-[#FFC107]/40 rounded px-2 py-1 text-sm text-foreground focus:outline-none"
                 autoFocus
               />
               <button onClick={handleBankrollSave}
@@ -366,7 +350,7 @@ export function Tracker() {
             </div>
           ) : (
             <button onClick={() => setBankrollEditing(true)}
-              className="text-sm font-bold text-foreground border-b border-dashed border-[#1A3066] hover:border-[#4488FF]/40 transition-colors">
+              className="text-sm font-bold text-foreground border-b border-dashed border-[#1A3066] hover:border-[#FFC107]/40 transition-colors">
               ${bankroll.toLocaleString()}
             </button>
           )}
@@ -437,8 +421,8 @@ export function Tracker() {
           <button key={l ?? 'all'} onClick={() => setLeagueFilter(l)}
             className={cn("px-2.5 py-1 rounded text-[10px] font-bold uppercase border transition-all",
               leagueFilter === l
-                ? "bg-[#112454] border-[#4488FF]/50 text-foreground"
-                : "border-[#1A3066] text-muted-foreground hover:border-[#4488FF]/30"
+                ? "bg-[#112454] border-[#FFC107]/50 text-foreground"
+                : "border-[#1A3066] text-muted-foreground hover:border-[#FFC107]/30"
             )}>
             {l ?? 'All'}
           </button>
@@ -448,8 +432,8 @@ export function Tracker() {
           <button key={m ?? 'all'} onClick={() => setMarketFilter(m)}
             className={cn("px-2.5 py-1 rounded text-[10px] font-bold uppercase border transition-all",
               marketFilter === m
-                ? "bg-[#112454] border-[#4488FF]/50 text-foreground"
-                : "border-[#1A3066] text-muted-foreground hover:border-[#4488FF]/30"
+                ? "bg-[#112454] border-[#FFC107]/50 text-foreground"
+                : "border-[#1A3066] text-muted-foreground hover:border-[#FFC107]/30"
             )}>
             {m ?? 'All Markets'}
           </button>
@@ -459,8 +443,8 @@ export function Tracker() {
           <button key={f.value} onClick={() => setResultFilter(f.value)}
             className={cn("px-2.5 py-1 rounded text-[10px] font-bold uppercase border transition-all",
               resultFilter === f.value
-                ? "bg-[#112454] border-[#4488FF]/50 text-foreground"
-                : "border-[#1A3066] text-muted-foreground hover:border-[#4488FF]/30"
+                ? "bg-[#112454] border-[#FFC107]/50 text-foreground"
+                : "border-[#1A3066] text-muted-foreground hover:border-[#FFC107]/30"
             )}>
             {f.label}
           </button>

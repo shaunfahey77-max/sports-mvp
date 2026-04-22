@@ -1,411 +1,93 @@
-# Workspace
+# Overview
 
-## Overview
+SportsMVP is a premium sports prediction and scoring engine focused on NBA and NHL betting markets (moneyline, spread, and total). It provides users with data-driven picks, performance analytics, and tools like a parlay builder. The platform aims to help users "Bet Like an MVP" by offering sophisticated predictive models and clear insights into betting opportunities, including expected value (EV) and edge percentages. The project uses live game odds from The Odds API and is built as a pnpm workspace monorepo.
 
-Premium sports prediction and scoring engine for **NBA and NHL** betting markets (NCAAM removed — out of season). Supports moneyline, spread, and total markets. Live game odds are pulled from **The Odds API** (ODDS_API_KEY secret). Built on a pnpm workspace monorepo.
+# User Preferences
 
-**Brand**: SportsMVP — "Bet Like an MVP."
-**Brand Guidelines**: See `.local/brand-guidelines.md` — must be followed for ALL frontend work.
+I want iterative development. I prefer detailed explanations for complex features or architectural decisions. Ask before making major changes.
 
-## Stack
+# System Architecture
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+The SportsMVP platform is built as a pnpm workspace monorepo.
 
-## Key Commands
+**Core Technologies:**
+- **Node.js**: Version 24
+- **TypeScript**: Version 5.9
+- **API Framework**: Express 5
+- **Database**: PostgreSQL with Drizzle ORM
+- **Validation**: Zod (v4) and drizzle-zod
+- **API Codegen**: Orval (from OpenAPI spec)
+- **Build Tool**: esbuild (CJS bundle)
 
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- `pnpm --filter @workspace/api-server run dev` — run API server locally
+**UI/UX Decisions (Frontend - SportsMVP):**
+The frontend is a React + Vite application adhering to specific brand guidelines.
+- **Brand**: SportsMVP, with a "Bet Like an MVP." tagline.
+- **Fonts**: Montserrat (headings, bold) and Roboto (body) from Google Fonts.
+- **Color Scheme**: Dark navy theme (Page BG: `#060D1F`, Card: `#0D1B3E`, Border: `#1A3066`).
+- **Brand Accent**: Gold `#FFC107` (eyebrows, primary CTAs, active states); softer hover `#FFD54F`.
+- **Status Colors**: Win `#4ADE80`, Loss `#F87171`, Push `#FFC107`.
+- **Typography**: Headlines use `'Playfair Display', serif`; body remains the system sans.
+- **Shell Pattern**: All member pages (Dashboard, Tracker, Parlay, Account, Performance, History, Subscribe, Landing) use the shared `PageLayout` hero — gold uppercase eyebrow → Playfair title → muted subtitle, with the "Math, not mystique." footer.
+- **Logos**: Primary shield and horizontal lockup.
+- **Badges**: Tier badges (A=gold, B=MVP Blue, C=slate, PASS=dimmed).
+- **Results Indicators**: Win=green, Loss=red, Push=yellow.
 
-## Brand Quick Reference
+**Key Features & Pages:**
+- **Today's Action (`/`)**: Displays candidate picks with tier badges, league/market labels, EV%, edge%, and results.
+- **Dashboard (`/picks`)**: Grid of today's scored picks, highlighting a "Top Pick."
+- **Parlay Builder (`/parlay`)**: (MVP+ subscriber feature) Pick selection, parlay calculator, and auto-build functionality.
+- **Model Performance (`/performance`)**: Rolling analytics (win rate, ROI, units won, Brier score, CLV hit rate) with time window toggles and breakdowns.
+- **Pick History (`/history`)**: Filterable grid of all historical picks.
+- **Components**: `PickCard`, `CandidateCard`, `TopPickCallout`, `InfoTooltip`.
 
-**Fonts**: Montserrat (headings, bold) + Roboto (body) from Google Fonts
-**Primary Colors**: MVP Blue `#0033A0` | Victory Red `#D32F2F`
-**Secondary Colors**: Action Green `#388E3C` | Highlight Yellow `#FFC107`
-**Neutral**: Slate Gray `#424242` | White `#FFFFFF`
-**Dark Surfaces**: Page BG `#060D1F` | Card `#0D1B3E` | Elevated `#112454` | Border `#1A3066`
+**Prediction Layer:**
+- Nine dedicated prediction models, one for each league (NBA, NHL) and market (Moneyline, Spread, Total). Each exports a `predict` function returning raw probabilities.
 
-**Logos (copy to frontend public/ before use)**:
-- Primary shield: `attached_assets/sports-mvp-logo_-_Edited_1775577729533.png`
-- Horizontal lockup: `attached_assets/Sport-MVP-alternate-logo-transparent_1775577748977.png`
+**Scoring Layer:**
+- **Market Probability**: Converts American odds to fair probabilities, removing vig.
+- **Calibration**: Applies sigmoid/isotonic calibration to raw model probabilities.
+- **Expected Value (EV)**: Calculates EV, edge, and Closing Line Value (CLV).
+- **Bet Ranking**: Ranks bets based on a composite score (`rank_score = 0.50*ev + 0.25*edge + 0.15*calib_conf + 0.10*mkt_quality`).
+- **Tier Assignment**: Assigns A/B/C/PASS tiers based on rank score bands and risk controls.
+- **Scoring Pipeline**: Orchestrates the entire process from model output to final ranked picks.
+- **Pick Validation**: Scores outcomes and calculates ROI, Brier score, and CLV metrics.
+- **Configuration**: `scoringModelConfig.ts` centralizes all scoring parameters, including rank weights, tier thresholds, and calibration methods.
 
-**Tier badges**: A=gold(`#FFC107`), B=MVP Blue(`#0033A0`), C=slate(`#424242`), PASS=dimmed
-**Results**: Win=green(`#388E3C`), Loss=red(`#D32F2F`), Push=yellow(`#FFC107`)
+**Simulation Engine:**
+- On-demand 45-day backtester, providing insights into ROI, win rate, CLV hit rate, and Brier score.
 
-Full brand details: `.local/brand-guidelines.md`
+**Authentication & Subscriptions:**
+- **Authentication**: Utilizes Clerk for user management, sign-in, and sign-up flows. API routes are protected using Clerk's `userId`.
+- **Subscription System**: Integrates with Stripe for managing MVP and MVP Pro subscriptions.
+    - **Tier Gating**: Features are gated based on user subscription tiers (free, MVP, MVP Pro).
+    - **API Endpoints**: `/api/stripe/webhook` for handling Stripe events, `/api/stripe/checkout` for initiating checkouts, `/api/stripe/portal` for managing billing, and `/api/stripe/prices` for fetching product pricing.
 
-## Frontend — SportsMVP (`artifacts/sports-mvp`)
+**Database Schema:**
+- **`users`**: Stores Clerk user data, Stripe customer/subscription IDs, and subscription tier.
+- **`game_snapshots`**: Records raw game and market data (publish and close lines).
+- **`candidate_bets`**: Stores all evaluated bets with complete scoring metadata.
+- **`scored_picks`**: Contains final (non-PASS) picks with their outcomes.
+- **`validation_metrics`**: Holds rolling performance snapshots (14/30/45 days).
+- **`simulation_runs`**: Stores results of 45-day simulation runs.
 
-React + Vite subscriber-facing dashboard at preview path `/`.
+**API Routes:**
+- **Snapshots**: `/api/snapshots` (GET), `/api/snapshots/generate` (POST), `/api/snapshots/finalize` (POST).
+- **Picks**: `/api/picks` (GET), `/api/picks/candidates` (GET), `/api/picks/score` (POST), `/api/picks/validate` (POST).
+- **Performance**: `/api/performance` (GET), `/api/performance/history` (GET).
+- **Simulation**: `/api/simulate` (POST), `/api/simulate/{runId}` (GET), `/api/simulate/list` (GET).
+- **User**: `/api/user/me` (GET).
 
-**Pages:**
-- `/` — Today's Action: candidate picks with tier badges, league/market labels, EV%, edge%, result
-- `/picks` — Dashboard: today's scored picks grid with Top Pick callout
-- `/parlay` — Parlay Builder (MVP+ subscriber feature): pick selection + parlay calculator + auto-build
-- `/performance` — Model Performance: rolling analytics (win rate, ROI, units won, Brier score, CLV hit rate) with 14/30/45-day window toggle + tier/league/market breakdowns
-- `/history` — Pick History: filterable grid of all historical picks
-
-**Brand applied**: Dark navy theme (page BG `#060D1F`, card `#0D1B3E`), Montserrat + Roboto fonts, tier badges (A=gold, B=blue, C=slate), result indicators (win=green, loss=red)
-
-**Logos copied to `public/`**: `logo-shield.png` (hero), `logo-nav.png` (navbar)
-
-**API integration**: axios default baseURL set to `/api`, uses orval-generated hooks from `@workspace/api-client-react`
-
-**Key components:**
-- `src/components/PickCard.tsx` — Pick card with team logos, matchup display, tier/edge/EV tooltips, CLV delta
-- `src/components/CandidateCard.tsx` — Candidate card with same logo + tooltip features
-- `src/components/TopPickCallout.tsx` — Gold-accented TOP PICK OF THE DAY hero banner (highest rankScore among A/B tiers)
-- `src/components/ui/InfoTooltip.tsx` — Inline ⓘ tooltip with explanatory copy for any metric label
-- `src/lib/teamLogos.ts` — ESPN CDN team logo lookup by league (NBA/NHL/NCAAM) + gameKey matchup parser
-
-**Features per page:**
-- All pages: shield logo in header, collapsible "How to Read / How It Works" explainer section
-- Dashboard: Top Pick callout + highlighted pick card for highest-ranked pick; team logos with picked-side highlighting
-- Performance: 12 stat cards each with info tooltip; color-coded tier/league/market breakdowns; model pipeline explanation
-- History: Picks count + Win/Loss/Push/Pending summary row; CLV delta shown on every graded pick
-
-## Architecture
-
-### Prediction Layer (`artifacts/api-server/src/prediction/`)
-
-Nine model modules — one per league/market combination:
-
-| League | Moneyline | Spread | Total |
-|--------|-----------|--------|-------|
-| NBA    | nbaMoneylineModel.ts | nbaSpreadModel.ts | nbaTotalModel.ts |
-| NCAAM  | ncaamMoneylineModel.ts | ncaamSpreadModel.ts | ncaamTotalModel.ts |
-| NHL    | nhlMoneylineModel.ts | nhlSpreadModel.ts | nhlTotalModel.ts |
-
-Each model exports a `predict(game: GameMarketInput): Promise<ModelOutput>` function returning raw probabilities.
-
-### Scoring Layer (`artifacts/api-server/src/scoring/`)
-
-| File | Responsibility |
-|------|----------------|
-| `marketProb.ts` | American odds → implied probability → vig removal → fair probability |
-| `calibration.ts` | Sigmoid/isotonic calibration on raw model probabilities |
-| `expectedValue.ts` | EV = p*(d-1) - (1-p), edge = calibrated_prob - fair_market_prob, CLV |
-| `rankBets.ts` | rank_score = 0.50*ev + 0.25*edge + 0.15*calib_conf + 0.10*mkt_quality |
-| `assignTiers.ts` | Tier A/B/C/PASS assignment from score bands + risk controls |
-| `scorePicks.ts` | Pipeline orchestrator connecting model → calibration → scoring → ranking |
-| `validatePicks.ts` | Outcome scoring, ROI, Brier score, log loss, CLV metrics |
-
-### Configuration (`artifacts/api-server/src/config/scoringModelConfig.ts`)
-
-Central config for all scoring parameters: rank weights, tier thresholds, home advantage by league, calibration method selection.
-
-### Simulation Engine (`artifacts/api-server/src/simulation/simulate45Days.ts`)
-
-On-demand 45-day backtester. Inputs: startDate, days, leagues, markets, model/scoring/calibration versions. Outputs: ROI, win rate, CLV hit rate, Brier score, log loss, drawdown, per-day breakdown.
-
-### Auth + Subscription System
-
-### Clerk Authentication
-- Provider: Clerk (VITE_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY set)
-- Proxy middleware: `artifacts/api-server/src/middlewares/clerkProxyMiddleware.ts`
-- Routes: `/sign-in`, `/sign-up` — Clerk embedded components with custom localization
-- Protected routes use `<Show when="signed-in">` + `<Redirect>` pattern
-- API auth: `getAuth(req)` from `@clerk/express` returns `{ userId }` for session validation
-- Auth pane (Replit toolbar) manages users, providers, and OAuth credentials
-
-### Stripe Subscriptions
-- Integration: Replit Stripe connector (reads credentials via REPL_IDENTITY token)
-- Products: `prod_UIH0YSKeXgO2mf` (MVP) and `prod_UIH0B0pmsXpaAa` (MVP Pro) — both have `metadata.tier` set
-- Tier system: `free` | `mvp` | `mvp_pro` (stored in `users.tier`)
-- Webhook endpoint: `POST /api/stripe/webhook` — handles `customer.subscription.*` and `checkout.session.completed`
-- Checkout: `POST /api/stripe/checkout` with `{ priceId }` → returns `{ url }` for redirect
-- Portal: `POST /api/stripe/portal` → returns `{ url }` for Stripe billing portal
-- Prices: `GET /api/stripe/prices` → returns products with prices filtered by `metadata.tier` field
-- User endpoint: `GET /api/user/me` → upserts user on first call, syncs tier from Stripe, returns tier
-
-### Pricing
-| Plan | Monthly | Yearly |
-|------|---------|--------|
-| MVP | $19.99/mo | $149/yr (save 38%) |
-| MVP Pro | $39.99/mo | $299/yr (save 38%) |
-
-### Tier Gating
-- Free: 1 top pick per day (Tier A only), basic stats, public performance history
-- MVP: Unlimited picks (all tiers), full Edge/EV/CLV data, Parlay Builder, Bet Tracker
-- MVP Pro: Everything in MVP + 5/6-leg parlays, priority updates, early access
-
-## Database Schema (`lib/db/src/schema/`)
-
-| Table | Purpose |
-|-------|---------|
-| `users` | Clerk user + Stripe customer/subscription ID + tier |
-| `game_snapshots` | Raw game/market data with publish and close lines |
-| `candidate_bets` | All evaluated bets with full scoring metadata |
-| `scored_picks` | Final picks (non-PASS) with outcomes |
-| `validation_metrics` | Rolling 14/30/45-day performance snapshots |
-| `simulation_runs` | 45-day simulator runs with results |
-
-### API Routes
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/snapshots` | List game snapshots |
-| POST | `/api/snapshots/generate` | Ingest game data (publish lines) |
-| POST | `/api/snapshots/finalize` | Mark closing lines |
-| GET | `/api/picks` | List scored picks (filterable) |
-| GET | `/api/picks/candidates` | List all candidates including PASS |
-| POST | `/api/picks/score` | Run full prediction pipeline for a date |
-| POST | `/api/picks/validate` | Score outcomes for finalized games |
-| GET | `/api/performance` | Rolling performance metrics |
-| GET | `/api/performance/history` | Historical metric records |
-| POST | `/api/simulate` | Start a 45-day simulation run |
-| GET | `/api/simulate/{runId}` | Get simulation results |
-| GET | `/api/simulate/list` | List all simulation runs |
-
-## Key Formulas
-
+**Key Formulas:**
 - **Edge**: `model_prob_calibrated - market_prob_fair`
 - **EV**: `p * (decimal_odds - 1) - (1 - p)`
 - **Rank Score**: `0.50 * norm_ev + 0.25 * norm_edge + 0.15 * calib_conf + 0.10 * mkt_quality`
-- **Tier A**: rank_score ≥ 0.65 | **Tier B**: ≥ 0.50 | **Tier C**: ≥ 0.35 | **PASS**: < 0.35
+- **Tier Thresholds**: A (rank_score ≥ 0.65), B (≥ 0.50), C (≥ 0.35), PASS (< 0.35).
 
-## Operational Flow
+# External Dependencies
 
-1. **Generate Snapshots** — POST `/api/snapshots/generate` with game/market data
-2. **Score** — POST `/api/picks/score` to run prediction models and persist candidates
-3. **Finalize Closes** — POST `/api/snapshots/finalize` after games are over
-4. **Validate** — POST `/api/picks/validate` to score outcomes and compute CLV
-
-See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
-
-## Operations Runbook
-
-### Settlement Pipeline
-- **Nightly job** (`runNightlyValidation`, 3:30 AM ET daily): fetches completed
-  scores from the Odds API for the last 3 days (max supported by the API),
-  grades `scored_picks`, finalizes `game_snapshots`.
-- **Self-healing ESPN backstop**: after each nightly run, sweeps the last 7 days
-  via ESPN's free scoreboard API to recover any games that aged past the Odds
-  API's 3-day `/scores` window (e.g. missed cron run, server restart through
-  the 3:30 AM slot, Odds API 5xx). Idempotent — skips already-final games.
-- **Manual recovery**: `POST /api/admin/backfill-settlement` with
-  `{ startDate, endDate, leagues?, secret }` where `secret` is the
-  `SESSION_SECRET` env var. Uses ESPN scoreboard; idempotent.
-- **Known incident (2026-04-08 → 2026-04-15)**: 54 pending picks stranded
-  because the 3-day Odds API window expired while the nightly job was not
-  firing. Recovered via ESPN backfill; self-healing backstop now prevents
-  recurrence.
-
-### MLB Phase 0.75D — Foundation (branch only, hidden, NO DEPLOY)
-- **Scope**: moneyline only. Run line (`mlb_spread`) and totals (`mlb_total`)
-  are stubbed disabled in `MARKET_DISABLED` and the cron skips them via
-  per-league `MARKETS_BY_LEAGUE` (no models exist yet).
-- **Public visibility**: `DEFAULT_PRODUCTION_LEAGUES` in
-  `routes/picks.ts` and `routes/performance.ts` remains `["nba", "nhl"]`.
-  MLB only appears with explicit `?league=mlb`. Regression-guarded by
-  `src/scoring/__tests__/mlbVisibility.test.ts`.
-- **Wiring**: `SPORT_KEYS.mlb=baseball_mlb`, `ESPN_SPORT_PATH.mlb=baseball/mlb`,
-  `MLB_TEAM_ABBREVS` (30 teams + Athletics alias), `mlbMoneylineModel.predict`
-  (market-anchored + small home-field nudge + modest rest adjustment, no B2B).
-- **Settlement safety**: `runNightlyValidation` snapshot match now requires
-  both home AND away team match (mirrors ESPN backstop), preventing MLB
-  doubleheader collisions. Benefits NBA/NHL too.
-
-### MLB Shadow-Mode KPI Report (internal validation, NO DEPLOY)
-- **Run**: `pnpm --filter @workspace/scripts exec tsx src/mlbShadowReport.ts`
-  (or `pnpm --filter @workspace/scripts run mlb-shadow-report`).
-- **Args**: `[--start YYYY-MM-DD] [--end YYYY-MM-DD] [--json-only]`.
-- **What it covers**: daily candidate vs surfaced funnel; W-L-P, ROI, win
-  rate, Brier on settled `scored_picks`; edge percentiles + histogram across
-  all candidates; calibration buckets (model_prob → realized win rate); tier
-  counts; selection-reason breakdown.
-- **Read-only**: queries `candidate_bets` + `scored_picks` for `league='mlb'`
-  only. Does not write the DB and never touches public route code.
-- **Unit tests**: `scripts/src/__tests__/mlbShadowReport.test.ts`.
-
-### NCAAF Phase 0.75F — Foundation prep (branch only, hidden, NO DEPLOY, no live ingest yet)
-- **Scope**: planning + foundation scaffolding only. No models built yet.
-  Spread will be the first market wired (mirrors NFL plan); moneyline
-  and total deferred.
-- **Public visibility**: `DEFAULT_PRODUCTION_LEAGUES` unchanged.
-  NCAAF is also kept out of `cronService` `LEAGUES` to avoid burning
-  Odds API credits on offseason endpoints (NCAAF Week 0 is ~late
-  August 2026). Regression-guarded by
-  `src/scoring/__tests__/ncaafVisibility.test.ts`.
-- **Wiring**: `SPORT_KEYS.ncaaf=americanfootball_ncaaf`,
-  `ESPN_SPORT_PATH.ncaaf=football/college-football`, `League` type,
-  placeholder `HOME_ADVANTAGE.ncaaf=0.060` (~3.0pt HFA — larger than
-  NFL, to be tuned against backtest).
-- **Team abbreviations — DETERMINISTIC MAP NOW MAINTAINED**:
-  `NCAAF_TEAM_ABBREVS` covers all 134 FBS schools with collision-free
-  3-5 char codes; `NCAAF_TEAM_ALIASES` handles common short forms
-  ("Ohio St" → "Ohio State Buckeyes", "FSU" → "Florida State Seminoles",
-  etc.). The fuzzy fallback was unsafe for college football: it
-  collapsed Ohio State / Oklahoma State / Oregon State all to "stat"
-  and would have silently corrupted backtest per-team aggregations.
-  `assertNoAbbrevCollisions('ncaaf', ...)` runs at module load to fail
-  fast on any future regression; `assertAliasesResolve` ensures every
-  alias points at a real canonical entry. Coverage tested in
-  `scoring/__tests__/ncaafTeamAbbreviations.test.ts` (collision-free
-  invariant, known historical collision pairs, common alias resolution,
-  Odds API canonical name handling, whitespace tolerance).
-- **Gating**: `MARKET_DISABLED` keeps `ncaaf_spread`, `ncaaf_moneyline`,
-  `ncaaf_total` all `true`. `LEAGUE_MARKET_QUALITY.ncaaf` set to inert
-  0.10 across the board until evidence justifies otherwise.
-- **NCAAF spread model — v1 BUILT (still gated, no deploy)**:
-  - `prediction/ncaafSpreadModel.ts`: vig-free moneyline → expected
-    margin via inverse normal CDF, `MARGIN_STD_DEV = 16.5` (wider than
-    NFL due to college talent gaps), HFA in points form
-    (`HOME_ADVANTAGE.ncaaf * MARGIN_STD_DEV`), `restAdvantage`
-    adjustment at `REST_ADV_POINTS_PER_DAY = 0.20`, normal CDF for
-    cover prob, output clamped to [0.05, 0.95].
-  - Wired into `scorePicks.getModel` switch as `ncaaf_spread`.
-  - `SPREAD_LINE_ABS_MAX.ncaaf = 50` (top-25 vs FBS minnows routinely
-    posts -35 to -45; cap at ±50 admits every realistic main spread
-    while still rejecting alt-line / first-half / team-total leakage).
-  - Calibration: identity sigmoid `(a=1, b=0)` until backtest tunes.
-  - Coverage: 8 unit tests in `scoring/__tests__/ncaafSpreadModel.test.ts`
-    pin prob sum-to-1, HFA in points form, rest adjustment direction +
-    magnitude, clamp behavior, pick'em HFA, large-spread plausibility.
-- **Still gated**: `MARKET_DISABLED.ncaaf_spread = true` and `ncaaf`
-  not in cron `LEAGUES`. The new `ncaaf_spread` switch case exists so
-  an internal backtest harness can invoke the model directly without
-  flipping the production gates.
-- **Backtest result (2025 season, 670 games, 1340 candidates) — KEEP GATED**:
-  ROI -1.3%, win rate 50.5%, Brier 0.2514 (≈ baseline 0.250), tier signal
-  inverted (Tier C +1.7% ROI > Tier A +0.3% ROI). Plus normalization gap:
-  68 of 198 unique team strings (34%) fell through to fuzzy matching —
-  mostly FCS opponents in week-1 FBS-vs-FCS games (Idaho State, Sam Houston,
-  Lafayette, Delaware, etc.). Full report: `.local/backtest-reports/SUMMARY.md`
-  + `ncaaf-2025.txt`. Reproduce: `pnpm --filter @workspace/scripts run football-backtest-report -- --league ncaaf --start 2025-08-23 --end 2026-01-13`.
-- **Phase A normalization repair COMPLETE (2026-04-21)**:
-  Football redesign plan: `.local/football-redesign-plan.md`. Phase A added
-  6 feed-form aliases for FBS programs whose canonical key didn't match
-  the upstream feed string ("UMass Minutemen" → "Massachusetts Minutemen",
-  "UL Monroe Warhawks" → "Louisiana-Monroe Warhawks", "Florida International
-  Panthers" → "FIU Panthers", "Southern Mississippi Golden Eagles" →
-  "Southern Miss Golden Eagles", "Delaware Blue Hens" → "Delaware Fightin
-  Blue Hens", "Sam Houston State Bearkats" → "Sam Houston Bearkats").
-  New `resolveTeamAbbrev()` helper exposes resolution path
-  ('canonical' | 'alias' | 'fuzzy'); `getTeamAbbrev()` is now a thin
-  wrapper for back-compat. Four new invariants in
-  `src/scoring/__tests__/ncaafTeamAbbreviations.test.ts` (now wired into
-  the `api-tests` workflow): every canonical key resolves via 'canonical',
-  every alias resolves via 'alias', the 2025-backtest fuzzy-fallback FBS
-  fixture resolves non-fuzzy, and FCS strings are still reported as 'fuzzy'
-  for back-compat. Per the redesign plan, FCS coverage is intentionally
-  NOT expanded — FBS-vs-FCS games will be filtered out of future candidate
-  sets at build time instead.
-- **Remaining steps before any future re-evaluation**:
-  1. Filter FBS-vs-FCS games out of the candidate-build path (Phase B).
-  2. NFL feature redesign pass (next): drop double-counted HFA, add real
-     independent features (rest, ATS form, recent points-differential).
-  3. Investigate the inverted tier signal — likely a feature-engineering
-     or calibration bug, not a tier-threshold bug.
-  4. Re-run the report against two independent windows; only then revisit
-     the gate.
-
-### NFL Phase 0.75E — Foundation prep (branch only, hidden, NO DEPLOY, no live ingest yet)
-- **Scope**: planning + foundation scaffolding only. No models built yet.
-  Spread will be the first market wired (per project direction); moneyline
-  and total deferred.
-- **Public visibility**: `DEFAULT_PRODUCTION_LEAGUES` unchanged. NFL is
-  also kept out of `cronService` `LEAGUES` to avoid burning Odds API
-  credits on offseason endpoints (NFL preseason ~early August 2026).
-  Regression-guarded by `src/scoring/__tests__/nflVisibility.test.ts`.
-- **Wiring**: `SPORT_KEYS.nfl=americanfootball_nfl`,
-  `ESPN_SPORT_PATH.nfl=football/nfl`, `NFL_TEAM_ABBREVS` (32 teams),
-  `featureEngine` ABBREV_LOOKUP entry, `League` type, placeholder
-  `HOME_ADVANTAGE.nfl=0.045` (~2.5pt HFA in prob terms — to be tuned
-  against backtest).
-- **Gating**: `MARKET_DISABLED` keeps `nfl_spread`, `nfl_moneyline`,
-  `nfl_total` all `true`. `LEAGUE_MARKET_QUALITY.nfl` set to inert 0.10
-  across the board until evidence justifies otherwise.
-- **NFL spread model — v1 BUILT then SUPERSEDED by v2 (still gated, no deploy)**:
-  - v1 (historical): vig-free moneyline → expected margin via inverse
-    normal CDF, `MARGIN_STD_DEV = 13.45`, HFA in points form
-    (`HOME_ADVANTAGE.nfl * MARGIN_STD_DEV`) added on top, `restAdvantage`
-    at 0.20 pts/day, normal CDF for cover prob, output clamped to
-    [0.05, 0.95]. Wired into `scorePicks.getModel` as `nfl_spread`.
-    `SPREAD_LINE_ABS_MAX.nfl = 21`. Identity-sigmoid calibration.
-  - v1 backtest (2025 season, 225 games, 450 candidates): ROI **-6.2%**,
-    win rate 47.2%, Brier 0.2565 (≈ baseline 0.250), avg model prob =
-    0.500 vs avg implied prob = 0.510. Diagnosis: prior was vig-free ML,
-    HFA was a double-count on top of that, and the only feature signal
-    was a tiny ±0.6 pt rest term — model could not deviate meaningfully
-    from the market. Full report: `.local/backtest-reports/SUMMARY.md`
-    + `nfl-2025.txt`.
-- **NFL spread model — v2 redesign COMPLETE (2026-04-21, still gated, no deploy)**:
-  - `prediction/nflSpreadModel.ts` v2 changes vs v1:
-    1. REMOVED additive HFA after `probToMargin(fairHome)` — the
-       vig-free ML already prices it in. `HOME_ADVANTAGE.nfl` import
-       dropped from this file (still defined in `scoringModelConfig`
-       for other models).
-    2. ADDED home/road ATS form adjustment (mirrors `nbaSpreadModel`):
-       `ATS_FORM_MAX_ADJ = 2.5` pts max when `atsSampleSize >= 10`.
-    3. ADDED recent points-for / points-against differential adjustment:
-       `(homeNet - awayNet) * PPG_DIFF_WEIGHT(0.30)`, capped
-       `±PPG_DIFF_MAX_ADJ(5.0)`, gated on `scoredGamesSampleSize >= 3`
-       (handles Week-1 / preseason — see "GameFeatures sample fields"
-       note below for why this is NOT gated on `atsSampleSize`).
-    4. KEPT `REST_ADV_POINTS_PER_DAY = 0.20` (no retune without data).
-  - **GameFeatures sample fields** (introduced as part of this pass):
-    `atsSampleSize` is currently a stubbed-zero placeholder in
-    `featureEngine.ts` pending a non-self-referential ATS data feed
-    (see comments at lines ~141-148 of `featureEngine.ts`). A new
-    `scoredGamesSampleSize` field is now populated from the real count
-    of recent games with final scores (`scoredGames` in
-    `computeTeamFeatures`). NFL v2's PPG gate uses this real field so
-    the feature actually fires in the live pipeline; ATS gating remains
-    on `atsSampleSize` and is therefore dormant until the real ATS feed
-    lands. NBA spread / NHL total / MLB / NCAAF models are unchanged
-    and continue to read `atsSampleSize` as before. New ncaaf test
-    `featureRow` updated to include `scoredGamesSampleSize: 0` for
-    type-correctness; behavior unchanged.
-  - Combined feature stack can now shift expected margin by up to
-    roughly ±9 pts (vs v1's ~±0.6 pts) — ~15× more independent
-    expressiveness. Market-derived prior is preserved in full but no
-    longer dominates.
-  - Coverage: 19 unit tests in `scoring/__tests__/nflSpreadModel.test.ts`
-    (now wired into the `api-tests` workflow): probability sum-to-1
-    invariant, neutral-market prob-equals-0.5 (HFA-must-not-double-count
-    regression), feature direction + magnitude for rest / ATS / PPG,
-    sample-size gating for both ATS and PPG, magnitude clamping for
-    both, sign handling, additive composition + calibration sanity,
-    Week-1 / preseason gates, and a v2-expressiveness assertion that
-    combined max features must move cover prob by >5pp at a fixed line.
-  - Production posture unchanged: `MARKET_DISABLED.nfl_spread = true`,
-    NFL still excluded from cron `LEAGUES`. `nfl_spread` switch case
-    exists only so an internal backtest harness can invoke the model
-    without flipping production gates.
-- **Remaining steps before any future re-evaluation**:
-  1. Re-run the backtest report against v2 (after Phase B candidate-
-     filter work for NCAAF lands). Two independent windows.
-  2. Investigate the inverted Tier C signal — likely a feature-eng or
-     calibration bug, not a tier-threshold bug.
-  3. Future feature work (requires extending `GameFeatures`): bye-week
-     boost beyond rest-day proxy, divisional flag, primetime/Thursday-
-     night indicator, indoor/outdoor + weather, injury report.
-  4. Re-run before considering any gate flip.
-
-### Backtest tooling (added Apr 2026)
-- `scripts/src/footballBacktestReport.ts` — read-only NFL/NCAAF backtest
-  report that runs the gated v1 spread models against `game_snapshots`,
-  bypasses `MARKET_DISABLED` for tier assignment ONLY (production
-  `assignTier` unchanged), grades against final scores, and emits the
-  full metric suite (ROI, Brier, log loss, calibration buckets, tier
-  breakdown, edge percentiles, red flags, NCAAF normalization audit).
-  Tests: `scripts/src/__tests__/footballBacktestReport.test.ts` (8 unit
-  tests for `shadowAssignTier`, `auditNcaafNormalization`, `pct`).
-- `scripts/src/runFootballHistoricalIngest.ts` + `probeOddsApiHistorical.ts`
-  — internal tools for populating snapshots via Odds API historical
-  endpoint (30 credits/call). Production cron is unchanged.
-- Historical-ingest snapshots write *before* scoring fires, so the
-  "No model for nfl_moneyline" / "ncaaf_moneyline" errors at the
-  scoring stage are harmless for backtest purposes — snapshots persist,
-  the backtest report does its own scoring/grading from snapshots.
+- **The Odds API**: Used for pulling live game odds and historical scores (`ODDS_API_KEY`).
+- **Clerk**: Authentication and user management service (`VITE_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`).
+- **Stripe**: Payment processing and subscription management. Integrated via Replit Stripe connector (`REPL_IDENTITY` token).
+- **PostgreSQL**: Relational database for all application data.
+- **Google Fonts**: For Montserrat and Roboto fonts.
+- **ESPN CDN**: For retrieving team logos.

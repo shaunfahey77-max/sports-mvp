@@ -7,10 +7,12 @@ import { Card } from "@/components/ui/card";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { Crown, Shield, Star } from "lucide-react";
 
+const SERIF = "'Playfair Display', serif";
+
 const TIER_LABELS: Record<string, string> = { free: "Free", mvp: "MVP", mvp_pro: "MVP Pro" };
 const TIER_COLORS: Record<string, string> = {
-  free: "text-muted-foreground",
-  mvp: "text-[#4488FF]",
+  free: "text-white/55",
+  mvp: "text-[#FFD54F]",
   mvp_pro: "text-[#FFC107]",
 };
 const TIER_ICONS: Record<string, typeof Star> = { free: Shield, mvp: Star, mvp_pro: Crown };
@@ -18,11 +20,19 @@ const TIER_ICONS: Record<string, typeof Star> = { free: Shield, mvp: Star, mvp_p
 export function Account() {
   const { signOut } = useAuth();
   const { user: clerkUser } = useUser();
-  const { user, tier, refetch } = useCurrentUser();
+  const { tier } = useCurrentUser();
   const [, setLocation] = useLocation();
   const [portalLoading, setPortalLoading] = useState(false);
 
   const TierIcon = TIER_ICONS[tier];
+  const email = clerkUser?.emailAddresses?.[0]?.emailAddress ?? '';
+  const initial =
+    clerkUser?.firstName?.[0] ??
+    email?.[0]?.toUpperCase() ??
+    '?';
+  const displayName = clerkUser?.firstName
+    ? `${clerkUser.firstName} ${clerkUser.lastName ?? ''}`.trim()
+    : 'Account';
 
   async function handlePortal() {
     setPortalLoading(true);
@@ -40,51 +50,85 @@ export function Account() {
   }
 
   return (
-    <PageLayout title="My Account" subtitle={clerkUser?.emailAddresses?.[0]?.emailAddress ?? ''} tagline="BET LIKE AN MVP.">
-      <div className="max-w-lg mx-auto space-y-4">
-        <Card className="border-[#1A3066] bg-[#0D1B3E] p-6">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="h-12 w-12 rounded-full bg-[#0033A0] flex items-center justify-center text-white font-black font-display text-lg">
-              {clerkUser?.firstName?.[0] ?? clerkUser?.emailAddresses?.[0]?.emailAddress?.[0]?.toUpperCase() ?? '?'}
+    <PageLayout title="My Account" subtitle={email} tagline="MEMBER PROFILE">
+      <div className="max-w-xl mx-auto space-y-8">
+        {/* Identity */}
+        <section>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#FFC107] mb-5 flex items-center gap-2.5">
+            <span className="w-1 h-1 rounded-full bg-[#FFC107]" />
+            Identity
+          </h3>
+          <Card className="bg-[#0D1B3E] border border-[#1A3066] rounded-sm p-6 hover:border-[#FFC107]/30 transition-colors">
+            <div className="flex items-center gap-4">
+              <div
+                className="h-14 w-14 rounded-full bg-[#FFC107] flex items-center justify-center text-[#060D1F] font-bold text-2xl"
+                style={{ fontFamily: SERIF }}
+              >
+                {initial}
+              </div>
+              <div className="min-w-0">
+                <div className="text-white font-bold text-lg" style={{ fontFamily: SERIF }}>
+                  {displayName}
+                </div>
+                <div className="text-xs text-white/50 truncate">{email}</div>
+              </div>
             </div>
-            <div>
-              <div className="font-bold text-white">{clerkUser?.firstName ? `${clerkUser.firstName} ${clerkUser.lastName ?? ''}`.trim() : 'Account'}</div>
-              <div className="text-xs text-muted-foreground">{clerkUser?.emailAddresses?.[0]?.emailAddress}</div>
-            </div>
-          </div>
+          </Card>
+        </section>
 
-          <div className="border border-[#1A3066] rounded-lg p-4 mb-4">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Current Plan</div>
-            <div className={`flex items-center gap-2 text-xl font-black font-display ${TIER_COLORS[tier]}`}>
-              <TierIcon size={20} />
-              {TIER_LABELS[tier]}
+        {/* Subscription */}
+        <section>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#FFC107] mb-5 flex items-center gap-2.5">
+            <span className="w-1 h-1 rounded-full bg-[#FFC107]" />
+            Subscription
+          </h3>
+          <Card className="bg-[#0D1B3E] border border-[#1A3066] rounded-sm p-6 hover:border-[#FFC107]/30 transition-colors">
+            <div className="flex items-start justify-between gap-4 mb-6">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-white/50 mb-2">
+                  Current Plan
+                </div>
+                <div className={`flex items-center gap-2.5 text-2xl font-bold ${TIER_COLORS[tier]}`} style={{ fontFamily: SERIF }}>
+                  <TierIcon size={22} />
+                  {TIER_LABELS[tier]}
+                </div>
+              </div>
             </div>
-          </div>
 
-          {tier === 'free' ? (
+            {tier === 'free' ? (
+              <button
+                onClick={() => setLocation('/subscribe')}
+                className="w-full py-3 rounded-sm bg-[#FFC107] text-[#060D1F] text-xs font-bold uppercase tracking-[0.2em] hover:bg-[#FFD54F] transition-colors"
+              >
+                Upgrade to MVP
+              </button>
+            ) : (
+              <button
+                onClick={handlePortal}
+                disabled={portalLoading}
+                className="w-full py-3 rounded-sm bg-transparent border border-[#FFC107]/50 text-[#FFC107] text-xs font-bold uppercase tracking-[0.2em] hover:bg-[#FFC107]/10 hover:border-[#FFC107] transition-colors disabled:opacity-50"
+              >
+                {portalLoading ? 'Opening portal…' : 'Manage Subscription'}
+              </button>
+            )}
+          </Card>
+        </section>
+
+        {/* Session */}
+        <section>
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#FFC107] mb-5 flex items-center gap-2.5">
+            <span className="w-1 h-1 rounded-full bg-[#FFC107]" />
+            Session
+          </h3>
+          <Card className="bg-[#0D1B3E] border border-[#1A3066] rounded-sm p-6 hover:border-[#FFC107]/30 transition-colors">
             <button
-              onClick={() => setLocation('/subscribe')}
-              className="w-full py-2.5 rounded bg-[#FFC107] text-[#060D1F] text-xs font-black uppercase tracking-wider hover:bg-[#e6b000] transition-colors mb-3"
+              onClick={handleSignOut}
+              className="w-full py-2.5 rounded-sm text-xs font-bold uppercase tracking-[0.2em] text-white/55 hover:text-white border border-[#1A3066] hover:border-white/30 transition-colors"
             >
-              Upgrade to MVP
+              Sign Out
             </button>
-          ) : (
-            <button
-              onClick={handlePortal}
-              disabled={portalLoading}
-              className="w-full py-2.5 rounded bg-[#0033A0] text-white text-xs font-black uppercase tracking-wider hover:bg-[#0041cc] transition-colors disabled:opacity-50 mb-3"
-            >
-              {portalLoading ? 'Opening portal...' : 'Manage Subscription'}
-            </button>
-          )}
-
-          <button
-            onClick={handleSignOut}
-            className="w-full py-2 text-xs text-muted-foreground hover:text-white transition-colors"
-          >
-            Sign Out
-          </button>
-        </Card>
+          </Card>
+        </section>
       </div>
     </PageLayout>
   );
