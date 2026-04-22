@@ -75,10 +75,18 @@ import { removeTwoSidedVig } from "../scoring/marketProb";
 
 export const MARGIN_STD_DEV = 13.45;
 export const REST_ADV_POINTS_PER_DAY = 0.20;
-export const ATS_FORM_MAX_ADJ = 2.5;
+// v2.1 calibration shrink (2026-04-22): the v2 backtest showed Tier A
+// losing at -11.3% ROI (n=134) and Brier/log-loss regressing vs v1
+// because the additive feature stack was too aggressively scaled —
+// model produced 0.65–0.72 probs that realized at 44–56%. v2.1 halves
+// the ATS form cap and the PPG-differential coefficient (and its cap
+// proportionally) to compress probs back toward [0.40, 0.60] while
+// preserving directional signal. Architecture, gates, and pipeline are
+// unchanged. See `.local/backtest-reports/nfl-2025-v2-VERDICT.md`.
+export const ATS_FORM_MAX_ADJ = 1.25; // v2: 2.5 → v2.1: 1.25 (halved)
 export const ATS_MIN_SAMPLE = 10;
-export const PPG_DIFF_WEIGHT = 0.30;
-export const PPG_DIFF_MAX_ADJ = 5.0;
+export const PPG_DIFF_WEIGHT = 0.15;  // v2: 0.30 → v2.1: 0.15 (halved)
+export const PPG_DIFF_MAX_ADJ = 2.5;  // v2: 5.0  → v2.1: 2.5  (proportional)
 export const PPG_MIN_SAMPLE = 3;
 
 export async function predict(game: GameMarketInput): Promise<ModelOutput> {

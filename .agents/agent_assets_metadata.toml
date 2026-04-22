@@ -30,3 +30,15 @@ id = "atMS-ymKAKnHyyVJd1qEd"
 uri = "file://.local/backtest-reports/nfl-2025-v2.txt"
 type = "text"
 title = "NFL Spread v2 — Raw Backtest Report"
+
+[[outputs]]
+id = "gLPxDQ1A6vaFV25yn_NRz"
+uri = "file://.local/backtest-reports/nfl-2025-v2.1-VERDICT.md"
+type = "text"
+title = "NFL Spread v2.1 — Calibration-Shrink Verdict"
+
+[[outputs]]
+id = "uIWXFjkB1tDx0OVzXeJI6"
+uri = "file://.local/backtest-reports/nfl-2025-v2.1.txt"
+type = "text"
+title = "NFL Spread v2.1 — Raw Backtest Report"

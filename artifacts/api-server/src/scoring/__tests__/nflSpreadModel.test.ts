@@ -377,11 +377,11 @@ test("PPG differential: PPG_MIN_SAMPLE gate is decoupled from atsSampleSize (liv
       }),
     })
   );
-  // Net diff = +12 → shift = 12 * 0.30 = +3.6 pts (within ±5 cap).
+  // v2.1: Net diff = +12 → shift = 12 * 0.15 = +1.8 pts (within ±2.5 cap).
   // ATS dormant, rest = 0, so this is the entire expected margin.
   assert.ok(
-    Math.abs(out.expectedMargin! - 3.6) < 1e-9,
-    `PPG must fire even when ATS is stubbed; expected 3.6, got ${out.expectedMargin}`
+    Math.abs(out.expectedMargin! - 1.8) < 1e-9,
+    `PPG must fire even when ATS is stubbed; expected 1.8, got ${out.expectedMargin}`
   );
 });
 
@@ -406,15 +406,15 @@ test("combined features compose additively and prob-sum invariant holds", async 
       }),
     })
   );
-  // Expected components:
+  // Expected components (v2.1 calibration shrink):
   //   probToMargin(0.5, 13.45) = 0   (since -110/-110 ML)
   //   rest:  3 * 0.20 = +0.6
-  //   ATS:   ((0.7-0.5)*5) - ((0.4-0.5)*5) = 1.0 - (-0.5) = +1.5  (within ±2.5 cap)
-  //   PPG:   (10 - (-2)) * 0.30 = +3.6  (within ±5.0 cap)
-  //   total: 0 + 0.6 + 1.5 + 3.6 = +5.7 pts
+  //   ATS:   ((0.7-0.5)*2.5) - ((0.4-0.5)*2.5) = 0.5 - (-0.25) = +0.75  (within ±1.25 cap)
+  //   PPG:   (10 - (-2)) * 0.15 = +1.8  (within ±2.5 cap)
+  //   total: 0 + 0.6 + 0.75 + 1.8 = +3.15 pts
   assert.ok(
-    Math.abs(out.expectedMargin! - 5.7) < 1e-6,
-    `expected combined margin ~5.7, got ${out.expectedMargin}`
+    Math.abs(out.expectedMargin! - 3.15) < 1e-6,
+    `expected combined margin ~3.15, got ${out.expectedMargin}`
   );
   // Prob-sum invariant must always hold regardless of feature stack.
   assert.ok(Math.abs(out.rawProbHome! + out.rawProbAway! - 1) < 1e-9);
