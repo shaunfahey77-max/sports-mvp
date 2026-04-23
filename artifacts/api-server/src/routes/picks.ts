@@ -15,6 +15,7 @@ import { computeOutcomeResult } from "../scoring/validatePicks";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
+import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
 
 // Leagues surfaced by default to subscribers. NCAAM is experimental (hash-noise
 // pseudo-models) and must be requested explicitly via ?league=ncaam.
@@ -38,6 +39,18 @@ router.get("/picks", async (req, res): Promise<void> => {
   if (market) conditions.push(eq(scoredPicksTable.market, market));
   if (tier) conditions.push(eq(scoredPicksTable.tier, tier));
   if (result) conditions.push(eq(scoredPicksTable.result, result));
+
+  // Public read surface: exclude pre-fix contaminated picks per
+  // PUBLIC_TRACK_RECORD_CUTOFFS. Raw rows remain in scored_picks for audit;
+  // only the public read filters them out. Mirrors the same exclusion
+  // already applied by /performance and /performance/history so the
+  // History page (which lists raw picks) cannot show picks that the
+  // Performance page silently omits.
+  const scoredPicksExclusion = buildPreFixExclusionCondition(
+    scoredPicksTable.league,
+    scoredPicksTable.date,
+  );
+  if (scoredPicksExclusion) conditions.push(scoredPicksExclusion);
 
   // Fetch ordered by rankScore DESC so the cap selects the best picks per league/game
   const raw =
@@ -82,6 +95,14 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
   }
   if (market) conditions.push(eq(candidateBetsTable.marketType, market));
   if (tier) conditions.push(eq(candidateBetsTable.tier, tier));
+
+  // Same public-cutoff exclusion as /picks above: pre-fix candidates
+  // are still in candidate_bets for audit but should not surface here.
+  const candidatesExclusion = buildPreFixExclusionCondition(
+    candidateBetsTable.league,
+    candidateBetsTable.snapshotDate,
+  );
+  if (candidatesExclusion) conditions.push(candidatesExclusion);
 
   // Apply a hard cap so an unfiltered call (now always carrying the default
   // league filter) cannot return unbounded rows. Callers can pass ?limit to

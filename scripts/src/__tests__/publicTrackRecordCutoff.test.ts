@@ -1,11 +1,17 @@
 /**
  * Pure-logic test for the public track-record cutoff filter. Mirrors the
  * SQL semantics of `buildPreFixExclusionCondition` in
- * artifacts/api-server/src/routes/performance.ts so we catch drift between
+ * artifacts/api-server/src/lib/preFixCutoff.ts so we catch drift between
  * the config (PUBLIC_TRACK_RECORD_CUTOFFS) and the public read surface.
  *
- * NHL pre-fix cutoff = 2026-04-12: NHL rows BEFORE that date are excluded;
- * NHL on/after that date AND every NBA row of any date are included.
+ * Cutoffs (both at 2026-04-12, the line-shopping fix landing date):
+ *   - NHL: rows BEFORE 2026-04-12 are excluded; on/after are visible.
+ *   - NBA: same — added in the read-surface cutoff fix so the History /
+ *          Performance / Picks endpoints all show current-algorithm-only
+ *          NBA data.
+ *
+ * Leagues without an entry in the cutoff map (e.g. ncaam, mlb, nfl,
+ * ncaaf) are unaffected by this filter regardless of date.
  */
 
 import { test } from "node:test";
@@ -28,6 +34,10 @@ test("cutoff config: NHL is set to 2026-04-12 (Task #4 fix landed 04-12)", () =>
   assert.equal(PUBLIC_TRACK_RECORD_CUTOFFS.nhl, "2026-04-12");
 });
 
+test("cutoff config: NBA is set to 2026-04-12 (same line-shopping fix)", () => {
+  assert.equal(PUBLIC_TRACK_RECORD_CUTOFFS.nba, "2026-04-12");
+});
+
 test("public visibility: NHL rows BEFORE 2026-04-12 are hidden from the public surface", () => {
   assert.equal(isPublicVisible("nhl", "2026-04-10"), false);
   assert.equal(isPublicVisible("nhl", "2026-04-11"), false); // the contaminated +21.56u day
@@ -40,21 +50,33 @@ test("public visibility: NHL rows ON OR AFTER 2026-04-12 are visible (clean post
   assert.equal(isPublicVisible("nhl", "2026-12-31"), true);
 });
 
-test("public visibility: NBA is unaffected by the NHL cutoff at every date", () => {
-  for (const d of ["2026-01-01", "2026-04-10", "2026-04-11", "2026-04-12", "2026-12-31"]) {
-    assert.equal(isPublicVisible("nba", d), true, `nba on ${d} should be visible`);
-  }
+test("public visibility: NBA rows BEFORE 2026-04-12 are hidden from the public surface", () => {
+  assert.equal(isPublicVisible("nba", "2026-04-10"), false);
+  assert.equal(isPublicVisible("nba", "2026-04-11"), false);
+  assert.equal(isPublicVisible("nba", "2026-01-01"), false);
+});
+
+test("public visibility: NBA rows ON OR AFTER 2026-04-12 are visible (clean post-fix)", () => {
+  assert.equal(isPublicVisible("nba", "2026-04-12"), true);
+  assert.equal(isPublicVisible("nba", "2026-04-13"), true);
+  assert.equal(isPublicVisible("nba", "2026-12-31"), true);
 });
 
 test("public visibility: leagues with no cutoff entry are unaffected", () => {
-  // ncaam isn't in the cutoff map — it shouldn't be touched by this filter
-  // (it is gated separately as 'experimental' in DEFAULT_PRODUCTION_LEAGUES).
+  // ncaam / mlb / nfl / ncaaf are not in the cutoff map — they shouldn't
+  // be touched by this filter (each is gated separately, e.g. NCAAM as
+  // experimental, MLB as shadow-mode, NFL/NCAAF as foundation-only).
   assert.equal(isPublicVisible("ncaam", "2025-01-01"), true);
+  assert.equal(isPublicVisible("mlb", "2025-01-01"), true);
+  assert.equal(isPublicVisible("nfl", "2025-01-01"), true);
+  assert.equal(isPublicVisible("ncaaf", "2025-01-01"), true);
 });
 
 test("cutoff is a strict less-than (boundary day is the FIRST included day)", () => {
   // Lock the off-by-one in case someone changes < to <= later.
-  const c = { nhl: "2026-04-12" };
+  const c = { nhl: "2026-04-12", nba: "2026-04-12" };
   assert.equal(isPublicVisible("nhl", "2026-04-11", c), false);
   assert.equal(isPublicVisible("nhl", "2026-04-12", c), true);
+  assert.equal(isPublicVisible("nba", "2026-04-11", c), false);
+  assert.equal(isPublicVisible("nba", "2026-04-12", c), true);
 });

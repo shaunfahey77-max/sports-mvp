@@ -272,6 +272,14 @@ export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {
  */
 export const PUBLIC_TRACK_RECORD_CUTOFFS: Partial<Record<string, string>> = {
   nhl: "2026-04-12",
+  // The same line-shopping fix in `pickBestLines` landed for NBA on the
+  // same commit as NHL. Pre-2026-04-12 NBA spread picks carry inflated
+  // displayed edges (sigmoidA shrinkage 1.02 → 0.85 + MIN_EDGE bump
+  // 0.025 → 0.05 were the post-fix corrections — see comments above on
+  // TIER_A_THRESHOLD_OVERRIDE.nba_spread). Filtering NBA at the same
+  // cutoff keeps the public Performance / History surfaces honest
+  // about what the current model is actually producing.
+  nba: "2026-04-12",
 };
 
 /** Label written into `validation_metrics.data_quality` for rows excluded by the cutoff. */

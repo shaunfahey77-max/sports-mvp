@@ -1,46 +1,19 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { scoredPicksTable, validationMetricsTable, candidateBetsTable } from "@workspace/db";
-import { eq, and, gte, desc, ne, count, inArray, or, isNull, type SQL } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { eq, and, gte, desc, ne, count, inArray, or, isNull } from "drizzle-orm";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { americanToDecimal } from "../scoring/marketProb";
-import {
-  PUBLIC_TRACK_RECORD_CUTOFFS,
-  DATA_QUALITY_PRE_FIX,
-} from "../config/scoringModelConfig";
+import { DATA_QUALITY_PRE_FIX } from "../config/scoringModelConfig";
+import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
 
 // Production leagues surfaced in performance metrics by default.
 // NCAAM is experimental (hash-noise models) and must be opted into explicitly.
 const DEFAULT_PRODUCTION_LEAGUES = ["nba", "nhl"] as const;
 
-/**
- * Build a WHERE condition that excludes pre-fix contaminated rows from a
- * date-keyed table. For each league with a cutoff in
- * PUBLIC_TRACK_RECORD_CUTOFFS, rows must have date >= cutoff. Leagues
- * without a cutoff are unaffected. Rows whose league is unknown to the
- * cutoff map are also unaffected.
- *
- * Implemented as: NOT (league = X AND date < cutoffX) for each cutoff,
- * AND-ed together. This preserves all non-contaminated history while
- * deterministically excluding only the pre-fix portion of each league.
- *
- * Returns null if no cutoffs are configured (no filter needed).
- */
-export function buildPreFixExclusionCondition(
-  leagueCol: AnyPgColumn,
-  dateCol: AnyPgColumn,
-): SQL | null {
-  const clauses: SQL[] = [];
-  for (const [league, cutoff] of Object.entries(PUBLIC_TRACK_RECORD_CUTOFFS)) {
-    if (!cutoff) continue;
-    // NOT (league = X AND date < cutoff) === (league != X OR date >= cutoff)
-    const c = or(ne(leagueCol, league), gte(dateCol, cutoff));
-    if (c) clauses.push(c);
-  }
-  if (clauses.length === 0) return null;
-  return and(...clauses) ?? null;
-}
+// Re-export so existing callers that imported the helper from this module
+// continue to compile. New callers should import from "../lib/preFixCutoff".
+export { buildPreFixExclusionCondition };
 
 const router: IRouter = Router();
 
