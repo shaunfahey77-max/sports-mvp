@@ -115,12 +115,17 @@ export function History() {
 
       {picks.length > 0 && !isLoading && (
         <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4 px-5 py-4 rounded-sm border border-[#1A3066] bg-[#0D1B3E]">
-          <div className="flex items-center gap-2 text-sm text-white/70">
-            <Archive size={14} className="text-[#FFC107]" />
-            <span>
-              Showing <span className="text-white font-bold">{picks.length}</span>{" "}
-              {filtersActive ? "filtered" : ""} picks
-            </span>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2 text-sm text-white/70">
+              <Archive size={14} className="text-[#FFC107]" />
+              <span>
+                Showing <span className="text-white font-bold">{picks.length}</span>{" "}
+                {filtersActive ? "filtered" : ""} picks
+              </span>
+            </div>
+            <p className="text-[11px] text-white/40 italic md:pl-6 leading-snug">
+              Showing picks since the current model went live on April&nbsp;12,&nbsp;2026.
+            </p>
           </div>
           <div className="flex items-center gap-3 text-xs">
             <ResultPill color="#4ADE80" label="Wins" count={wins} />
