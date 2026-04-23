@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Plus } from "lucide-react";
 import { CandidateBet } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +35,7 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
   );
 }
 
-export function CandidateCard({ bet, highlight = false }: { bet: CandidateBet; highlight?: boolean }) {
+export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: CandidateBet; highlight?: boolean; onLogPick?: () => void }) {
   const matchup = parseGameMatchup(bet.gameKey, bet.league);
   const leagueLogo = getLeagueLogoUrl(bet.league);
 
@@ -147,6 +148,17 @@ export function CandidateCard({ bet, highlight = false }: { bet: CandidateBet; h
           publishLine: bet.publishLine !== null && bet.publishLine !== undefined ? Number(bet.publishLine) : null,
         }} />
       </div>
+
+      {onLogPick && (
+        <button
+          onClick={onLogPick}
+          className="mt-1 w-full flex items-center justify-center gap-1.5 py-2 rounded border border-[#FFC107]/40 bg-[#FFC107]/5 text-[#FFC107] text-xs font-bold font-display uppercase tracking-[0.18em] hover:bg-[#FFC107]/15 hover:border-[#FFC107]/70 transition-colors"
+          aria-label="Add this candidate to your bet tracker"
+        >
+          <Plus size={13} strokeWidth={2.5} />
+          Add to Tracker
+        </button>
+      )}
     </Card>
   );
 }

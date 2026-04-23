@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useListPicks, useListCandidates, getListPicksQueryKey, getListCandidatesQueryKey } from "@workspace/api-client-react";
-import type { ScoredPick } from "@workspace/api-client-react";
+import type { ScoredPick, CandidateBet } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { PickCard } from "@/components/PickCard";
 import { CandidateCard } from "@/components/CandidateCard";
@@ -36,6 +36,35 @@ function pickToLogData(pick: ScoredPick): LogPickData {
     edge: Number(pick.edge),
     ev: Number(pick.ev),
     sourcePickId: pick.id,
+  };
+}
+
+// Mirror of pickToLogData for the pre-score "candidate" surface so the
+// "+ Add to Tracker" affordance produces the same prefilled panel whether
+// the slate is in scored-picks mode (PickCard) or live-candidates mode
+// (CandidateCard). Only the field-name shape differs (side/marketType).
+function candidateToLogData(bet: CandidateBet): LogPickData {
+  const matchup = parseGameMatchup(bet.gameKey, bet.league);
+  const matchupStr = matchup ? `${matchup.awayAbbrev} @ ${matchup.homeAbbrev}` : bet.gameKey;
+  const sideIsOver = bet.side === 'over';
+  const sideIsUnder = bet.side === 'under';
+  const sideIsHome = bet.side === 'home';
+  const sideLabel = sideIsOver ? 'OVER'
+    : sideIsUnder ? 'UNDER'
+    : sideIsHome ? (matchup?.homeAbbrev ?? 'HOME')
+    : (matchup?.awayAbbrev ?? 'AWAY');
+  const line = bet.publishLine != null ? ` ${Number(bet.publishLine) > 0 ? '+' : ''}${bet.publishLine}` : '';
+  return {
+    league: bet.league,
+    matchup: matchupStr,
+    gameKey: bet.gameKey,
+    market: bet.marketType,
+    pick: `${sideLabel}${line}`,
+    odds: Number(bet.publishOdds),
+    tier: bet.tier,
+    edge: Number(bet.edge),
+    ev: Number(bet.ev),
+    sourcePickId: bet.id,
   };
 }
 
@@ -145,6 +174,11 @@ export function Dashboard() {
     setPanelOpen(true);
   }
 
+  function handleLogCandidate(bet: CandidateBet) {
+    setPanelData(candidateToLogData(bet));
+    setPanelOpen(true);
+  }
+
   const picksParams = { date: todayStr, result: 'pending' as const };
   const { data: scoredPicksData, isLoading: loadingPicks } = useListPicks(
     picksParams,
@@ -235,7 +269,7 @@ export function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {candidates.map((bet, i) => (
               <div key={bet.id} className="animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both" style={{ animationDelay: `${i * 50}ms` }}>
-                <CandidateCard bet={bet} highlight={bet.id === topCandidateId} />
+                <CandidateCard bet={bet} highlight={bet.id === topCandidateId} onLogPick={() => handleLogCandidate(bet)} />
               </div>
             ))}
           </div>
