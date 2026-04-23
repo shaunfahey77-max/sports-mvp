@@ -88,8 +88,8 @@ function HeroSection({ stats }: { stats: ReturnType<typeof buildStats> }) {
     <section className="relative pt-20 pb-28 overflow-hidden">
       {/* background */}
       <div className="absolute inset-0 z-0">
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#060D1F]/85 to-[#060D1F] z-10" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#060D1F] via-transparent to-[#060D1F] z-10" />
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#060D1F]/65 to-[#060D1F] z-10" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#060D1F]/85 via-transparent to-[#060D1F]/85 z-10" />
         <img
           src="/sportsbook-hero.jpg"
           alt=""
