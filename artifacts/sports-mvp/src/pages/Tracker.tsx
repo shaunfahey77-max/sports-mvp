@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -15,6 +15,7 @@ import {
   UserBet, BetResult, LogPickData,
   loadBets, addBet, updateBetResult, deleteBet,
   loadBankroll, saveBankroll, calcSummary, calcPnLCurve,
+  consumePrefillPick,
 } from "@/lib/betTracker";
 
 // ─── One-time seeder for April 7 DraftKings bets ──────────────────────────────
@@ -289,7 +290,23 @@ const RESULT_FILTERS: { label: string; value: BetResult | 'all' }[] = [
 export function Tracker() {
   const { bets, add, markResult, remove } = useBets();
   const [panelOpen, setPanelOpen] = useState(false);
-  const [initialData] = useState<LogPickData | undefined>(undefined);
+  const [initialData, setInitialData] = useState<LogPickData | undefined>(undefined);
+
+  // Consume any prefill handoff (e.g. user clicked "Add to Tracker" on a
+  // pending pick from the History page). Runs once on mount; the helper
+  // self-clears the sessionStorage key so a manual refresh won't re-open
+  // the panel with stale data. The ref guard makes consumption idempotent
+  // under React StrictMode's intentional double-effect-invocation in dev.
+  const prefillConsumedRef = useRef(false);
+  useEffect(() => {
+    if (prefillConsumedRef.current) return;
+    prefillConsumedRef.current = true;
+    const prefill = consumePrefillPick();
+    if (prefill) {
+      setInitialData(prefill);
+      setPanelOpen(true);
+    }
+  }, []);
 
   const [bankroll, setBankrollState] = useState(() => loadBankroll());
   const [bankrollEditing, setBankrollEditing] = useState(false);

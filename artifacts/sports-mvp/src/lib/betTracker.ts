@@ -37,6 +37,32 @@ export interface LogPickData {
 const STORAGE_KEY = 'sportsmvp_bets';
 export const BANKROLL_KEY = 'sportsmvp_bankroll';
 
+// Ephemeral handoff for navigating into Tracker with a pre-filled bet context.
+// Written by the producer (e.g. History page) right before navigating, consumed
+// once on Tracker mount. sessionStorage keeps it out of the URL and survives
+// the route transition without coupling to any specific router API.
+const PREFILL_KEY = 'sportsmvp_prefill_pick';
+
+export function stashPrefillPick(data: LogPickData): void {
+  try {
+    sessionStorage.setItem(PREFILL_KEY, JSON.stringify(data));
+  } catch {
+    // sessionStorage unavailable (e.g. private mode) — fail silently; user
+    // can still log the bet manually.
+  }
+}
+
+export function consumePrefillPick(): LogPickData | undefined {
+  try {
+    const raw = sessionStorage.getItem(PREFILL_KEY);
+    if (!raw) return undefined;
+    sessionStorage.removeItem(PREFILL_KEY);
+    return JSON.parse(raw) as LogPickData;
+  } catch {
+    return undefined;
+  }
+}
+
 export const SPORTSBOOKS = [
   'DraftKings', 'FanDuel', 'BetMGM', 'Caesars', 'ESPN Bet', 'PointsBet', 'Other',
 ];

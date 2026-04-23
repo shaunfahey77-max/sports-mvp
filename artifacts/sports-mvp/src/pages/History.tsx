@@ -1,10 +1,47 @@
 import { useState } from "react";
-import { useListPicks, getListPicksQueryKey, League, MarketType, Tier } from "@workspace/api-client-react";
+import { useLocation } from "wouter";
+import { useListPicks, getListPicksQueryKey, League, MarketType, Tier, ScoredPick } from "@workspace/api-client-react";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { PickCard } from "@/components/PickCard";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChevronDown, ChevronUp, Archive } from "lucide-react";
+import { LogPickData, stashPrefillPick } from "@/lib/betTracker";
+import { parseGameMatchup } from "@/lib/teamLogos";
+
+// Mirrors Dashboard's pickToLogData so prefill formatting is consistent across
+// the two entry points into AddBetPanel. Resolves home/away to team abbrevs
+// and includes the spread/total line on the pick label.
+function pickToLogData(pick: ScoredPick): LogPickData {
+  const matchup = parseGameMatchup(pick.gameKey, pick.league);
+  const matchupStr = matchup ? `${matchup.awayAbbrev} @ ${matchup.homeAbbrev}` : pick.gameKey;
+  const pickIsOver = pick.pick === "over";
+  const pickIsUnder = pick.pick === "under";
+  const pickIsHome = pick.pick === "home";
+  const pickLabel = pickIsOver
+    ? "OVER"
+    : pickIsUnder
+    ? "UNDER"
+    : pickIsHome
+    ? matchup?.homeAbbrev ?? "HOME"
+    : matchup?.awayAbbrev ?? "AWAY";
+  const line =
+    pick.publishLine != null && pick.publishLine !== ""
+      ? ` ${Number(pick.publishLine) > 0 ? "+" : ""}${pick.publishLine}`
+      : "";
+  return {
+    league: pick.league,
+    matchup: matchupStr,
+    gameKey: pick.gameKey,
+    market: pick.market,
+    pick: `${pickLabel}${line}`,
+    odds: Number(pick.publishOdds),
+    tier: pick.tier,
+    edge: Number(pick.edge),
+    ev: Number(pick.ev),
+    sourcePickId: pick.id,
+  };
+}
 
 const SERIF = "'Playfair Display', serif";
 
@@ -51,6 +88,7 @@ function HistoryGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
 }
 
 export function History() {
+  const [, setLocation] = useLocation();
   const [league, setLeague] = useState<League | "ALL">("ALL");
   const [market, setMarket] = useState<MarketType | "ALL">("ALL");
   const [tier, setTier] = useState<Tier | "ALL">("ALL");
@@ -68,7 +106,10 @@ export function History() {
     { query: { queryKey: getListPicksQueryKey(params) } }
   );
 
-  const picks = (data?.picks || []).filter(p => p.result !== "pending");
+  // Show all picks the API returns, including pending ones — they're part of
+  // the historical record and let the user "Add to Tracker" from this page.
+  // Users who only want graded results can filter via the Result dropdown.
+  const picks = data?.picks || [];
   const wins = picks.filter(p => p.result === "win").length;
   const losses = picks.filter(p => p.result === "loss").length;
   const pushes = picks.filter(p => p.result === "push").length;
@@ -144,7 +185,18 @@ export function History() {
       ) : picks.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in duration-500">
           {picks.map((pick) => (
-            <PickCard key={pick.id} pick={pick} />
+            <PickCard
+              key={pick.id}
+              pick={pick}
+              onLogPick={
+                pick.result === "pending"
+                  ? () => {
+                      stashPrefillPick(pickToLogData(pick));
+                      setLocation("/tracker");
+                    }
+                  : undefined
+              }
+            />
           ))}
         </div>
       ) : (

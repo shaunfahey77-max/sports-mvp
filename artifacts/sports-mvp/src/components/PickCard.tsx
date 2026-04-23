@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Plus } from "lucide-react";
 import { ScoredPick } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -168,9 +169,11 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
       {onLogPick && (
         <button
           onClick={onLogPick}
-          className="w-full text-[10px] font-bold uppercase tracking-[0.2em] text-[#FFC107]/70 hover:text-[#FFC107] border-t border-[#1A3066] pt-2.5 transition-colors text-center"
+          className="mt-1 w-full flex items-center justify-center gap-1.5 py-2 rounded border border-[#FFC107]/40 bg-[#FFC107]/5 text-[#FFC107] text-xs font-bold font-display uppercase tracking-[0.18em] hover:bg-[#FFC107]/15 hover:border-[#FFC107]/70 transition-colors"
+          aria-label="Add this pick to your bet tracker"
         >
-          + Log This Pick
+          <Plus size={13} strokeWidth={2.5} />
+          Add to Tracker
         </button>
       )}
     </Card>
