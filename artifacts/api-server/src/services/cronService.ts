@@ -18,6 +18,7 @@ import { logger } from "../lib/logger";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
+import { computeClvWritebackValues } from "../scoring/clvWriteback";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
@@ -93,13 +94,17 @@ async function runOddsIngest(): Promise<void> {
               publishTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
               publishOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
               publishUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
-              // If game has already started, record the most recent odds as "close" odds
+              // If game has already started, record the most recent odds as "close" odds.
+              // closeAwaySpreadLine added in Plan 1 so spread-away CLV can be backfilled
+              // (pre-Plan-1 the column did not exist and away-side price CLV was lossy).
               ...(isInProgress
                 ? {
                     homeCloseMl: String(snap.homePublishMl),
                     awayCloseMl: String(snap.awayPublishMl),
                     closeSpread: snap.publishSpread != null ? String(snap.publishSpread) : undefined,
                     closeSpreadLine: snap.publishSpreadLine != null ? String(snap.publishSpreadLine) : undefined,
+                    closeAwaySpreadLine:
+                      snap.publishAwaySpreadLine != null ? String(snap.publishAwaySpreadLine) : undefined,
                     closeTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
                     closeOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
                     closeUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
@@ -357,29 +362,20 @@ async function runNightlyValidation(): Promise<void> {
             total: snap.publishTotal ? parseFloat(snap.publishTotal) : null,
           });
 
-          // Compute CLV implied delta (close odds vs publish odds)
-          const closeOdds =
-            pick.market === "moneyline"
-              ? pick.pick === "home"
-                ? snap.homeCloseMl
-                : snap.awayCloseMl
-              : null;
-
-          let clvImpliedDelta: string | undefined;
-          if (closeOdds && pick.publishOdds) {
-            const publishImplied = americanToImplied(parseFloat(pick.publishOdds));
-            const closeImplied = americanToImplied(parseFloat(closeOdds));
-            // Positive CLV: market moved toward our side after publish.
-            // closeImplied > publishImplied means sharps bet our side → we got better opening price.
-            clvImpliedDelta = String(closeImplied - publishImplied);
-          }
+          // CLV writeback for all three markets. Pre-Plan-1 this block hard-gated on
+          // `pick.market === "moneyline"`, so spread/total picks never got close_odds /
+          // close_line / clv_implied_delta / clv_line_delta written. computeClvWritebackValues
+          // centralises the per-market mapping; see scoring/clvWriteback.ts.
+          const clv = computeClvWritebackValues(pick, snap);
 
           await db
             .update(scoredPicksTable)
             .set({
               result,
-              closeOdds: closeOdds ?? undefined,
-              clvImpliedDelta,
+              closeOdds: clv.closeOdds,
+              closeLine: clv.closeLine,
+              clvImpliedDelta: clv.clvImpliedDelta,
+              clvLineDelta: clv.clvLineDelta,
               updatedAt: new Date(),
             })
             .where(eq(scoredPicksTable.id, pick.id));
@@ -527,11 +523,6 @@ export async function backfillValidationMetrics(
   return result;
 }
 
-function americanToImplied(american: number): number {
-  if (american < 0) return (-american) / (-american + 100);
-  return 100 / (american + 100);
-}
-
 // ---------------------------------------------------------------------------
 // Backfill settlement using ESPN's free scoreboard API.
 // Used when games have aged beyond the Odds API /scores daysFrom window
@@ -636,19 +627,8 @@ export async function backfillSettlementEspn(
               total: snap.publishTotal ? parseFloat(snap.publishTotal) : null,
             });
 
-            const closeOdds =
-              pick.market === "moneyline"
-                ? pick.pick === "home"
-                  ? snap.homeCloseMl
-                  : snap.awayCloseMl
-                : null;
-
-            let clvImpliedDelta: string | undefined;
-            if (closeOdds && pick.publishOdds) {
-              const publishImplied = americanToImplied(parseFloat(pick.publishOdds));
-              const closeImplied = americanToImplied(parseFloat(closeOdds));
-              clvImpliedDelta = String(closeImplied - publishImplied);
-            }
+            // CLV writeback parity with the nightly path. See scoring/clvWriteback.ts.
+            const clv = computeClvWritebackValues(pick, snap);
 
             // Concurrency guard: only settle if still pending. Prevents
             // double-counting when nightly validation and backfill overlap.
@@ -656,8 +636,10 @@ export async function backfillSettlementEspn(
               .update(scoredPicksTable)
               .set({
                 result: outcome,
-                closeOdds: closeOdds ?? undefined,
-                clvImpliedDelta,
+                closeOdds: clv.closeOdds,
+                closeLine: clv.closeLine,
+                clvImpliedDelta: clv.clvImpliedDelta,
+                clvLineDelta: clv.clvLineDelta,
                 updatedAt: new Date(),
               })
               .where(

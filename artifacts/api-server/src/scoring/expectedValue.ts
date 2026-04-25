@@ -35,8 +35,15 @@ export function computeClvLineDelta(
 }
 
 /**
- * CLV implied delta: difference between publish implied prob and close implied prob.
- * Positive means the market moved in your favor.
+ * CLV implied delta: closeImplied - publishImplied.
+ * Positive means the market moved in your favor (close odds shorter than publish odds
+ * → sharps drove the line toward your side → you bought the better price).
+ *
+ * NOTE: Pre-Plan-1 the implementation returned `publish - close`, which silently
+ * inverted the sign relative to this docstring and to the `clvHitRate` convention
+ * in validatePicks.ts (which counts `delta > 0` as a hit). The cron-service inline
+ * writeback was using the correct `close - publish` formula directly; this helper
+ * is now aligned with that convention so it can replace the inline math.
  */
 export function computeClvImpliedDelta(
   publishOdds: number,
@@ -45,7 +52,7 @@ export function computeClvImpliedDelta(
   if (closeOdds == null) return null;
   const publishImplied = americanToImplied(publishOdds);
   const closeImplied = americanToImplied(closeOdds);
-  return publishImplied - closeImplied;
+  return closeImplied - publishImplied;
 }
 
 function americanToImplied(odds: number): number {

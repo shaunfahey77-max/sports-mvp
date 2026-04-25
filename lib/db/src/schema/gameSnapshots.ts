@@ -29,6 +29,7 @@ export const gameSnapshotsTable = pgTable(
     publishAwaySpreadLine: numeric("publish_away_spread_line"),
     closeSpread: numeric("close_spread"),
     closeSpreadLine: numeric("close_spread_line"),
+    closeAwaySpreadLine: numeric("close_away_spread_line"),
     publishTotal: numeric("publish_total"),
     publishOverLine: numeric("publish_over_line"),
     publishUnderLine: numeric("publish_under_line"),

@@ -52,7 +52,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts src/scoring/__tests__/ncaafTeamAbbreviations.test.ts src/scoring/__tests__/nflSpreadModel.test.ts src/scoring/__tests__/ncaafSpreadModel.test.ts"
+args = "pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts src/scoring/__tests__/ncaafTeamAbbreviations.test.ts src/scoring/__tests__/nflSpreadModel.test.ts src/scoring/__tests__/ncaafSpreadModel.test.ts src/scoring/__tests__/clvWriteback.test.ts"
 
 [agent]
 stack = "PNPM_WORKSPACE"
