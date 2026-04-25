@@ -212,6 +212,13 @@ export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   nhl_moneyline: true,
   nba_moneyline: true,
   nhl_total: true,
+  // NBA total: model-edge ceiling sits well below the per-market 10% floor
+  // (max edge across 214 candidates over a 14d window: 6.8%). Bucket has
+  // been functionally dead — formal disable makes the state explicit and
+  // prevents false-positive activity if MARKET_MIN_EDGE.nba_total is ever
+  // tuned downward without a corresponding model review. Re-enable only
+  // after a model review establishes whether real edge is reachable.
+  nba_total: true,
   // MLB Phase 0.75D foundation: moneyline only. Run line (mlb_spread) and
   // totals (mlb_total) are explicitly disabled here as a defensive marker
   // — the cron path also skips them via per-league markets list. No models
