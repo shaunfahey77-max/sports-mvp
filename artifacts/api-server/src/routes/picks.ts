@@ -5,7 +5,7 @@ import {
   candidateBetsTable,
   scoredPicksTable,
 } from "@workspace/db";
-import { eq, and, gte, lte, desc, inArray, sql } from "drizzle-orm";
+import { eq, and, gte, lte, desc, inArray, sql, isNull } from "drizzle-orm";
 import {
   ScoreDateBody,
   ValidatePicksBody,
@@ -51,6 +51,11 @@ router.get("/picks", async (req, res): Promise<void> => {
     scoredPicksTable.date,
   );
   if (scoredPicksExclusion) conditions.push(scoredPicksExclusion);
+  // Surgical exclusion: any row carrying a non-null data_quality label
+  // (e.g. "contaminated_ingest" applied to specific stale-quote NHL games)
+  // is hidden from the public surface. Mirrors /performance so the History
+  // page cannot show picks that the Performance page silently omits.
+  conditions.push(isNull(scoredPicksTable.dataQuality));
 
   // Fetch ordered by rankScore DESC so the cap selects the best picks per league/game
   const raw =
@@ -103,6 +108,9 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
     candidateBetsTable.snapshotDate,
   );
   if (candidatesExclusion) conditions.push(candidatesExclusion);
+  // Surgical exclusion: any candidate carrying a non-null data_quality
+  // label is hidden from the public surface. Mirrors /picks above.
+  conditions.push(isNull(candidateBetsTable.dataQuality));
 
   // Apply a hard cap so an unfiltered call (now always carrying the default
   // league filter) cannot return unbounded rows. Callers can pass ?limit to

@@ -40,6 +40,11 @@ router.get("/performance", async (req, res): Promise<void> => {
     scoredPicksTable.date,
   );
   if (scoredPicksExclusion) conditions.push(scoredPicksExclusion);
+  // Surgical exclusion: any row carrying a non-null data_quality label
+  // (e.g. "contaminated_ingest" applied to specific stale-quote NHL games)
+  // is hidden from the public surface. Raw rows remain in scored_picks
+  // for audit. NULL = clean / publishable.
+  conditions.push(isNull(scoredPicksTable.dataQuality));
 
   const picks = await db
     .select()
@@ -61,6 +66,9 @@ router.get("/performance", async (req, res): Promise<void> => {
     candidateBetsTable.snapshotDate,
   );
   if (candidatesExclusion) candidateConditions.push(candidatesExclusion);
+  // Mirror the surgical scored_picks exclusion: any candidate carrying a
+  // non-null data_quality label is hidden from the public pass-rate.
+  candidateConditions.push(isNull(candidateBetsTable.dataQuality));
 
   const [totalCandidatesRow, publishedCandidatesRow] = await Promise.all([
     db

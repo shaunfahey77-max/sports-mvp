@@ -35,6 +35,13 @@ export const candidateBetsTable = pgTable(
     selectionReason: text("selection_reason"),
     snapshotDate: date("snapshot_date").notNull(),
     modelVersion: text("model_version").notNull().default("v1"),
+    // Internal audit label. NULL = clean / publishable on the public read
+    // surfaces (/picks/candidates, /performance pass-rate). Non-null values
+    // (e.g. "contaminated_ingest") preserve the raw row for internal audit
+    // while signaling that public read paths must filter it out. Mirrors
+    // the existing pattern on validation_metrics.data_quality. Set by
+    // backfill scripts; never written by the live ingest/scoring pipeline.
+    dataQuality: text("data_quality"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

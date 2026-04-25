@@ -322,6 +322,22 @@ export const PUBLIC_TRACK_RECORD_CUTOFFS: Partial<Record<string, string>> = {
 /** Label written into `validation_metrics.data_quality` for rows excluded by the cutoff. */
 export const DATA_QUALITY_PRE_FIX = "pre_fix_contaminated" as const;
 
+/**
+ * Label written into `scored_picks.data_quality` and
+ * `candidate_bets.data_quality` for rows generated from a known-bad ingest
+ * (e.g. the 2026-04-13/14/15 NHL contamination caused by stale or
+ * directionally-inconsistent bookmaker quotes that landed before the
+ * ingest plausibility filter + ML/spread consistency rail were in place).
+ *
+ * Unlike DATA_QUALITY_PRE_FIX (which is date+league-keyed via
+ * PUBLIC_TRACK_RECORD_CUTOFFS and excludes ALL rows in a league before a
+ * cutoff date), this label is applied surgically to specific rows by
+ * one-off backfill scripts. The two labels coexist: a row may carry
+ * either, and any non-NULL data_quality excludes the row from public
+ * read surfaces.
+ */
+export const DATA_QUALITY_CONTAMINATED_INGEST = "contaminated_ingest" as const;
+
 export type League = "nba" | "ncaam" | "nhl" | "mlb" | "nfl" | "ncaaf";
 export type MarketType = "moneyline" | "spread" | "total";
 export type Side = "home" | "away" | "over" | "under";
