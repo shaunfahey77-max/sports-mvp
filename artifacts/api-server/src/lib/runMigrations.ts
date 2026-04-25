@@ -2,6 +2,7 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { db } from "@workspace/db";
 import path from "path";
 import { logger } from "./logger";
+import { applyContaminatedNhlLabels } from "./applyContaminatedNhlLabels";
 
 export async function runMigrations(): Promise<void> {
   // process.cwd() = artifacts/api-server when running dev
@@ -10,4 +11,10 @@ export async function runMigrations(): Promise<void> {
   logger.info({ migrationsFolder }, "Running database migrations");
   await migrate(db, { migrationsFolder });
   logger.info("Database migrations completed successfully");
+
+  // Idempotent data-fix: ensure the NHL contaminated_ingest labels are
+  // applied on every deploy. The dev database was labeled out-of-band
+  // via a one-off SQL UPDATE; production has a separate database that
+  // needs the same labels for the read-side filters to be effective.
+  await applyContaminatedNhlLabels();
 }

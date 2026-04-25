@@ -65,10 +65,16 @@ The frontend is a React + Vite application adhering to specific brand guidelines
 **Database Schema:**
 - **`users`**: Stores Clerk user data, Stripe customer/subscription IDs, and subscription tier.
 - **`game_snapshots`**: Records raw game and market data (publish and close lines).
-- **`candidate_bets`**: Stores all evaluated bets with complete scoring metadata.
-- **`scored_picks`**: Contains final (non-PASS) picks with their outcomes.
+- **`candidate_bets`**: Stores all evaluated bets with complete scoring metadata. Has nullable `data_quality` text column for surgical row-level exclusion.
+- **`scored_picks`**: Contains final (non-PASS) picks with their outcomes. Has nullable `data_quality` text column for surgical row-level exclusion.
 - **`validation_metrics`**: Holds rolling performance snapshots (14/30/45 days).
 - **`simulation_runs`**: Stores results of 45-day simulation runs.
+
+**Data Quality Filter (surgical row exclusion):**
+- A nullable `data_quality` text column on `scored_picks` and `candidate_bets` lets us hide specific contaminated rows without date cutoffs or row deletion. The constant `DATA_QUALITY_CONTAMINATED_INGEST = "contaminated_ingest"` lives in `scoringModelConfig.ts`.
+- Read-side filters: `isNull(table.dataQuality)` is appended to `/api/picks`, `/api/picks/candidates`, and both `/api/performance` queries — any non-null label is excluded from public surfaces.
+- Boot-time labeling: `applyContaminatedNhlLabels()` runs from `runMigrations()` on every server start, idempotently labeling 4 known contaminated NHL game_keys (col_cgy, wpg_mamm, wsh_cbj on 2026-04-14; sjs_chi on 2026-04-15). Idempotent (gated on `data_quality IS NULL`) so it's a no-op once applied.
+- Critical: the **production deployment uses a separate Postgres database from the dev workspace** (different row populations, different primary keys). Schema migrations propagate automatically via `runMigrations()`, but row-level data fixes do NOT — they must run at startup or be re-applied per environment.
 
 **API Routes:**
 - **Snapshots**: `/api/snapshots` (GET), `/api/snapshots/generate` (POST), `/api/snapshots/finalize` (POST).
