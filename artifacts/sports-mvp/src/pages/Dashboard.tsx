@@ -4,11 +4,12 @@ import type { ScoredPick, CandidateBet } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { PickCard } from "@/components/PickCard";
 import { CandidateCard } from "@/components/CandidateCard";
+import { FallbackCandidateCard } from "@/components/FallbackCandidateCard";
 import { TopPickCallout } from "@/components/TopPickCallout";
 import { AddBetPanel } from "@/components/AddBetPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageLayout } from "@/components/layout/PageLayout";
-import { ChevronDown, ChevronUp, Lock, Crown } from "lucide-react";
+import { ChevronDown, ChevronUp, Lock, Crown, Eye } from "lucide-react";
 import { addBet, LogPickData } from "@/lib/betTracker";
 import { parseGameMatchup } from "@/lib/teamLogos";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
@@ -193,11 +194,25 @@ export function Dashboard() {
   const allPicks = scoredPicksData?.picks || [];
   const candidates = candidatesData || [];
 
+  // Product-layer separation:
+  //  - "live candidates" = candidates that cleared the scoring gates (non-PASS).
+  //    These are real picks waiting for closing lines and behave like official picks
+  //    in the UI (top-pick callout, full grid).
+  //  - "fallback candidates" = PASS-tier rows. These never enter scored_picks and
+  //    therefore never enter /api/performance. They are shown ONLY when there are
+  //    zero qualifying picks/candidates today, and ONLY as the single highest-ranked
+  //    row, clearly labeled as Model Watch / Not an Official Pick.
+  const liveCandidates = candidates.filter(c => c.tier !== 'PASS');
+  const passCandidates = candidates.filter(c => c.tier === 'PASS');
+  const fallbackCandidate = passCandidates.length > 0
+    ? passCandidates.reduce((best, c) => Number(c.rankScore) > Number(best.rankScore) ? c : best)
+    : null;
+
   const topPickId = allPicks.length > 0
     ? allPicks.reduce((best, p) => Number(p.rankScore) > Number(best.rankScore) ? p : best).id
     : null;
-  const topCandidateId = !topPickId && candidates.length > 0
-    ? candidates.reduce((best, c) => Number(c.rankScore) > Number(best.rankScore) ? c : best).id
+  const topCandidateId = !topPickId && liveCandidates.length > 0
+    ? liveCandidates.reduce((best, c) => Number(c.rankScore) > Number(best.rankScore) ? c : best).id
     : null;
 
   // Tier gating: free users only see the top pick
@@ -253,7 +268,7 @@ export function Dashboard() {
             <UpgradeBanner pickCount={allPicks.length} />
           )}
         </div>
-      ) : candidates.length > 0 ? (
+      ) : liveCandidates.length > 0 ? (
         <div className="space-y-6">
           <div className="bg-[#112454]/60 px-4 py-3 rounded-lg border border-[#1A3066] flex items-start gap-3">
             <span className="relative flex h-2.5 w-2.5 mt-0.5 shrink-0">
@@ -265,13 +280,30 @@ export function Dashboard() {
               <p className="text-xs text-muted-foreground">Picks are generated. Final scoring happens once closing lines are posted. These are pre-score candidates using opening probabilities.</p>
             </div>
           </div>
-          <TopPickCallout candidates={candidates} />
+          <TopPickCallout candidates={liveCandidates} />
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {candidates.map((bet, i) => (
+            {liveCandidates.map((bet, i) => (
               <div key={bet.id} className="animate-in fade-in slide-in-from-bottom-4 duration-500 fill-mode-both" style={{ animationDelay: `${i * 50}ms` }}>
                 <CandidateCard bet={bet} highlight={bet.id === topCandidateId} onLogPick={() => handleLogCandidate(bet)} />
               </div>
             ))}
+          </div>
+        </div>
+      ) : fallbackCandidate ? (
+        <div className="space-y-6" data-testid="fallback-section">
+          <div className="bg-[#0B142E]/70 px-4 py-3 rounded-lg border border-dashed border-white/20 flex items-start gap-3">
+            <Eye size={14} className="text-white/60 mt-0.5 shrink-0" />
+            <div>
+              <div className="text-sm font-bold text-white/80 mb-0.5">No Official Picks Today — Top Candidate (Model Watch)</div>
+              <p className="text-xs text-muted-foreground">
+                No bets cleared the model's scoring gates. We're surfacing the single highest-ranked candidate below for transparency.
+                It is <span className="font-semibold text-white/70">not an official pick</span>, is not counted in performance or CLV reporting,
+                and will not appear in History.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <FallbackCandidateCard bet={fallbackCandidate} onLogPick={() => handleLogCandidate(fallbackCandidate)} />
           </div>
         </div>
       ) : (

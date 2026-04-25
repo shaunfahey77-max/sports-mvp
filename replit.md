@@ -34,7 +34,7 @@ The frontend is a React + Vite application adhering to specific brand guidelines
 
 **Key Features & Pages:**
 - **Today's Action (`/`)**: Displays candidate picks with tier badges, league/market labels, EV%, edge%, and results.
-- **Dashboard (`/picks`)**: Grid of today's scored picks, highlighting a "Top Pick."
+- **Dashboard (`/picks`)**: Grid of today's scored picks, highlighting a "Top Pick." When no scored picks AND no non-PASS candidates exist for the day, the page falls back to rendering the SINGLE highest-ranked PASS candidate as a clearly-labeled "Model Watch / Not an Official Pick" card (`FallbackCandidateCard`, `data-testid="fallback-candidate-card"`). Fallback rows never enter `scored_picks`, never appear in `/api/performance`, and never appear in History — they are a pure UI transparency device. Branch order in `Dashboard.tsx`: `allPicks > 0` → official picks; else `liveCandidates (non-PASS) > 0` → live candidates with `TopPickCallout`; else `fallbackCandidate` → fallback section; else "No Action Today".
 - **Parlay Builder (`/parlay`)**: (MVP+ subscriber feature) Pick selection, parlay calculator, and auto-build functionality.
 - **Model Performance (`/performance`)**: Rolling analytics (win rate, ROI, units won, Brier score, CLV hit rate) with time window toggles and breakdowns.
 - **Pick History (`/history`)**: Filterable grid of all historical picks.
