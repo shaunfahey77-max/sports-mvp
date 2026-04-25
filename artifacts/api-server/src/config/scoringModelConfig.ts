@@ -119,6 +119,36 @@ export const TOTAL_LINE_RANGE: Partial<Record<string, { min: number; max: number
   nhl: { min: 5.0, max: 7.0 },
 };
 
+/**
+ * Per-league plausibility range for moneyline (h2h) quotes (American odds).
+ * Any single book whose home OR away ML falls outside this range has its
+ * entire h2h pair dropped from the moneyline shopping pool. Generous on
+ * purpose — the goal is rejecting obvious stale/error data, not second-
+ * guessing legitimate book pricing.
+ *
+ * Calibration basis: live cross-book quote ranges observed for each
+ * league across normal regular-season games, widened by ~2x for headroom.
+ *
+ * NHL: parity sport, regular-season ML rarely outside ±400. Cap ±500.
+ * NBA: wide variance, blowout favorites can hit -2000. Cap ±3500.
+ * MLB: pitching-driven, occasional -350/+300. Cap ±500.
+ * NFL: most ML in ±800; max ~−2500/+1200. Cap -3000/+2000 (asymmetric —
+ *      favorite ML extends further than dog ML for big spreads).
+ * NCAAF: massive variance (Power 5 vs FCS); requires its own range
+ *      calibration before adding — leave undefined for now (no model
+ *      live in cron yet anyway).
+ *
+ * Filter is per-pair (drops both sides if either is out of range) because
+ * picking one good side from a book whose other side is broken is itself
+ * a consistency hazard.
+ */
+export const MONEYLINE_RANGE: Partial<Record<string, { min: number; max: number }>> = {
+  nhl: { min: -500, max: 500 },
+  nba: { min: -3500, max: 3500 },
+  mlb: { min: -500, max: 500 },
+  nfl: { min: -3000, max: 2000 },
+};
+
 export const MIN_EDGE_TO_CANDIDATE = 0.025;
 export const MIN_EV_TO_CANDIDATE = 0.008;
 export const MAX_EV_CAP = 0.12;

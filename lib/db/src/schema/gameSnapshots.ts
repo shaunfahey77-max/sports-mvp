@@ -7,6 +7,7 @@ import {
   numeric,
   date,
   index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -40,6 +41,18 @@ export const gameSnapshotsTable = pgTable(
     awayScore: integer("away_score"),
     status: text("status").notNull().default("scheduled"),
     snapshotDate: date("snapshot_date").notNull(),
+    // Per-side book provenance for the chosen lines. Nullable for back-compat
+    // with rows captured before this column existed. Populated by transformGame
+    // so post-hoc investigation of any future bad snapshot can identify which
+    // book contributed which side without re-fetching historical odds.
+    bestBooks: jsonb("best_books").$type<{
+      moneylineHome?: string;
+      moneylineAway?: string;
+      spreadHome?: string;
+      spreadAway?: string;
+      totalOver?: string;
+      totalUnder?: string;
+    }>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

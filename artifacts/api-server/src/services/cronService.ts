@@ -80,6 +80,7 @@ async function runOddsIngest(): Promise<void> {
             publishTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
             publishOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
             publishUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
+            bestBooks: snap.bestBooks,
             status: "scheduled",
             snapshotDate: snap.snapshotDate,
           })
@@ -94,6 +95,7 @@ async function runOddsIngest(): Promise<void> {
               publishTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
               publishOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
               publishUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
+              bestBooks: snap.bestBooks,
               // If game has already started, record the most recent odds as "close" odds.
               // closeAwaySpreadLine added in Plan 1 so spread-away CLV can be backfilled
               // (pre-Plan-1 the column did not exist and away-side price CLV was lossy).

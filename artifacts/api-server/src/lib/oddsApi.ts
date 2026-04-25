@@ -1,5 +1,7 @@
 import { getTeamAbbrev } from "./teamAbbreviations";
-import { SPREAD_LINE_ABS_MAX, TOTAL_LINE_RANGE } from "../config/scoringModelConfig";
+import { logger } from "./logger";
+import { SPREAD_LINE_ABS_MAX, TOTAL_LINE_RANGE, MONEYLINE_RANGE } from "../config/scoringModelConfig";
+import { removeTwoSidedVig } from "../scoring/marketProb";
 
 const BASE = "https://api.the-odds-api.com/v4";
 
@@ -213,6 +215,17 @@ export function pickBestLines(
   league?: string
 ): BestLines {
   // --- Moneyline (independent best-per-side — no line to mismatch) ---
+  // Per-league plausibility filter: drop any book's h2h pair whose home OR
+  // away ML falls outside MONEYLINE_RANGE[league]. This catches the bulk
+  // root cause of the 4/13 NHL incident where stale/buggy book payloads
+  // produced ML quotes 4-50x more extreme than any real book quote
+  // (e.g. WPG -1800 / MAMM +3300 vs the real cross-book range of
+  // about -175/+145), driving spurious 30-50% spread edges through
+  // downstream vig-removal math that assumes both prices share a market.
+  // Filter is per-pair (drops both sides if either is out of range)
+  // because keeping one good side from a book whose other side is broken
+  // is itself a consistency hazard.
+  const mlRange = league ? MONEYLINE_RANGE[league] : undefined;
   let bestHome: { odds: number; book: string } | null = null;
   let bestAway: { odds: number; book: string } | null = null;
   for (const bk of bookmakers) {
@@ -220,6 +233,28 @@ export function pickBestLines(
     if (!h2h) continue;
     const homeOut = h2h.outcomes.find((o) => o.name === homeTeam);
     const awayOut = h2h.outcomes.find((o) => o.name === awayTeam);
+    if (mlRange && homeOut && awayOut) {
+      const homeOut0 = homeOut.price;
+      const awayOut0 = awayOut.price;
+      const homeBad = homeOut0 < mlRange.min || homeOut0 > mlRange.max;
+      const awayBad = awayOut0 < mlRange.min || awayOut0 > mlRange.max;
+      if (homeBad || awayBad) {
+        logger.warn(
+          {
+            league,
+            book: bk.key,
+            homeTeam,
+            awayTeam,
+            homeOdds: homeOut0,
+            awayOdds: awayOut0,
+            mlRange,
+            droppedSide: homeBad && awayBad ? "both" : homeBad ? "home" : "away",
+          },
+          "pickBestLines: dropped h2h pair — moneyline outside plausibility range"
+        );
+        continue;
+      }
+    }
     if (homeOut) {
       const d = americanToDecimal(homeOut.price);
       if (!bestHome || d > americanToDecimal(bestHome.odds)) {
@@ -389,12 +424,66 @@ export interface TransformedSnapshot {
  */
 export function transformGame(game: OddsGame, league: string): TransformedSnapshot | null {
   const best = pickBestLines(game.bookmakers, game.home_team, game.away_team, league);
-  if (!best.h2h) return null;
+  if (!best.h2h) {
+    logger.debug(
+      {
+        league,
+        homeTeam: game.home_team,
+        awayTeam: game.away_team,
+        commenceTime: game.commence_time,
+        bookmakerCount: game.bookmakers.length,
+      },
+      "transformGame: no usable h2h pair after filters — snapshot dropped"
+    );
+    return null;
+  }
 
   const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(game.commence_time));
   const awayAbbrev = getTeamAbbrev(game.away_team, league);
   const homeAbbrev = getTeamAbbrev(game.home_team, league);
   const gameKey = `${league}_${date}_${awayAbbrev}_${homeAbbrev}`;
+
+  // --- ML / spread consistency rail ---
+  // After all per-side and per-line filters, the chosen ML pair and the
+  // chosen spread pair must agree on which team is the favorite. If
+  // vig-removed home prob > 0.5 (ML favors home) but the spread point
+  // is positive (spread favors away), or vice versa, *something* about
+  // the data is wrong — even if every individual quote passed its range
+  // filter. Drop the snapshot rather than emit an internally inconsistent
+  // record into the model. Decisive thresholds (5pp ML margin AND >=1
+  // spread point) prevent false positives on pick'em / coin-flip games
+  // where small noise can flip either side's apparent favorite.
+  if (best.spread != null) {
+    const { fairA: fairHome } = removeTwoSidedVig(best.h2h.homeOdds, best.h2h.awayOdds);
+    const mlMargin = Math.abs(fairHome - 0.5);
+    const spreadMargin = Math.abs(best.spread.homePoint);
+    const mlFavorsHome = fairHome > 0.5;
+    const spreadFavorsHome = best.spread.homePoint < 0;
+    if (mlMargin > 0.05 && spreadMargin >= 1 && mlFavorsHome !== spreadFavorsHome) {
+      logger.warn(
+        {
+          league,
+          gameKey,
+          homeTeam: game.home_team,
+          awayTeam: game.away_team,
+          homePublishMl: best.h2h.homeOdds,
+          awayPublishMl: best.h2h.awayOdds,
+          publishSpread: best.spread.homePoint,
+          fairHomeProb: fairHome,
+          mlFavorsHome,
+          spreadFavorsHome,
+          bestBooks: {
+            moneylineHome: best.h2h.homeBook,
+            moneylineAway: best.h2h.awayBook,
+            spreadHome: best.spread.homeBook,
+            spreadAway: best.spread.awayBook,
+          },
+        },
+        "transformGame: rejected snapshot — ML favorite disagrees with spread favorite"
+      );
+      return null;
+    }
+  }
 
   return {
     gameKey,

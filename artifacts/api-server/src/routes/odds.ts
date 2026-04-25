@@ -62,6 +62,7 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
               publishTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
               publishOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
               publishUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
+              bestBooks: snap.bestBooks,
               status: "scheduled",
               snapshotDate: snap.snapshotDate,
             })
@@ -76,6 +77,7 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
                 publishTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
                 publishOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
                 publishUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
+                bestBooks: snap.bestBooks,
                 updatedAt: new Date(),
               },
             });

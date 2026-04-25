@@ -246,6 +246,7 @@ async function processDate(date: string, leagues: League[], delayMs: number): Pr
             publishTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
             publishOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
             publishUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
+            bestBooks: snap.bestBooks,
             homeScore: espnEntry?.homeScore,
             awayScore: espnEntry?.awayScore,
             status: espnEntry ? "final" : "scheduled",
