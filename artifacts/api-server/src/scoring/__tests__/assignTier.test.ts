@@ -257,9 +257,12 @@ test("scorePicks (applyTieringToCandidates): guardrail gates per-league — NHL 
 
 test("scorePicks (applyTieringToCandidates): guardrail off by default — all leagues score normally", () => {
   // With NO options, simulation + historical callers see the old behavior:
-  // an extreme-odds NHL spread candidate is tiered purely by its rank_score.
+  // an extreme-odds spread candidate is NOT rejected by the odds-range
+  // guardrail. We use NCAAM here because it sits outside both
+  // MARKET_DISABLED and MARKET_MODEL_WATCH_ONLY, so the test isolates
+  // the guardrail-off semantic without entanglement from those gates.
   const candidates: CandidateOutput[] = [
-    mkCandidate({ gameKey: "nhl-extreme", league: "nhl", publishOdds: 5000 }),
+    mkCandidate({ gameKey: "ncm-extreme", league: "ncaam", publishOdds: 5000 }),
   ];
   const tiered = applyTieringToCandidates(candidates, [0.70]);
   assert.notEqual(tiered[0].selectionReason, "odds_out_of_range");

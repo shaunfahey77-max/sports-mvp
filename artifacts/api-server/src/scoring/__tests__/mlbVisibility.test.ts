@@ -1,12 +1,13 @@
 /**
  * Regression guard: MLB Phase 0.75D foundation must remain hidden from
- * the public surface. Until post-tuning evidence approves a ship, the
- * `/picks`, `/picks/candidates`, `/performance`, and `/performance/history`
- * endpoints must continue to default to NBA + NHL only.
+ * the Official-pick public surface. The `/picks`, `/performance`, and
+ * `/performance/history` endpoints must continue to default to NBA +
+ * NHL only.
  *
- * If a future change adds "mlb" to the default production leagues list
- * by mistake, this test fails loudly so the gating is reconsidered
- * intentionally rather than silently regressed.
+ * Task #8 carve-out: `/picks/candidates` opens an allowlist for
+ * Model-Watch-only markets (mlb_moneyline) so they appear on the Model
+ * Watch slot but never enter scored_picks / Performance / History.
+ * The DEFAULT_PRODUCTION_LEAGUES constant must still exclude mlb.
  */
 
 import { test } from "node:test";
@@ -30,7 +31,33 @@ test("routes/picks: DEFAULT_PRODUCTION_LEAGUES is exactly nba + nhl", () => {
   assert.ok(match, "DEFAULT_PRODUCTION_LEAGUES declaration not found");
   const list = match![1].replace(/\s+/g, "");
   assert.equal(list, '"nba","nhl"', "production leagues must remain nba + nhl only");
-  assert.ok(!src.includes('"mlb"'), "routes/picks.ts must not reference mlb in defaults");
+});
+
+test("routes/picks: any mlb reference is confined to the Model-Watch carve-out", () => {
+  // Task #8 allows mlb_moneyline to surface on /picks/candidates as a
+  // Model-Watch-only market. The only acceptable mlb reference in
+  // routes/picks.ts is inside MODEL_WATCH_ONLY_CANDIDATE_PAIRS (or a
+  // comment about it). Anything else risks promoting MLB into Official
+  // picks and must be reviewed.
+  const src = readFile("routes/picks.ts");
+  const lines = src.split("\n");
+  for (const [i, line] of lines.entries()) {
+    if (!line.includes('"mlb"') && !line.includes("'mlb'")) continue;
+    const ok =
+      line.includes("MODEL_WATCH_ONLY_CANDIDATE_PAIRS") ||
+      line.includes("model-watch") ||
+      line.includes("Model-Watch") ||
+      line.includes("model_watch_only") ||
+      line.trim().startsWith("//") ||
+      line.trim().startsWith("*");
+    // Look back a few lines for the const declaration / comment context.
+    const window = lines.slice(Math.max(0, i - 6), i + 1).join("\n");
+    const inWatchBlock = window.includes("MODEL_WATCH_ONLY_CANDIDATE_PAIRS");
+    assert.ok(
+      ok || inWatchBlock,
+      `routes/picks.ts line ${i + 1} references mlb outside the Model-Watch carve-out: ${line}`
+    );
+  }
 });
 
 test("routes/performance: DEFAULT_PRODUCTION_LEAGUES is exactly nba + nhl", () => {

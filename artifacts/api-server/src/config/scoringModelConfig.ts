@@ -272,6 +272,37 @@ export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   ncaaf_total: true,
 };
 
+/**
+ * Markets that produce candidates but are NOT presented as Official picks.
+ * Every candidate whose `${league}_${marketType}` key is true here is force-
+ * PASSED with selection_reason='model_watch_only' AFTER the MARKET_DISABLED
+ * branch. Disabled markets keep their `market_disabled` reason; everything
+ * else in this set surfaces only via the dashboard's existing Model Watch
+ * (FallbackCandidateCard) treatment.
+ *
+ * Effect on the public surface:
+ *   - candidate_bets: rows still written (so the dashboard can pick the
+ *     highest-rank PASS candidate to render as Model Watch).
+ *   - scored_picks:   rows are NEVER written for these markets (PASS is
+ *     filtered out before persistence in /picks/score and the cron).
+ *   - Performance / History: untouched — they read from scored_picks, so
+ *     Model-Watch-only markets cannot enter Official metrics.
+ *
+ * Criteria for removing an entry (i.e. promoting back to Official):
+ *   - nhl_spread: closure of Task #4 (NHL edge inflation) PLUS a sustained
+ *     post-cutoff Tier-A win-rate sample comparable to NBA spread.
+ *   - mlb_moneyline: a longer post-launch calibration window (still in the
+ *     first weeks of Phase 0.75D MLB foundation) PLUS Tier-A evidence on a
+ *     non-trivial settled sample.
+ *
+ * This is a registry / surface change, not a model change. Toggling an
+ * entry off restores the prior Official behavior with no schema migration.
+ */
+export const MARKET_MODEL_WATCH_ONLY: Partial<Record<string, boolean>> = {
+  nhl_spread: true,
+  mlb_moneyline: true,
+};
+
 // Per-market minimum edge overrides — stricter than the global floor.
 // Values at or above 0.50 effectively disable a market (edge is capped below that).
 export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {

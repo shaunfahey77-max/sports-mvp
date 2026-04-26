@@ -4,7 +4,7 @@
  */
 
 import type { League, MarketType } from "../config/scoringModelConfig";
-import { MAX_EV_CAP } from "../config/scoringModelConfig";
+import { MAX_EV_CAP, MARKET_MODEL_WATCH_ONLY } from "../config/scoringModelConfig";
 import { computeMarketProbFair, computeMarketQuality } from "./marketProb";
 import { calibrateProb, getCalibrationParams, getCalibrationConfidence } from "./calibration";
 import { computeEdge, computeEV } from "./expectedValue";
@@ -432,6 +432,30 @@ export function applyTieringToCandidates(
       publishLine: c.publishLine,
       enableOddsRangeGuardrail,
     });
+
+    // Model-Watch-only registry. Runs AFTER the MARKET_DISABLED branch
+    // (handled inside assignTier) so disabled markets keep their
+    // 'market_disabled' reason. For markets in MARKET_MODEL_WATCH_ONLY we
+    // override the assignTier result to PASS / 'model_watch_only' so the
+    // candidate is preserved in candidate_bets (Model Watch surface) but
+    // never enters scored_picks (and therefore never enters Performance /
+    // History). Data-quality rejections (odds_out_of_range) are preserved
+    // so contaminated quotes don't surface as Model Watch picks. See
+    // MARKET_MODEL_WATCH_ONLY in scoringModelConfig.ts.
+    const marketKey = `${c.league}_${c.marketType}`;
+    if (
+      selectionReason !== "market_disabled" &&
+      selectionReason !== "odds_out_of_range" &&
+      MARKET_MODEL_WATCH_ONLY[marketKey]
+    ) {
+      return {
+        ...c,
+        rankScore,
+        tier: "PASS" as const,
+        selectionReason: "model_watch_only",
+      };
+    }
+
     return { ...c, rankScore, tier, selectionReason };
   });
 }

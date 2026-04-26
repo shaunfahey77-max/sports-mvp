@@ -17,6 +17,7 @@ const REASON_COPY: Record<string, string> = {
   market_quality_too_low: "Market liquidity or data quality too low to trust.",
   odds_out_of_range: "Odds fall outside the acceptable range for this league.",
   rank_score_below_threshold: "Composite rank score below the qualifying threshold.",
+  model_watch_only: "Shown for transparency only — this market is not yet promoted to an Official pick while we collect more settled-result evidence.",
 };
 
 function friendlyReason(reason: string | null | undefined): string {

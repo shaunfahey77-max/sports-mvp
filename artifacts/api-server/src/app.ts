@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import { clerkMiddleware } from "@clerk/express";
 import { CLERK_PROXY_PATH, clerkProxyMiddleware } from "./middlewares/clerkProxyMiddleware";
+import { basicAuthMiddleware } from "./middlewares/basicAuthMiddleware";
 import { WebhookHandlers } from "./webhookHandlers";
 import router from "./routes";
 import { logger } from "./lib/logger";
@@ -21,6 +22,12 @@ app.use(
     },
   }),
 );
+
+// Basic Auth gate — sits above all other public-facing handlers. No-op
+// when SITE_BASIC_AUTH_USER/PASS are unset; carves out admin, snapshots,
+// stripe webhook, health, and the Clerk proxy so internal jobs and
+// webhooks keep working unchanged. See basicAuthMiddleware.ts for details.
+app.use(basicAuthMiddleware());
 
 // Clerk proxy — must be before body parsers
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());

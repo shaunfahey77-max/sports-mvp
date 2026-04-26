@@ -5,7 +5,7 @@ import {
   candidateBetsTable,
   scoredPicksTable,
 } from "@workspace/db";
-import { eq, and, gte, lte, desc, inArray, sql, isNull } from "drizzle-orm";
+import { eq, and, gte, lte, desc, inArray, sql, isNull, or } from "drizzle-orm";
 import {
   ScoreDateBody,
   ValidatePicksBody,
@@ -20,6 +20,23 @@ import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
 // Leagues surfaced by default to subscribers. NCAAM is experimental (hash-noise
 // pseudo-models) and must be requested explicitly via ?league=ncaam.
 const DEFAULT_PRODUCTION_LEAGUES = ["nba", "nhl"] as const;
+
+/**
+ * Narrow allowlist of (league, market) pairs surfaced ONLY through the
+ * candidates endpoint so the dashboard can render its existing Model Watch
+ * row for transparency. These pairs are NOT in DEFAULT_PRODUCTION_LEAGUES
+ * — they intentionally do not enter scored_picks, /performance, or
+ * /history. They only need to be reachable from /picks/candidates so the
+ * FallbackCandidateCard can pick them up alongside the existing
+ * MARKET_MODEL_WATCH_ONLY treatment in scoring.
+ *
+ * Today this is a single entry: MLB moneyline. NHL spread is already
+ * reachable because NHL is in DEFAULT_PRODUCTION_LEAGUES.
+ */
+const MODEL_WATCH_ONLY_CANDIDATE_PAIRS: ReadonlyArray<{
+  league: string;
+  market: string;
+}> = [{ league: "mlb", market: "moneyline" }];
 
 const router: IRouter = Router();
 
@@ -95,8 +112,31 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
   if (league) {
     conditions.push(eq(candidateBetsTable.league, league));
   } else {
-    // No explicit league filter → serve production leagues only (exclude experimental NCAAM).
-    conditions.push(inArray(candidateBetsTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+    // No explicit league filter → serve production leagues by default, plus
+    // the narrow set of (league, market) pairs that are Model-Watch-only.
+    // MLB moneyline is admitted here (not in DEFAULT_PRODUCTION_LEAGUES)
+    // so the dashboard can render its existing Model Watch row. NHL spread
+    // is already reachable because NHL is in DEFAULT_PRODUCTION_LEAGUES.
+    // Performance / History are unaffected because they read scored_picks,
+    // not candidate_bets, and Model-Watch-only candidates never get
+    // promoted into scored_picks.
+    const watchPairCondition = or(
+      ...MODEL_WATCH_ONLY_CANDIDATE_PAIRS.map((p) =>
+        and(
+          eq(candidateBetsTable.league, p.league),
+          eq(candidateBetsTable.marketType, p.market),
+        ),
+      ),
+    );
+    const productionLeagueCondition = inArray(
+      candidateBetsTable.league,
+      [...DEFAULT_PRODUCTION_LEAGUES],
+    );
+    conditions.push(
+      watchPairCondition
+        ? or(productionLeagueCondition, watchPairCondition)!
+        : productionLeagueCondition,
+    );
   }
   if (market) conditions.push(eq(candidateBetsTable.marketType, market));
   if (tier) conditions.push(eq(candidateBetsTable.tier, tier));

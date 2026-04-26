@@ -124,7 +124,11 @@ test("applyTieringToCandidates: an mlb_spread candidate is force-PASSED via mark
   assert.equal(tiered.selectionReason, "market_disabled");
 });
 
-test("applyTieringToCandidates: a healthy mlb_moneyline candidate can clear PASS", () => {
+test("applyTieringToCandidates: a healthy mlb_moneyline candidate is demoted to PASS / model_watch_only", () => {
+  // Task #8: MLB ML is now Model-Watch-only. A candidate that would
+  // otherwise clear A/B/C is forced to PASS with selection_reason
+  // 'model_watch_only' so it surfaces on the Model Watch slot but
+  // never enters scored_picks / Performance / History.
   const c: CandidateOutput = {
     gameKey: "mlb_2026-04-21_nyy_bos",
     league: "mlb",
@@ -152,9 +156,8 @@ test("applyTieringToCandidates: a healthy mlb_moneyline candidate can clear PASS
     oddsRangeGuardrailLeagues: ["nba", "nhl", "mlb"],
   });
 
-  assert.notEqual(tiered.tier, "PASS");
-  assert.notEqual(tiered.selectionReason, "market_disabled");
-  assert.notEqual(tiered.selectionReason, "odds_out_of_range");
+  assert.equal(tiered.tier, "PASS");
+  assert.equal(tiered.selectionReason, "model_watch_only");
 });
 
 test("applyTieringToCandidates: out-of-range mlb moneyline odds are dropped", () => {

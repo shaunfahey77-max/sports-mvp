@@ -97,3 +97,24 @@ The frontend is a React + Vite application adhering to specific brand guidelines
 - **PostgreSQL**: Relational database for all application data.
 - **Google Fonts**: For Montserrat and Roboto fonts.
 - **ESPN CDN**: For retrieving team logos.
+
+## Environment Variables — Public Site Basic Auth Gate
+
+`SITE_BASIC_AUTH_USER` and `SITE_BASIC_AUTH_PASS` (both secrets, both
+environments) toggle a Basic Auth gate that protects the public site.
+
+- Both set → gate is ON. Any unauthenticated request returns `401` with
+  `WWW-Authenticate: Basic realm="Restricted"`.
+- Either unset or empty → gate is OFF (middleware no-ops). This is the
+  rollback path: clear either secret and restart the API server +
+  sports-mvp workflow.
+- Carve-outs (always reach their handler, never gated): `/api/admin/*`,
+  `/api/snapshots/*`, `/api/stripe/webhook`, `/api/health`,
+  `/api/healthz`, and the Clerk proxy path (`CLERK_PROXY_PATH`).
+- Implemented in `artifacts/api-server/src/middlewares/basicAuthMiddleware.ts`
+  (mounted in `app.ts` after pino-http, before Clerk middleware) and
+  mirrored in `artifacts/sports-mvp/vite.config.ts` for the Vite dev +
+  preview servers (no carve-outs there — the Vite server only serves
+  the SPA shell).
+- Comparison uses `crypto.timingSafeEqual` on length-padded buffers to
+  avoid timing leaks.
