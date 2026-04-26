@@ -79,7 +79,7 @@ export function Navigation() {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
-          <PreviewGateSignOut />
+          <PreviewGateSignOut className="hidden sm:inline-flex" />
           {!isLoaded ? null : isSignedIn ? (
             <>
               {tier === "free" && (
@@ -182,7 +182,7 @@ export function Navigation() {
  * is computed from `import.meta.env.BASE_URL` so it stays correct under any
  * proxy path prefix the site is served behind.
  */
-function PreviewGateSignOut() {
+export function PreviewGateSignOut({ className }: { className?: string }) {
   if (!__PREVIEW_GATE_ENABLED__) return null;
   // BASE_URL is guaranteed to end with a "/" by Vite, so this stitches to
   // e.g. "/__preview/logout" or "/sports-mvp/__preview/logout".
@@ -191,7 +191,7 @@ function PreviewGateSignOut() {
     <form
       method="POST"
       action={action}
-      className="hidden sm:inline-flex"
+      className={className}
       aria-label="Sign out of the SportsMVP preview"
     >
       <button

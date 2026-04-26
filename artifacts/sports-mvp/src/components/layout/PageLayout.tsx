@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { Navigation } from "./Navigation";
+import { Navigation, PreviewGateSignOut } from "./Navigation";
 
 const SERIF = "'Playfair Display', serif";
 
@@ -60,6 +60,7 @@ export function PageLayout({ children, title, subtitle, tagline }: PageLayoutPro
           <div className="text-white/30 text-xs uppercase tracking-widest">
             Bet like an MVP — sharp betting analytics powered by math.
           </div>
+          <PreviewGateSignOut className="sm:hidden inline-flex" />
         </div>
       </footer>
     </div>
