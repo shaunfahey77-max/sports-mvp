@@ -513,4 +513,154 @@ router.post("/admin/calibration-review", async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// /admin/clv-health — verify the CLV pipeline is producing real signal.
+//
+// Three signals reported per (league, market) over the trailing window:
+//
+//   capture_rate     — % of final game_snapshots in the window with non-null
+//                      home_close_ml. Below ~95% = the closing-odds cron is
+//                      missing games; check logs for clv_capture_failed.
+//
+//   writeback_rate   — % of settled scored_picks (result in {win, loss, push})
+//                      with non-null clv_implied_delta. Below ~95% = a
+//                      validation path is failing to call
+//                      computeClvWritebackValues — usually a market the
+//                      writeback helper doesn't yet handle.
+//
+//   publish_eq_close — % of settled picks where close_odds == publish_odds.
+//                      The smoking-gun signal for the pre-fix bug: if this
+//                      is near 100%, the publish→close copy is still active
+//                      somewhere. Real markets move on most games, so a
+//                      healthy value is ~10-30% (depending on market and
+//                      lead time). 50%+ is a structural problem.
+//
+// Plus a clv distribution (n / mean / std / p10 / p50 / p90) so the
+// operator can sanity-check that clv_implied_delta isn't degenerate.
+//
+// Auth: same SESSION_SECRET POST-body pattern as the other admin routes.
+// Window: configurable via `sinceDays` (default 14, max 365).
+// ---------------------------------------------------------------------------
+router.post("/admin/clv-health", async (req, res) => {
+  try {
+    const { secret, sinceDays } = req.body ?? {};
+    const expected = process.env.SESSION_SECRET;
+    if (!expected || !secret || secret !== expected) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    const sinceDaysN =
+      sinceDays === undefined || sinceDays === null ? 14 : Number(sinceDays);
+    if (!Number.isFinite(sinceDaysN) || sinceDaysN <= 0 || sinceDaysN > 365) {
+      return res.status(400).json({
+        ok: false,
+        error: "sinceDays must be a positive number <= 365",
+      });
+    }
+
+    const sinceDate = new Date(Date.now() - sinceDaysN * 86400_000)
+      .toISOString()
+      .slice(0, 10);
+
+    // Capture rate: per (league) — % of final snapshots with close odds set.
+    // Limited to status='final' so we only count games where capture *should*
+    // have happened by now (excludes future-scheduled games sitting in the
+    // window with close_* legitimately still null).
+    const captureRows = await db
+      .select({
+        league: gameSnapshotsTable.league,
+        total: sql<number>`count(*)::int`,
+        withClose: sql<number>`count(${gameSnapshotsTable.homeCloseMl})::int`,
+      })
+      .from(gameSnapshotsTable)
+      .where(
+        and(
+          gte(gameSnapshotsTable.snapshotDate, sinceDate),
+          sql`${gameSnapshotsTable.status} = 'final'`,
+        ),
+      )
+      .groupBy(gameSnapshotsTable.league);
+
+    // Writeback + publish-equals-close + CLV distribution: per (league, market).
+    // Only settled picks (win/loss/push); pending picks legitimately have null
+    // CLV until the validation cron runs.
+    //
+    // publishEqClose conditions on close_odds NOT NULL in BOTH the numerator
+    // and the denominator (architect review fix). The earlier divisor of "all
+    // settled picks" understated copy-bug prevalence whenever capture was
+    // incomplete: a pick with null close_odds was treated like a non-equal
+    // sample, so a 100%-equal-and-50%-captured cohort scored 50% instead of
+    // 100%. The conditioned ratio cleanly separates "we have the data and it
+    // says copy" from "we don't have the data" (covered by capture_rate /
+    // writeback_rate).
+    const wbRows = await db
+      .select({
+        league: scoredPicksTable.league,
+        market: scoredPicksTable.market,
+        total: sql<number>`count(*)::int`,
+        withClv: sql<number>`count(${scoredPicksTable.clvImpliedDelta})::int`,
+        withClose: sql<number>`count(${scoredPicksTable.closeOdds})::int`,
+        publishEqCloseAmongCaptured: sql<number>`sum(case when ${scoredPicksTable.closeOdds} is not null and abs(${scoredPicksTable.publishOdds}::numeric - ${scoredPicksTable.closeOdds}::numeric) < 0.5 then 1 else 0 end)::int`,
+        clvCount: sql<number>`count(${scoredPicksTable.clvImpliedDelta})::int`,
+        clvMean: sql<number | null>`avg(${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
+        clvStd: sql<number | null>`stddev_pop(${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
+        clvP10: sql<number | null>`percentile_cont(0.10) within group (order by ${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
+        clvP50: sql<number | null>`percentile_cont(0.50) within group (order by ${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
+        clvP90: sql<number | null>`percentile_cont(0.90) within group (order by ${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
+      })
+      .from(scoredPicksTable)
+      .where(
+        and(
+          gte(scoredPicksTable.date, sinceDate),
+          inArray(scoredPicksTable.result, ["win", "loss", "push"]),
+        ),
+      )
+      .groupBy(scoredPicksTable.league, scoredPicksTable.market);
+
+    const captureByLeague = captureRows.map((r) => ({
+      league: r.league,
+      finalSnapshots: r.total,
+      withClose: r.withClose,
+      captureRate: r.total > 0 ? r.withClose / r.total : 0,
+    }));
+
+    const writebackByLeagueMarket = wbRows.map((r) => ({
+      league: r.league,
+      market: r.market,
+      settledPicks: r.total,
+      withClv: r.withClv,
+      withClose: r.withClose,
+      writebackRate: r.total > 0 ? r.withClv / r.total : 0,
+      // Both rates are exposed (architect review fix). The "AmongCaptured"
+      // rate is the honest copy-bug detector — it's only meaningful where
+      // we actually captured a close, and conditioning on that prevents
+      // capture gaps from masking copy-bug prevalence. The "Overall" rate
+      // is kept so a single number still signals "rate of contaminated
+      // CLV across all settled picks" for at-a-glance dashboards.
+      publishEqualsCloseRateAmongCaptured:
+        r.withClose > 0 ? r.publishEqCloseAmongCaptured / r.withClose : 0,
+      publishEqualsCloseRateOverall: r.total > 0 ? r.publishEqCloseAmongCaptured / r.total : 0,
+      clv: {
+        n: r.clvCount,
+        mean: r.clvMean,
+        std: r.clvStd,
+        p10: r.clvP10,
+        p50: r.clvP50,
+        p90: r.clvP90,
+      },
+    }));
+
+    return res.json({
+      ok: true,
+      sinceDays: sinceDaysN,
+      sinceDate,
+      captureByLeague,
+      writebackByLeagueMarket,
+    });
+  } catch (err) {
+    logger.error({ err }, "Admin clv-health failed");
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
 export default router;

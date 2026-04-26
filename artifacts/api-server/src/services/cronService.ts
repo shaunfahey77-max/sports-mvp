@@ -98,22 +98,13 @@ async function runOddsIngest(): Promise<void> {
               publishOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
               publishUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
               bestBooks: snap.bestBooks,
-              // If game has already started, record the most recent odds as "close" odds.
-              // closeAwaySpreadLine added in Plan 1 so spread-away CLV can be backfilled
-              // (pre-Plan-1 the column did not exist and away-side price CLV was lossy).
-              ...(isInProgress
-                ? {
-                    homeCloseMl: String(snap.homePublishMl),
-                    awayCloseMl: String(snap.awayPublishMl),
-                    closeSpread: snap.publishSpread != null ? String(snap.publishSpread) : undefined,
-                    closeSpreadLine: snap.publishSpreadLine != null ? String(snap.publishSpreadLine) : undefined,
-                    closeAwaySpreadLine:
-                      snap.publishAwaySpreadLine != null ? String(snap.publishAwaySpreadLine) : undefined,
-                    closeTotal: snap.publishTotal != null ? String(snap.publishTotal) : undefined,
-                    closeOverLine: snap.publishOverLine != null ? String(snap.publishOverLine) : undefined,
-                    closeUnderLine: snap.publishUnderLine != null ? String(snap.publishUnderLine) : undefined,
-                  }
-                : {}),
+              // CLV-integrity fix (2026-04-26): the in-progress branch used to copy
+              // publish_* into close_* here. That short-circuited true CLV: every
+              // settled pick saw close_odds == publish_odds, so clv_implied_delta was
+              // mechanically 0 (or null). The dedicated `runClosingOddsCapture` cron
+              // (every 2 min) is now the *single writer* of close_* fields, sourced
+              // from a fresh Odds API poll near event_start. See cronService.ts
+              // runClosingOddsCapture and scripts/backfillCloseOdds45d.ts.
               updatedAt: new Date(),
             },
           });
@@ -280,6 +271,157 @@ async function runOddsIngest(): Promise<void> {
   }
 
   logger.info({ jobId, totalGames, totalPicks }, "Cron: odds ingest finished");
+}
+
+// ---------------------------------------------------------------------------
+// Job 1b — Every 2 minutes: capture true close odds near event_start
+//
+// CLV-integrity fix (2026-04-26). Before this job existed, "close" odds were
+// just a copy of the most recent publish odds at game-start time, written by
+// the 10-min ingest's onConflictDoUpdate (when isInProgress was true) and by
+// /snapshots/finalize. That made clv_implied_delta mechanically zero (or null
+// for spread/total) for every settled pick, so CLV was structurally
+// uninformative as a model-quality signal.
+//
+// This job is now the SINGLE writer of game_snapshots.close_* fields for
+// live games. It runs every 2 minutes, looks at scheduled snapshots whose
+// event_start falls in [now-15min, now+5min] AND whose home_close_ml is
+// still NULL, and overwrites close_* with a fresh Odds API poll keyed off
+// the same gameKey produced by transformGame. The 15-minute look-back makes
+// the job self-healing through a single missed cron tick or a brief Odds API
+// 5xx; deeper backfills (e.g. games that aged past 15 min without a capture)
+// are handled by the dedicated 45-day historical script instead.
+//
+// API budget: at most one /v4/sports/{sport}/odds call per league per run.
+// In offseason or off-hours, the candidate query returns zero rows and the
+// job exits without any API call (zero credits burned).
+// ---------------------------------------------------------------------------
+async function runClosingOddsCapture(): Promise<void> {
+  const jobId = `close-capture-${Date.now()}`;
+
+  // Scheduled snapshots in the close-capture window without close odds yet.
+  // Status filter ('scheduled') excludes already-final games; the IS NULL
+  // filter keeps the job idempotent — once close odds are captured, the
+  // next run skips that snapshot entirely.
+  const candidates = await db
+    .select()
+    .from(gameSnapshotsTable)
+    .where(
+      and(
+        eq(gameSnapshotsTable.status, "scheduled"),
+        sql`${gameSnapshotsTable.homeCloseMl} IS NULL`,
+        sql`${gameSnapshotsTable.eventStart} BETWEEN NOW() - INTERVAL '15 minutes' AND NOW() + INTERVAL '5 minutes'`,
+      ),
+    );
+
+  if (candidates.length === 0) {
+    logger.debug({ jobId }, "Cron: closing-odds capture — no candidates in window");
+    return;
+  }
+
+  const byLeague = new Map<string, typeof candidates>();
+  for (const c of candidates) {
+    const arr = byLeague.get(c.league) ?? [];
+    arr.push(c);
+    byLeague.set(c.league, arr);
+  }
+
+  let totalCaptured = 0;
+  let totalMissed = 0;
+
+  for (const [league, games] of byLeague) {
+    const sportKey = SPORT_KEYS[league];
+    if (!sportKey) {
+      logger.warn({ jobId, league }, "Cron: closing-odds capture — no sportKey for league");
+      continue;
+    }
+
+    try {
+      const { data: liveGames, headers } = await fetchOdds(sportKey);
+
+      // Normalize each live game through the same transformer the publish
+      // ingest uses, so close_* fields have identical filtering semantics
+      // (best-line shopping, plausibility filters, ML/spread consistency
+      // rail). Snapshots transformGame rejects (returns null) won't appear
+      // in the map and the targeted game will get logged as a miss below.
+      const snapByGameKey = new Map<string, ReturnType<typeof transformGame>>();
+      for (const game of liveGames) {
+        const fresh = transformGame(game, league);
+        if (fresh) snapByGameKey.set(fresh.gameKey, fresh);
+      }
+
+      let leagueCaptured = 0;
+      let leagueMissed = 0;
+      for (const target of games) {
+        const fresh = snapByGameKey.get(target.gameKey);
+        if (!fresh) {
+          leagueMissed++;
+          logger.warn(
+            {
+              jobId,
+              league,
+              gameKey: target.gameKey,
+              eventStart: target.eventStart,
+              liveGameCount: liveGames.length,
+            },
+            "clv_capture_failed: no live odds for game in close-window (will retry next tick within 15-min look-back; outside window use scripts/backfillCloseOdds45d.ts)",
+          );
+          continue;
+        }
+
+        // Atomicity guard (architect review fix): write only if home_close_ml
+        // is still NULL. Without this, two overlapping cron ticks (e.g. a slow
+        // run finishing while a fast run starts) could each fetch a different
+        // odds payload and the second write would clobber the first close.
+        // The .returning() lets us tell when the guard rejected the write so
+        // we don't double-count it as a fresh capture.
+        const written = await db
+          .update(gameSnapshotsTable)
+          .set({
+            homeCloseMl: String(fresh.homePublishMl),
+            awayCloseMl: String(fresh.awayPublishMl),
+            closeSpread: fresh.publishSpread != null ? String(fresh.publishSpread) : undefined,
+            closeSpreadLine: fresh.publishSpreadLine != null ? String(fresh.publishSpreadLine) : undefined,
+            closeAwaySpreadLine:
+              fresh.publishAwaySpreadLine != null ? String(fresh.publishAwaySpreadLine) : undefined,
+            closeTotal: fresh.publishTotal != null ? String(fresh.publishTotal) : undefined,
+            closeOverLine: fresh.publishOverLine != null ? String(fresh.publishOverLine) : undefined,
+            closeUnderLine: fresh.publishUnderLine != null ? String(fresh.publishUnderLine) : undefined,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(gameSnapshotsTable.id, target.id),
+              sql`${gameSnapshotsTable.homeCloseMl} IS NULL`,
+            ),
+          )
+          .returning({ id: gameSnapshotsTable.id });
+        if (written.length > 0) leagueCaptured++;
+      }
+
+      totalCaptured += leagueCaptured;
+      totalMissed += leagueMissed;
+
+      logger.info(
+        {
+          jobId,
+          league,
+          captured: leagueCaptured,
+          missed: leagueMissed,
+          targetCount: games.length,
+          creditsRemaining: headers.requestsRemaining,
+        },
+        "Cron: closing-odds capture for league",
+      );
+    } catch (err) {
+      logger.error({ jobId, league, err }, "Cron: closing-odds capture error for league");
+    }
+  }
+
+  logger.info(
+    { jobId, totalCaptured, totalMissed, candidateCount: candidates.length },
+    "Cron: closing-odds capture finished",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -727,15 +869,27 @@ export async function backfillSettlementEspn(
 // ---------------------------------------------------------------------------
 // Start all cron jobs
 // ---------------------------------------------------------------------------
-export { runNightlyValidation, runOddsIngest };
+export { runNightlyValidation, runOddsIngest, runClosingOddsCapture };
 
 export function startCronJobs(): void {
-  // Job 1: Every 10 minutes — ingest latest odds
+  // Job 1: Every 10 minutes — ingest latest odds for upcoming games
   cron.schedule("*/10 * * * *", async () => {
     try {
       await runOddsIngest();
     } catch (err) {
       logger.error({ err }, "Cron: unhandled error in odds ingest");
+    }
+  });
+
+  // Job 1b: Every 2 minutes — capture true close odds near event_start.
+  // SOLE writer of game_snapshots.close_*. See runClosingOddsCapture comment
+  // block for the CLV-integrity rationale; see scripts/backfillCloseOdds45d.ts
+  // for the historical-window companion.
+  cron.schedule("*/2 * * * *", async () => {
+    try {
+      await runClosingOddsCapture();
+    } catch (err) {
+      logger.error({ err }, "Cron: unhandled error in closing-odds capture");
     }
   });
 
@@ -748,5 +902,7 @@ export function startCronJobs(): void {
     }
   });
 
-  logger.info("Cron jobs scheduled: odds ingest every 10 min, validation at 3:30 AM daily");
+  logger.info(
+    "Cron jobs scheduled: odds ingest every 10 min, closing-odds capture every 2 min, validation at 3:30 AM daily",
+  );
 }

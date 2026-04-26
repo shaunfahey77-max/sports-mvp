@@ -12,6 +12,7 @@ import {
 } from "@workspace/api-zod";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
+import { computeClvWritebackValues } from "../scoring/clvWriteback";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
@@ -444,19 +445,22 @@ router.post("/picks/validate", async (req, res): Promise<void> => {
       total: game.publishTotal ? parseFloat(game.publishTotal) : null,
     });
 
-    const closeOdds =
-      pick.market === "moneyline"
-        ? pick.pick === "home"
-          ? game.homeCloseMl
-          : game.awayCloseMl
-        : null;
+    // CLV-integrity fix (2026-04-26): previously this route only wrote close_odds
+    // for moneyline picks and never wrote close_line / clv_implied_delta /
+    // clv_line_delta for any market. Spread/total picks settled through this
+    // path silently lost CLV signal. Now uses the same centralized writeback
+    // helper as the nightly validation and ESPN backstop paths.
+    const clv = computeClvWritebackValues(pick, game);
 
     try {
       await db
         .update(scoredPicksTable)
         .set({
           result,
-          closeOdds: closeOdds ?? undefined,
+          closeOdds: clv.closeOdds,
+          closeLine: clv.closeLine,
+          clvImpliedDelta: clv.clvImpliedDelta,
+          clvLineDelta: clv.clvLineDelta,
           updatedAt: new Date(),
         })
         .where(eq(scoredPicksTable.id, pick.id));

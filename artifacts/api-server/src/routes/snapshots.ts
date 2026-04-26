@@ -102,6 +102,16 @@ router.post("/snapshots/generate", async (req, res): Promise<void> => {
 });
 
 router.post("/snapshots/finalize", async (req, res): Promise<void> => {
+  // CLV-integrity fix (2026-04-26): this route used to copy publish_* into
+  // close_* for any started game whose home_close_ml was still null. That copy
+  // produced fake-zero CLV (close_odds == publish_odds) and also silently
+  // omitted closeAwaySpreadLine, suppressing all away-spread CLV.
+  //
+  // The dedicated `runClosingOddsCapture` cron is now the single writer of
+  // close_* fields, sourced from a fresh Odds API poll near event_start. This
+  // route is preserved as a no-op status reporter for back-compat with any
+  // operator scripts that still POST to it. To backfill historical close_*,
+  // run scripts/backfillCloseOdds45d.ts (uses the historical odds endpoint).
   const parsed = FinalizeClosesBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -109,41 +119,23 @@ router.post("/snapshots/finalize", async (req, res): Promise<void> => {
   }
 
   const { date } = parsed.data;
-  const now = new Date();
 
   const snapshots = await db
     .select()
     .from(gameSnapshotsTable)
     .where(eq(gameSnapshotsTable.snapshotDate, date));
 
-  let updated = 0;
-
-  for (const snap of snapshots) {
-    const eventStart = new Date(snap.eventStart);
-
-    if (eventStart <= now && !snap.homeCloseMl) {
-      await db
-        .update(gameSnapshotsTable)
-        .set({
-          homeCloseMl: snap.homePublishMl,
-          awayCloseMl: snap.awayPublishMl,
-          closeSpread: snap.publishSpread,
-          closeSpreadLine: snap.publishSpreadLine,
-          closeTotal: snap.publishTotal,
-          closeOverLine: snap.publishOverLine,
-          closeUnderLine: snap.publishUnderLine,
-          updatedAt: new Date(),
-        })
-        .where(eq(gameSnapshotsTable.id, snap.id));
-
-      updated++;
-    }
-  }
+  const withClose = snapshots.filter((s) => s.homeCloseMl != null).length;
+  const missingClose = snapshots.filter(
+    (s) => s.homeCloseMl == null && new Date(s.eventStart) <= new Date(),
+  ).length;
 
   res.json({
     success: true,
-    message: `Finalized ${updated} games for ${date}`,
-    count: updated,
+    message: `Snapshot route is read-only since 2026-04-26 CLV-integrity fix; close odds are written by the runClosingOddsCapture cron. Date ${date}: ${withClose} snapshots have close odds, ${missingClose} started games still missing close odds (use scripts/backfillCloseOdds45d.ts to backfill).`,
+    count: 0,
+    snapshotsWithClose: withClose,
+    snapshotsMissingClose: missingClose,
     errors: [],
   });
 });
