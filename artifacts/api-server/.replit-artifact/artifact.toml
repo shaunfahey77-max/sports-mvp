@@ -7,13 +7,28 @@ id = "3B4_FFSkEVBkAeYMFRJ2e"
 [[services]]
 localPort = 8080
 name = "API Server"
-paths = ["/api"]
+# Claim all routes in production so the basicAuthMiddleware gate runs
+# in front of every request (SPA shell, /picks, /performance,
+# /assets/*, AND /api/*). Previously only /api/* reached this process,
+# leaving the public site ungated. The Node process serves the
+# sports-mvp build from ../sports-mvp/dist/public/ via express.static
+# (see app.ts).
+paths = ["/"]
 
 [services.development]
 run = "pnpm --filter @workspace/api-server run dev"
 
 [services.production]
-build = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+# Build the sports-mvp SPA shell first so app.ts can serve dist/public/
+# from this process. We chain it explicitly here (rather than relying on
+# the platform to run sports-mvp's own production.build before this
+# service starts) so the SPA dist is guaranteed to exist by the time
+# api-server boots, no matter the deploy ordering.
+#
+# PORT/BASE_PATH must be set inline because vite.config.ts requires
+# them at config-load time, and they live in sports-mvp's [services.env]
+# block which is not visible to commands run from api-server's context.
+build = ["bash", "-lc", "PORT=24487 BASE_PATH=/ pnpm --filter @workspace/sports-mvp run build && pnpm --filter @workspace/api-server run build"]
 run = ["pnpm", "--filter", "@workspace/api-server", "run", "start"]
 
 [services.production.buildEnv]

@@ -118,3 +118,34 @@ environments) toggle a Basic Auth gate that protects the public site.
   the SPA shell).
 - Comparison uses `crypto.timingSafeEqual` on length-padded buffers to
   avoid timing leaks.
+
+## Production Static Serving — SPA Shell Lives Inside the API Server
+
+The api-server serves both `/api/*` and the sports-mvp SPA shell from
+the same Express process. This is required so the basicAuthMiddleware
+above gates every public surface — including `/`, `/picks`,
+`/performance`, and `/assets/*` — on both `sportsmvp.net` and the
+`*.replit.app` deployment URL. Previously, sports-mvp deployed as a
+platform-level static service that sat ABOVE the api-server and
+bypassed the gate entirely.
+
+Implementation:
+
+- `artifacts/api-server/src/app.ts` reads `../../sports-mvp/dist/public/`
+  (the sports-mvp Vite `outDir`) at boot. If `index.html` is present, it
+  mounts `express.static` for `/assets/*` (long immutable cache) and the
+  root (no-store), plus a SPA fallback that sends `index.html` for any
+  GET/HEAD that isn't `/api/*`. If the directory is absent (dev runs
+  that don't build sports-mvp), the handlers no-op.
+- `artifacts/api-server/.replit-artifact/artifact.toml` claims
+  `paths = ["/"]` (was `["/api"]`) so the platform routes ALL production
+  traffic through this Node process.
+- `artifacts/sports-mvp/.replit-artifact/artifact.toml` keeps
+  `services.production.build` (so the platform still produces
+  `dist/public/` in sports-mvp's service env, where vite.config.ts can
+  read `PORT` and `BASE_PATH`) but has `serve` / `publicDir` /
+  `rewrites` removed so it does NOT deploy a competing static layer.
+- The dev workflow is unchanged: vite still runs at sports-mvp's
+  `previewPath` via `services.development`, and api-server's
+  `existsSync(FRONTEND_INDEX)` guard skips static serving when no
+  build has been produced.

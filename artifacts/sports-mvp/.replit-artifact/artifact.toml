@@ -17,14 +17,21 @@ localPort = 24487
 [services.development]
 run = "pnpm --filter @workspace/sports-mvp run dev"
 
+# In production this artifact builds the SPA but does NOT serve it.
+# The api-server (artifacts/api-server) serves the resulting
+# dist/public/ via express.static so that basicAuthMiddleware gates
+# every request — including the SPA shell, /picks, /performance, and
+# /assets/*. Previously this service deployed as `serve = "static"`,
+# which sat ABOVE the api-server Node process and bypassed the gate
+# on sportsmvp.net and the *.replit.app URL.
+#
+# `serve` / `publicDir` / `rewrites` were intentionally removed so the
+# platform does not deploy a competing static layer. Keeping `build`
+# here means the platform runs it in this service's context, with
+# PORT and BASE_PATH from [services.env] set as required by
+# vite.config.ts.
 [services.production]
 build = [ "pnpm", "--filter", "@workspace/sports-mvp", "run", "build" ]
-publicDir = "artifacts/sports-mvp/dist/public"
-serve = "static"
-
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
 
 [services.env]
 PORT = "24487"
