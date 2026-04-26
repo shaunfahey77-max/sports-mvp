@@ -149,3 +149,49 @@ Implementation:
   `previewPath` via `services.development`, and api-server's
   `existsSync(FRONTEND_INDEX)` guard skips static serving when no
   build has been produced.
+
+## Internal Calibration-Review Tool
+
+`POST /api/admin/calibration-review` is a read-only analyst surface that
+DELIBERATELY bypasses the public `PUBLIC_TRACK_RECORD_CUTOFFS` filter and
+the `data_quality` filter so the analyst can see every scored pick — and
+decide what to recalibrate, disable, or promote. The tool does not change
+math, thresholds, model blending, or any pricing/product surface; it only
+reads `scored_picks`.
+
+Auth: `SESSION_SECRET` in the POST body, mirroring every other admin
+endpoint.
+
+Per (league_market, cohort, quality) it reports the standard scoreboard
+stats (CLV / ROI / win rate / avg edge / avg EV) plus:
+
+- **Brier (model)** — Brier score on `model_prob_calibrated` vs win/loss
+- **Brier (market)** — Brier score on `market_prob_fair` vs win/loss
+- **Brier skill** — `1 - brierModel / brierMarket`; positive ⇒ model beats
+  the no-vig market price as a probability forecast
+- **Edge → win rate monotonicity** — equal-frequency edge buckets with
+  per-bucket win rate / ROI / CLV, plus `edgeWinRateCorrelation` and
+  `edgeRoiCorrelation` (Pearson on bucket midpoints). Negative correlation
+  flags a calibration smell.
+
+Cohort split: `PRE` if `date < PUBLIC_TRACK_RECORD_CUTOFFS[league]`, else
+`POST`. Leagues without a cutoff are all `POST`.
+
+Quality split: `clean` if `data_quality IS NULL`, `flagged` for any
+non-null label (e.g. `contaminated_ingest`, `pre_fix_contaminated`).
+Flagged rows appear as their OWN bucket — never silently removed.
+
+Body fields:
+
+- `secret` (required)
+- `format` `"json" | "markdown"` (default `"json"`)
+- `sinceDays` number, default `180`. Pass `0` for full history.
+- `leagues` `string[]`, restrict to these leagues
+- `markets` `string[]`, restrict to these market types
+- `buckets` integer in `[2, 20]`, default `4` (monotonicity bucket count)
+
+Implementation lives in `artifacts/api-server/src/scoring/`:
+`brierScore.ts`, `monotonicity.ts`, `cohortAnalysis.ts`,
+`cohortReportMarkdown.ts`, plus the route in `routes/admin.ts`. Each
+helper has a focused unit-test file under `scoring/__tests__/`, all wired
+into the `api-tests` workflow.
