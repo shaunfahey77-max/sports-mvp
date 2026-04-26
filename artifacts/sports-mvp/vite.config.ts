@@ -30,6 +30,19 @@ function siteBasicAuthPlugin(): Plugin {
   const PREVIEW_LOGOUT_PATH = "/__preview/logout";
   const MAX_LOGIN_BODY_BYTES = 4 * 1024;
 
+  // One-shot marker cookie used to surface a "your session expired" info
+  // banner on the next render of the branded login page. Only set when the
+  // presented `preview_auth` cookie was structurally valid (HMAC matched,
+  // payload parsed) but past its `exp`. Tampered/garbage cookies never get
+  // a marker so we don't leak signal to attackers. Mirrors the api-server
+  // middleware.
+  const EXPIRED_MARKER_COOKIE = "preview_auth_expired";
+  const EXPIRED_MARKER_TTL_SECONDS = 60;
+  const EXPIRED_SESSION_NOTICE =
+    "Your preview session expired \u2014 please sign in again.";
+
+  type CookieStatus = "valid" | "expired" | "invalid";
+
   function constantTimeStringEqual(a: string, b: string): boolean {
     const aBuf = Buffer.from(a, "utf8");
     const bBuf = Buffer.from(b, "utf8");
@@ -68,31 +81,36 @@ function siteBasicAuthPlugin(): Plugin {
     return `${payload}.${sig}`;
   }
 
-  function verifyCookie(value: string, password: string): boolean {
-    if (!value) return false;
+  // Inspect a `preview_auth` cookie. Returns "valid" / "expired" only when
+  // the HMAC matches the current server-side key AND the payload parses with
+  // a numeric `exp`. Tampered or garbage cookies collapse to "invalid" so
+  // they never trigger the "session expired" UX.
+  function inspectCookie(value: string, password: string): CookieStatus {
+    if (!value) return "invalid";
     const dot = value.indexOf(".");
-    if (dot === -1) return false;
+    if (dot === -1) return "invalid";
     const payloadB64 = value.slice(0, dot);
     const sig = value.slice(dot + 1);
-    if (!payloadB64 || !sig) return false;
+    if (!payloadB64 || !sig) return "invalid";
     const expected = signPayload(payloadB64, deriveCookieKey(password));
-    if (!timingSafeStringEqual(sig, expected)) return false;
+    if (!timingSafeStringEqual(sig, expected)) return "invalid";
     let payload: unknown;
     try {
       payload = JSON.parse(
         Buffer.from(payloadB64, "base64url").toString("utf8"),
       );
     } catch {
-      return false;
+      return "invalid";
     }
     if (
       !payload ||
       typeof payload !== "object" ||
       typeof (payload as { exp?: unknown }).exp !== "number"
     ) {
-      return false;
+      return "invalid";
     }
-    return (payload as { exp: number }).exp > Math.floor(Date.now() / 1000);
+    const exp = (payload as { exp: number }).exp;
+    return exp > Math.floor(Date.now() / 1000) ? "valid" : "expired";
   }
 
   function parseCookieHeader(header: string | undefined): Record<string, string> {
@@ -187,11 +205,12 @@ function siteBasicAuthPlugin(): Plugin {
   function renderLoginPage(
     loginPathRaw: string,
     redirectRaw: string,
-    error?: string,
+    opts: { error?: string; notice?: string } = {},
   ): string {
     const formAction = escapeHtml(loginPathRaw);
     const redirect = escapeHtml(safeRedirectTarget(redirectRaw));
-    const errorHtml = error ? escapeHtml(error) : "";
+    const errorHtml = opts.error ? escapeHtml(opts.error) : "";
+    const noticeHtml = opts.notice ? escapeHtml(opts.notice) : "";
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -295,6 +314,15 @@ function siteBasicAuthPlugin(): Plugin {
     color: #fecaca;
     font-size: 13px;
   }
+  .notice {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(34, 211, 238, 0.10);
+    border: 1px solid rgba(34, 211, 238, 0.30);
+    color: #a5f3fc;
+    font-size: 13px;
+  }
   .footer {
     margin-top: 18px;
     font-size: 12px;
@@ -311,6 +339,7 @@ function siteBasicAuthPlugin(): Plugin {
   </div>
   <h1>Preview Access</h1>
   <p class="lede">This is a private preview. Enter the access password to continue.</p>
+  ${noticeHtml ? `<div class="notice" role="status">${noticeHtml}</div>` : ""}
   ${errorHtml ? `<div class="error" role="alert">${errorHtml}</div>` : ""}
   <form method="POST" action="${formAction}" autocomplete="off">
     <input type="hidden" name="redirect" value="${redirect}" />
@@ -330,12 +359,18 @@ function siteBasicAuthPlugin(): Plugin {
     status: number,
     loginPath: string,
     redirect: string,
-    error?: string,
+    opts: { error?: string; notice?: string; setCookies?: string[] } = {},
   ): void {
-    const html = renderLoginPage(loginPath, redirect, error);
+    const html = renderLoginPage(loginPath, redirect, {
+      error: opts.error,
+      notice: opts.notice,
+    });
     res.statusCode = status;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
+    if (opts.setCookies && opts.setCookies.length > 0) {
+      res.setHeader("Set-Cookie", opts.setCookies);
+    }
     res.end(html);
   }
 
@@ -366,6 +401,33 @@ function siteBasicAuthPlugin(): Plugin {
     // browser actually overwrites it. Differs only by Max-Age=0.
     const parts = [
       `${COOKIE_NAME}=`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Max-Age=0",
+    ];
+    if (isHttps) parts.push("Secure");
+    return parts.join("; ");
+  }
+
+  function buildExpiredMarkerHeader(isHttps: boolean): string {
+    // Short-lived, server-only marker. HttpOnly because nothing in the
+    // client needs to read it; the server consumes and clears it on the
+    // next render of the login page.
+    const parts = [
+      `${EXPIRED_MARKER_COOKIE}=1`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      `Max-Age=${EXPIRED_MARKER_TTL_SECONDS}`,
+    ];
+    if (isHttps) parts.push("Secure");
+    return parts.join("; ");
+  }
+
+  function buildClearExpiredMarkerHeader(isHttps: boolean): string {
+    const parts = [
+      `${EXPIRED_MARKER_COOKIE}=`,
       "Path=/",
       "HttpOnly",
       "SameSite=Lax",
@@ -491,10 +553,15 @@ function siteBasicAuthPlugin(): Plugin {
 
     const cookies = parseCookieHeader(req.headers.cookie);
     const cookieValue = cookies[COOKIE_NAME];
-    if (cookieValue && verifyCookie(cookieValue, expectedPass)) {
+    const cookieStatus: CookieStatus = cookieValue
+      ? inspectCookie(cookieValue, expectedPass)
+      : "invalid";
+    if (cookieStatus === "valid") {
       next();
       return;
     }
+    const hasExpiredMarker = cookies[EXPIRED_MARKER_COOKIE] === "1";
+    const isHttps = isHttpsRequest(req);
 
     const loginInfo = loginPathInfo(reqPath);
 
@@ -503,7 +570,13 @@ function siteBasicAuthPlugin(): Plugin {
       try {
         body = await readBody(req, MAX_LOGIN_BODY_BYTES);
       } catch {
-        sendLoginPage(res, 413, loginInfo.loginPath, loginInfo.defaultRedirect, "Submission too large.");
+        sendLoginPage(
+          res,
+          413,
+          loginInfo.loginPath,
+          loginInfo.defaultRedirect,
+          { error: "Submission too large." },
+        );
         return;
       }
       const form = parseFormBody(body);
@@ -512,20 +585,56 @@ function siteBasicAuthPlugin(): Plugin {
         ? loginInfo.defaultRedirect
         : safeRedirectTarget(form.redirect);
       if (constantTimeStringEqual(submittedPass, expectedPass)) {
-        const value = makeCookieValue(expectedPass);
-        res.setHeader("Set-Cookie", buildSetCookieHeader(value, isHttpsRequest(req)));
+        const setCookies = [buildSetCookieHeader(makeCookieValue(expectedPass), isHttps)];
+        // Clear any lingering "expired" marker so the next page load doesn't
+        // confusingly show the banner after a successful sign-in.
+        if (hasExpiredMarker) {
+          setCookies.push(buildClearExpiredMarkerHeader(isHttps));
+        }
+        res.setHeader("Set-Cookie", setCookies);
         res.setHeader("Cache-Control", "no-store");
         res.statusCode = 303;
         res.setHeader("Location", redirect);
         res.end();
         return;
       }
-      sendLoginPage(res, 401, loginInfo.loginPath, redirect, "Incorrect password. Please try again.");
+      // Wrong password takes precedence over the expired notice; clear the
+      // marker so we don't double-display.
+      const setCookies = hasExpiredMarker
+        ? [buildClearExpiredMarkerHeader(isHttps)]
+        : undefined;
+      sendLoginPage(res, 401, loginInfo.loginPath, redirect, {
+        error: "Incorrect password. Please try again.",
+        setCookies,
+      });
       return;
     }
 
     if (req.method === "GET" && loginInfo.isLogin) {
-      sendLoginPage(res, 200, loginInfo.loginPath, loginInfo.defaultRedirect);
+      // If a one-shot expired marker is present (set by the silent-bounce
+      // path on a previous request) or the request itself carries an
+      // expired-but-valid auth cookie, surface the friendly notice and
+      // clear the marker.
+      const showExpiredNotice =
+        hasExpiredMarker || cookieStatus === "expired";
+      const setCookies: string[] = [];
+      if (cookieStatus === "expired") {
+        setCookies.push(buildClearCookieHeader(isHttps));
+        setCookies.push(buildExpiredMarkerHeader(isHttps));
+      }
+      if (hasExpiredMarker) {
+        setCookies.push(buildClearExpiredMarkerHeader(isHttps));
+      }
+      sendLoginPage(
+        res,
+        200,
+        loginInfo.loginPath,
+        loginInfo.defaultRedirect,
+        {
+          notice: showExpiredNotice ? EXPIRED_SESSION_NOTICE : undefined,
+          setCookies: setCookies.length > 0 ? setCookies : undefined,
+        },
+      );
       return;
     }
 
@@ -552,18 +661,43 @@ function siteBasicAuthPlugin(): Plugin {
       }
     }
 
+    // Silent-bounce path. Three things to manage on the way out:
+    //   1. Clear a stale auth cookie so the browser stops re-sending it.
+    //   2. If the auth cookie was structurally valid but past `exp`, drop a
+    //      short-lived marker so the next render of the login page can show
+    //      a friendly "session expired" banner. Tampered/garbage cookies
+    //      fall through silently (no marker, no banner) so we don't leak
+    //      signal to attackers.
+    //   3. CLI clients (curl/CI) keep the existing WWW-Authenticate flow
+    //      with no banner — so the marker is browser-only.
+    const isHtml = wantsHtml(req.headers.accept);
+    const setCookies: string[] = [];
     if (cookieValue) {
-      res.setHeader("Set-Cookie", buildClearCookieHeader(isHttpsRequest(req)));
+      setCookies.push(buildClearCookieHeader(isHttps));
+    }
+    if (isHtml && cookieStatus === "expired") {
+      setCookies.push(buildExpiredMarkerHeader(isHttps));
+    } else if (isHtml && hasExpiredMarker) {
+      // Marker is consumed in this same response.
+      setCookies.push(buildClearExpiredMarkerHeader(isHttps));
     }
 
-    if (wantsHtml(req.headers.accept)) {
+    if (isHtml) {
       const prefix = inferPrefixFromRequest(reqPath);
       const formAction = `${prefix}${PREVIEW_LOGIN_PATH}`;
       const target = req.method === "GET" ? req.url || "/" : prefix ? `${prefix}/` : "/";
-      sendLoginPage(res, 401, formAction, safeRedirectTarget(target));
+      const showExpiredNotice =
+        cookieStatus === "expired" || hasExpiredMarker;
+      sendLoginPage(res, 401, formAction, safeRedirectTarget(target), {
+        notice: showExpiredNotice ? EXPIRED_SESSION_NOTICE : undefined,
+        setCookies: setCookies.length > 0 ? setCookies : undefined,
+      });
       return;
     }
 
+    if (setCookies.length > 0) {
+      res.setHeader("Set-Cookie", setCookies);
+    }
     res.setHeader(
       "WWW-Authenticate",
       `Basic realm="${REALM}", charset="UTF-8"`,
