@@ -41,6 +41,7 @@ const REALM = "Restricted";
 const COOKIE_NAME = "preview_auth";
 const COOKIE_TTL_SECONDS = 8 * 60 * 60; // 8 hours
 export const PREVIEW_LOGIN_PATH = "/__preview/login";
+export const PREVIEW_LOGOUT_PATH = "/__preview/logout";
 const MAX_LOGIN_BODY_BYTES = 4 * 1024; // 4KB; the form is tiny
 
 const SKIP_PREFIXES: readonly string[] = [
@@ -417,8 +418,18 @@ function buildSetCookieHeader(value: string, isHttps: boolean): string {
   return parts.join("; ");
 }
 
-function buildClearCookieHeader(): string {
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+function buildClearCookieHeader(isHttps: boolean): string {
+  // Mirror the Set-Cookie attributes used when the cookie was issued so the
+  // browser actually overwrites/clears it. Differing only by Max-Age.
+  const parts = [
+    `${COOKIE_NAME}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
+  if (isHttps) parts.push("Secure");
+  return parts.join("; ");
 }
 
 function isHttpsRequest(req: IncomingMessage): boolean {
@@ -439,6 +450,16 @@ export function basicAuthMiddleware(): RequestHandler {
     // No-op when either env var is unset — clearing the secrets removes the
     // gate everywhere with no code change.
     if (!expectedUser || !expectedPass) return next();
+
+    // Logout endpoint: always clears the cookie and bounces to the branded
+    // login page, regardless of current cookie state. Sits above the cookie
+    // validity / carve-out checks so signed-in visitors can sign out too.
+    if (req.method === "POST" && req.path === PREVIEW_LOGOUT_PATH) {
+      res.set("Set-Cookie", buildClearCookieHeader(isHttpsRequest(req)));
+      res.set("Cache-Control", "no-store");
+      res.redirect(303, PREVIEW_LOGIN_PATH);
+      return;
+    }
 
     if (isCarveOut(req.path)) return next();
 
@@ -506,7 +527,7 @@ export function basicAuthMiddleware(): RequestHandler {
     // If a stale cookie was presented, clear it so the browser doesn't keep
     // sending it on every request.
     if (cookieValue) {
-      res.set("Set-Cookie", buildClearCookieHeader());
+      res.set("Set-Cookie", buildClearCookieHeader(isHttpsRequest(req)));
     }
 
     if (wantsHtml(req.headers.accept)) {

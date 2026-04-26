@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useAuth } from "@clerk/react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
-import { Crown, Star, Shield, ChevronDown, LogOut, Settings } from "lucide-react";
+import { Crown, Star, Shield, ChevronDown, LogOut, Settings, Lock } from "lucide-react";
 
 const SERIF = "'Playfair Display', serif";
 
@@ -79,6 +79,7 @@ export function Navigation() {
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
+          <PreviewGateSignOut />
           {!isLoaded ? null : isSignedIn ? (
             <>
               {tier === "free" && (
@@ -166,5 +167,41 @@ export function Navigation() {
         </div>
       </div>
     </nav>
+  );
+}
+
+/**
+ * Tiny "Sign out of preview" affordance for the public-site preview gate
+ * (separate from the Clerk user session). Submits a POST to
+ * `/__preview/logout` which clears the signed `preview_auth` cookie and
+ * 303-redirects back to the branded login page.
+ *
+ * Renders only when the build was produced with the preview gate active
+ * (controlled by the SITE_BASIC_AUTH_USER / SITE_BASIC_AUTH_PASS env vars
+ * via the `__PREVIEW_GATE_ENABLED__` build-time constant). The form action
+ * is computed from `import.meta.env.BASE_URL` so it stays correct under any
+ * proxy path prefix the site is served behind.
+ */
+function PreviewGateSignOut() {
+  if (!__PREVIEW_GATE_ENABLED__) return null;
+  // BASE_URL is guaranteed to end with a "/" by Vite, so this stitches to
+  // e.g. "/__preview/logout" or "/sports-mvp/__preview/logout".
+  const action = `${import.meta.env.BASE_URL}__preview/logout`;
+  return (
+    <form
+      method="POST"
+      action={action}
+      className="hidden sm:inline-flex"
+      aria-label="Sign out of the SportsMVP preview"
+    >
+      <button
+        type="submit"
+        title="Sign out of the SportsMVP preview"
+        className="inline-flex items-center gap-1.5 text-[11px] font-medium text-white/40 hover:text-white/80 transition-colors px-2 py-1.5 rounded-sm border border-transparent hover:border-white/15"
+      >
+        <Lock size={11} />
+        <span>Exit preview</span>
+      </button>
+    </form>
   );
 }

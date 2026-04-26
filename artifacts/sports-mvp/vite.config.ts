@@ -27,6 +27,7 @@ function siteBasicAuthPlugin(): Plugin {
   const COOKIE_NAME = "preview_auth";
   const COOKIE_TTL_SECONDS = 8 * 60 * 60; // 8 hours
   const PREVIEW_LOGIN_PATH = "/__preview/login";
+  const PREVIEW_LOGOUT_PATH = "/__preview/logout";
   const MAX_LOGIN_BODY_BYTES = 4 * 1024;
 
   function constantTimeStringEqual(a: string, b: string): boolean {
@@ -360,8 +361,18 @@ function siteBasicAuthPlugin(): Plugin {
     return parts.join("; ");
   }
 
-  function buildClearCookieHeader(): string {
-    return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  function buildClearCookieHeader(isHttps: boolean): string {
+    // Mirror the Set-Cookie attributes used when issuing the cookie so the
+    // browser actually overwrites it. Differs only by Max-Age=0.
+    const parts = [
+      `${COOKIE_NAME}=`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Max-Age=0",
+    ];
+    if (isHttps) parts.push("Secure");
+    return parts.join("; ");
   }
 
   function pathOf(req: IncomingMessage): string {
@@ -393,6 +404,26 @@ function siteBasicAuthPlugin(): Plugin {
       prefix,
       loginPath: `${prefix}${PREVIEW_LOGIN_PATH}`,
       defaultRedirect: prefix ? `${prefix}/` : "/",
+    };
+  }
+
+  function logoutPathInfo(reqPath: string): {
+    isLogout: boolean;
+    prefix: string;
+    loginPath: string;
+  } {
+    let prefix = "";
+    let isLogout = false;
+    if (reqPath === PREVIEW_LOGOUT_PATH) {
+      isLogout = true;
+    } else if (reqPath.endsWith(PREVIEW_LOGOUT_PATH)) {
+      isLogout = true;
+      prefix = reqPath.slice(0, reqPath.length - PREVIEW_LOGOUT_PATH.length);
+    }
+    return {
+      isLogout,
+      prefix,
+      loginPath: `${prefix}${PREVIEW_LOGIN_PATH}`,
     };
   }
 
@@ -443,6 +474,21 @@ function siteBasicAuthPlugin(): Plugin {
       return;
     }
 
+    const reqPath = pathOf(req);
+
+    // Logout endpoint: always clears the cookie and redirects to the branded
+    // login page, regardless of current cookie validity. Sits above the
+    // cookie verification check so signed-in visitors can sign out too.
+    const logoutInfo = logoutPathInfo(reqPath);
+    if (req.method === "POST" && logoutInfo.isLogout) {
+      res.setHeader("Set-Cookie", buildClearCookieHeader(isHttpsRequest(req)));
+      res.setHeader("Cache-Control", "no-store");
+      res.statusCode = 303;
+      res.setHeader("Location", logoutInfo.loginPath);
+      res.end();
+      return;
+    }
+
     const cookies = parseCookieHeader(req.headers.cookie);
     const cookieValue = cookies[COOKIE_NAME];
     if (cookieValue && verifyCookie(cookieValue, expectedPass)) {
@@ -450,7 +496,6 @@ function siteBasicAuthPlugin(): Plugin {
       return;
     }
 
-    const reqPath = pathOf(req);
     const loginInfo = loginPathInfo(reqPath);
 
     if (req.method === "POST" && loginInfo.isLogin) {
@@ -508,7 +553,7 @@ function siteBasicAuthPlugin(): Plugin {
     }
 
     if (cookieValue) {
-      res.setHeader("Set-Cookie", buildClearCookieHeader());
+      res.setHeader("Set-Cookie", buildClearCookieHeader(isHttpsRequest(req)));
     }
 
     if (wantsHtml(req.headers.accept)) {
@@ -565,8 +610,18 @@ if (!basePath) {
   );
 }
 
+// Build-time flag the SPA reads to decide whether to render the preview-gate
+// "Sign out" affordance. True only when the gate is actually configured, so
+// it disappears automatically the moment the secrets are cleared.
+const previewGateEnabled = Boolean(
+  process.env.SITE_BASIC_AUTH_USER && process.env.SITE_BASIC_AUTH_PASS,
+);
+
 export default defineConfig({
   base: basePath,
+  define: {
+    __PREVIEW_GATE_ENABLED__: JSON.stringify(previewGateEnabled),
+  },
   plugins: [
     siteBasicAuthPlugin(),
     react(),
