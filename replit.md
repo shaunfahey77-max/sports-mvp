@@ -111,10 +111,17 @@ environments) toggle a Basic Auth gate that protects the public site.
 - Carve-outs (always reach their handler, never gated): `/api/admin/*`,
   `/api/snapshots/*`, `/api/stripe/webhook`, `/api/health`,
   `/api/healthz`, and the Clerk proxy path (`CLERK_PROXY_PATH`).
-- Implemented in `artifacts/api-server/src/middlewares/basicAuthMiddleware.ts`
-  (mounted in `app.ts` after pino-http, before Clerk middleware) and
-  mirrored in `artifacts/sports-mvp/vite.config.ts` for the Vite dev +
-  preview servers (no carve-outs there — the Vite server only serves
+- Shared logic (cookie signing/verification, branded HTML login page,
+  login + logout handling, Set-Cookie attribute strings, Basic-Auth
+  fallback, "session expired" UX) lives in the `@workspace/preview-gate`
+  workspace package (`lib/preview-gate/src/index.ts`). Both surfaces
+  consume the same module so behavior cannot drift.
+- Surface glue:
+  `artifacts/api-server/src/middlewares/basicAuthMiddleware.ts`
+  (mounted in `app.ts` after pino-http, before Clerk middleware) owns
+  the API carve-outs, and `artifacts/sports-mvp/vite.config.ts` owns the
+  Vite dev/preview server's proxy-prefix sniffing for the form `action`
+  / redirect targets (no carve-outs there — the Vite server only serves
   the SPA shell).
 - Comparison uses `crypto.timingSafeEqual` on length-padded buffers to
   avoid timing leaks.
