@@ -5,3 +5,4 @@ export * from "./validationMetrics";
 export * from "./simulationRuns";
 export * from "./users";
 export * from "./modelWatchResults";
+export * from "./modelWatchAlerts";

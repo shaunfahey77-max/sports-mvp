@@ -303,6 +303,43 @@ export const MARKET_MODEL_WATCH_ONLY: Partial<Record<string, boolean>> = {
   mlb_moneyline: true,
 };
 
+/**
+ * Promotion-alert thresholds for the nightly Model-Watch alert check
+ * (see scoring/modelWatchAlerts.ts and the cron job that calls it).
+ *
+ * When a (league, market) bucket in `model_watch_results` clears ALL
+ * three thresholds on its OVERALL totals, the cron emits a notification
+ * (log line + idempotent row in `model_watch_alerts`) so an admin can
+ * decide whether to promote the market back to Official picks.
+ *
+ *   - minResolved: resolved sample (wins + losses + pushes) must be at
+ *     least this large. Tracks the same denominator the aggregator uses
+ *     for ROI and prevents firing on a handful of lucky picks.
+ *   - minRoi:      mean profit per resolved pick (units), measured the
+ *     same way validation_metrics measures it. 4% is a conservative bar
+ *     above the spread-market vig.
+ *   - minAvgClv:   mean of `clv_implied_delta` over the bucket's clean
+ *     CLV sample (the aggregator already strips |delta|>0.20 outliers).
+ *     Positive CLV is the leading indicator we care about — without it
+ *     the ROI is suspect.
+ *
+ * Tune these in one place. Lifting them after an alert has already
+ * fired will NOT clear the existing alert row — delete the row in
+ * `model_watch_alerts` if you want it to fire again under a stricter
+ * bar.
+ */
+export interface ModelWatchAlertThresholds {
+  minResolved: number;
+  minRoi: number;
+  minAvgClv: number;
+}
+
+export const MODEL_WATCH_ALERT_THRESHOLDS: ModelWatchAlertThresholds = {
+  minResolved: 50,
+  minRoi: 0.04,
+  minAvgClv: 0.005,
+};
+
 // Per-market minimum edge overrides — stricter than the global floor.
 // Values at or above 0.50 effectively disable a market (edge is capped below that).
 export const MARKET_MIN_EDGE: Partial<Record<string, number>> = {

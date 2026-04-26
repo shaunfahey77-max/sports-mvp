@@ -20,6 +20,7 @@ import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { computeClvWritebackValues } from "../scoring/clvWriteback";
 import { gradeModelWatchForSnapshot } from "../scoring/modelWatchGrader";
+import { runModelWatchAlertCheck } from "../scoring/modelWatchAlerts";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
@@ -433,6 +434,27 @@ async function runNightlyValidation(): Promise<void> {
     logger.info({ jobId, metricsWritten: metricsResult.rowsWritten }, "Cron: validation_metrics rollup complete");
   } catch (err) {
     logger.error({ jobId, err }, "Cron: validation_metrics rollup failed");
+  }
+
+  // Model-Watch promotion-alert check. Aggregates `model_watch_results`
+  // (now freshly updated by the per-snapshot grader call above) and
+  // logs / persists an alert for any (league, market) bucket that has
+  // newly cleared MODEL_WATCH_ALERT_THRESHOLDS. Idempotent — re-runs
+  // do not re-spam already-fired alerts. Failure here must NOT abort
+  // the nightly job, the alert is purely advisory.
+  try {
+    const alertResult = await runModelWatchAlertCheck();
+    logger.info(
+      {
+        jobId,
+        bucketsEvaluated: alertResult.bucketsEvaluated,
+        qualifying: alertResult.qualifying,
+        newAlerts: alertResult.newAlerts.length,
+      },
+      "Cron: model-watch alert check complete"
+    );
+  } catch (err) {
+    logger.error({ jobId, err }, "Cron: model-watch alert check failed");
   }
 
   logger.info({ jobId, scoresFetched, picksValidated }, "Cron: nightly validation finished");
