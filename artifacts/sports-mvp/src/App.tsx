@@ -17,6 +17,7 @@ import { ParlayGenerator } from "./pages/ParlayGenerator";
 import { Tracker } from "./pages/Tracker";
 import { Subscribe } from "./pages/Subscribe";
 import { Account } from "./pages/Account";
+import { AdminModelWatch } from "./pages/AdminModelWatch";
 import NotFound from "@/pages/not-found";
 
 axios.defaults.baseURL = `${import.meta.env.BASE_URL.replace(/\/+$/, '')}/api`;
@@ -118,6 +119,7 @@ function Router() {
       <Route path="/tracker" component={() => <ProtectedRoute><Tracker /></ProtectedRoute>} />
       <Route path="/subscribe" component={Subscribe} />
       <Route path="/account" component={() => <ProtectedRoute><Account /></ProtectedRoute>} />
+      <Route path="/admin/model-watch" component={() => <ProtectedRoute><AdminModelWatch /></ProtectedRoute>} />
       <Route path="/privacy" component={Privacy} />
       <Route path="/terms" component={Terms} />
       <Route path="/methodology" component={() => <Redirect to="/#methodology" />} />
