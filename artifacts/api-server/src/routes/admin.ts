@@ -4,8 +4,20 @@ import { logger } from "../lib/logger";
 import { storage } from "../storage";
 import { startHistoricalIngest, getHistoricalIngestStatus } from "../services/historicalIngest";
 import { db } from "@workspace/db";
-import { gameSnapshotsTable, candidateBetsTable, scoredPicksTable } from "@workspace/db";
-import { inArray } from "drizzle-orm";
+import {
+  gameSnapshotsTable,
+  candidateBetsTable,
+  scoredPicksTable,
+  modelWatchResultsTable,
+} from "@workspace/db";
+import { inArray, sql } from "drizzle-orm";
+import { backfillModelWatchResults } from "../scoring/modelWatchGrader";
+import {
+  aggregateByLeagueMarket,
+  renderMarkdownReport,
+  type AggregatorRow,
+} from "../scoring/modelWatchAggregator";
+import { MARKET_MODEL_WATCH_ONLY } from "../config/scoringModelConfig";
 
 const router = Router();
 
@@ -187,6 +199,112 @@ router.post("/admin/historical-ingest/status", (req, res) => {
     ...status,
     percentComplete: `${pctDone}%`,
   });
+});
+
+// ---------------------------------------------------------------------------
+// Model-Watch internal scoreboard
+// ---------------------------------------------------------------------------
+// Reports W-L-Push, ROI, CLV, sample size for every market in
+// MARKET_MODEL_WATCH_ONLY (currently nhl_spread, mlb_moneyline) so we
+// can decide when to promote a market back to Official picks. The
+// underlying rows live in `model_watch_results`, which is NEVER read
+// from any public surface (/picks, /performance, /performance/history).
+//
+// Auth: SESSION_SECRET in body, mirroring the other admin endpoints.
+//
+// Optional body fields:
+//   - backfill: { startDate, endDate }  → grade all final snapshots in
+//        that window before reporting. Idempotent.
+//   - since:    string (YYYY-MM-DD)     → only include rows on/after
+//        this date in the report. Defaults to all rows.
+//   - format:   "json" | "markdown"     → response shape. Default JSON.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const isValidIsoDate = (s: unknown): s is string =>
+  typeof s === "string" && ISO_DATE_RE.test(s) && !Number.isNaN(Date.parse(s));
+
+router.post("/admin/model-watch/performance", async (req, res) => {
+  try {
+    const { secret, backfill, since, format } = req.body ?? {};
+    const expected = process.env.SESSION_SECRET;
+    if (!expected || !secret || secret !== expected) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    if (since !== undefined && since !== null && !isValidIsoDate(since)) {
+      return res.status(400).json({
+        ok: false,
+        error: "since must be a YYYY-MM-DD date string",
+      });
+    }
+
+    let backfillResult: Awaited<ReturnType<typeof backfillModelWatchResults>> | null = null;
+    if (backfill && typeof backfill === "object") {
+      const { startDate, endDate } = backfill as {
+        startDate?: string;
+        endDate?: string;
+      };
+      if (!startDate || !endDate) {
+        return res.status(400).json({
+          ok: false,
+          error: "backfill requires startDate and endDate (YYYY-MM-DD)",
+        });
+      }
+      if (!isValidIsoDate(startDate) || !isValidIsoDate(endDate)) {
+        return res.status(400).json({
+          ok: false,
+          error: "backfill startDate and endDate must be YYYY-MM-DD date strings",
+        });
+      }
+      if (startDate > endDate) {
+        return res.status(400).json({
+          ok: false,
+          error: "backfill startDate must be <= endDate",
+        });
+      }
+      logger.info({ startDate, endDate }, "Admin model-watch backfill triggered");
+      backfillResult = await backfillModelWatchResults(startDate, endDate);
+    }
+
+    const rows = since
+      ? await db
+          .select()
+          .from(modelWatchResultsTable)
+          .where(sql`${modelWatchResultsTable.date} >= ${since}`)
+      : await db.select().from(modelWatchResultsTable);
+
+    const aggRows: AggregatorRow[] = rows.map((r) => ({
+      league: r.league,
+      market: r.market,
+      tier: r.tier,
+      publishOdds: r.publishOdds,
+      edge: r.edge,
+      ev: r.ev,
+      result: r.result,
+      clvImpliedDelta: r.clvImpliedDelta,
+    }));
+
+    const registryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
+      .filter(([, enabled]) => enabled)
+      .map(([k]) => k);
+
+    const buckets = aggregateByLeagueMarket(aggRows, registryKeys);
+
+    if (format === "markdown") {
+      return res.type("text/markdown").send(renderMarkdownReport(buckets));
+    }
+
+    return res.json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      since: since ?? null,
+      registry: registryKeys,
+      backfill: backfillResult,
+      buckets,
+    });
+  } catch (err) {
+    logger.error({ err }, "Admin model-watch performance failed");
+    return res.status(500).json({ ok: false, error: String(err) });
+  }
 });
 
 export default router;

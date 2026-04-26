@@ -4,3 +4,4 @@ export * from "./scoredPicks";
 export * from "./validationMetrics";
 export * from "./simulationRuns";
 export * from "./users";
+export * from "./modelWatchResults";

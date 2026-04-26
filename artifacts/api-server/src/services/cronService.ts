@@ -19,6 +19,7 @@ import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { computeClvWritebackValues } from "../scoring/clvWriteback";
+import { gradeModelWatchForSnapshot } from "../scoring/modelWatchGrader";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
@@ -384,6 +385,20 @@ async function runNightlyValidation(): Promise<void> {
 
           picksValidated++;
         }
+
+        // Internal Model-Watch grader: replay would-be picks for markets
+        // in MARKET_MODEL_WATCH_ONLY against this just-final snapshot.
+        // Failure here must NOT abort the public settlement loop — these
+        // rows feed only the admin scoreboard, never public surfaces.
+        try {
+          const updatedSnap = { ...snap, homeScore, awayScore, status: "final" };
+          await gradeModelWatchForSnapshot(updatedSnap);
+        } catch (err) {
+          logger.error(
+            { jobId, gameKey: snap.gameKey, err },
+            "Cron: model-watch grading failed (non-fatal)"
+          );
+        }
       }
     } catch (err) {
       logger.error({ jobId, league, err }, "Cron: validation error");
@@ -652,6 +667,25 @@ export async function backfillSettlementEspn(
               )
               .returning({ id: scoredPicksTable.id });
             if (updated.length > 0) result.picksSettled++;
+          }
+
+          // Internal Model-Watch grader (ESPN backstop path).
+          // Mirrors the runNightlyValidation hook so games settled by
+          // the backstop sweep also produce model_watch_results rows.
+          // Non-fatal: errors must not block the public settlement loop.
+          try {
+            const updatedSnap = {
+              ...snap,
+              homeScore: espnEntry.homeScore,
+              awayScore: espnEntry.awayScore,
+              status: "final",
+            };
+            await gradeModelWatchForSnapshot(updatedSnap);
+          } catch (err) {
+            logger.error(
+              { jobId, gameKey: snap.gameKey, err },
+              "Backfill: model-watch grading failed (non-fatal)"
+            );
           }
         }
       } catch (err) {
