@@ -1,0 +1,48 @@
+Backfill could take several minutes (~284 historical odds calls). Running in background and polling:
+
+
+5 actions
+Background process died on shell exit. Running directly with max timeout, also tee'd to file so I can read partial progress if it runs long:
+
+
+2 actions
+Stop. The backfill failed catastrophically and I need to flag this immediately before doing anything else.
+
+What happened: The purge step ran (clearing close_* on 284 snapshots and CLV fields on the settled picks tied to them), then every single one of the 481 historical-odds API calls errored — half with 422 INVALID_HISTORICAL_TIMESTAMP, half with 429 EXCEEDED_FREQ_LIMIT. End result: 0 captures, 0 picks repaired.
+
+Net effect on prod: the 23 settled picks that previously had close_odds populated (12 NBA-ML, 11 NHL-ML) now have it NULL. Capture rate in the 45-day window has gone from "partial" to "zero" because the purge succeeded and the re-fetch did not. This is worse than the "before" state.
+
+Let me verify the damage first, then diagnose:
+
+
+3 actions
+Confirmed damage: 141 snapshots and 23 settled picks lost their close odds. Let me diagnose the API errors before any recovery attempt:
+
+
+3 actions
+Found the smoking gun: 440 of 481 errors are INVALID_HISTORICAL_TIMESTAMP (the 41 rate-limit errors are a minor issue). The script is sending .toISOString() which produces 2026-03-14T19:08:00.000Z — with milliseconds. Odds API historical endpoint typically wants ISO without millis. Let me verify:
+
+
+2 actions
+The diagnosis is much worse than I thought, and I'm halting completely. The Odds API account is on a free plan that does not include historical odds access. When I tested the same call without milliseconds, the API returned the real error: HISTORICAL_UNAVAILABLE_ON_FREE_USAGE_PLAN (HTTP 401). The INVALID_HISTORICAL_TIMESTAMP 422s the script was getting were a misleading symptom — the millis triggered format validation before the plan check, masking the underlying access issue.
+
+This means the backfill cannot succeed in any form on the current Odds API plan, regardless of format fixes or throttling. No retry will help.
+
+Current production damage (verified)
+Scope	Before this run	After failed run	Lost
+Snapshots in 45d window with home_close_ml	141 (NBA 37, NHL 52, MLB 52)	0	141
+Settled picks in 45d with close_odds	23 (NBA-ML 12, NHL-ML 11)	0	23
+Settled picks in 45d with clv_implied_delta	23	0	23
+The purge step succeeded, the re-fetch step couldn't proceed, and the data is now strictly worse than before.
+
+I am NOT proceeding with verification, freeze, or anything else
+Freezing a snapshot of the current (empty) state would be worthless. The "before" picture I gave you earlier is no longer the prod state — what's there now is the post-purge zero-state.
+
+Two recovery options — your call
+Option 1: Restore production DB to ~21:51 UTC today (just before the purge ran). Replit's Postgres is Neon-backed, and Neon offers point-in-time recovery / branching. You'd do this from the Database tool pane in the workspace (look for "Restore" or "Branch from point in time"), targeting a timestamp around 2026-04-26 21:51:00 UTC. That puts back the 141 snapshots and 23 picks. After restore, no retry of the backfill — we'd just rely on the new T-2-min cron going forward.
+
+Option 2: Accept the loss. The 23 settled picks with real close_odds were the only honest CLV samples in 45 days anyway (most of the rest were already publish==close fabrications). Going forward, once the fix is deployed, the new T-2-min cron captures honest closes for future games and historical access isn't needed. The 45-day backwards window is just gone.
+
+There's also a third question regardless of which option you pick: do you want to upgrade the Odds API account to a paid plan that includes historical access? If yes, after the upgrade I can re-run the backfill (with the format fix and throttling added) on whatever data still needs repair. If no, the script is dead code in this account and we lean entirely on forward capture.
+
+Stopping here. Not running the freeze. Not doing any model/threshold work. Awaiting your decision on restore vs. accept-loss and on the API plan.
