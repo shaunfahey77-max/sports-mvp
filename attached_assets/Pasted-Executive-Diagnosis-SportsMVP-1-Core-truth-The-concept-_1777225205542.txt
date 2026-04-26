@@ -1,0 +1,204 @@
+Executive Diagnosis: SportsMVP
+1. Core truth
+The concept is still viable.
+
+The current problem is not that the idea is bad.
+The problem is that the prediction/scoring system is too broad, too uneven, and not yet proven enough to support the live product we originally wanted.
+
+We spent time fixing:
+
+auth
+domain
+contaminated history/performance
+CLV writeback
+odds-ingest integrity
+public fallback behavior
+Those fixes were necessary, but they mostly exposed the deeper issue:
+
+the live official market set is still not strong enough to support broad public confidence or premium pricing.
+
+2. What we now know with confidence
+Production truth
+The site is now gated and protected.
+Public contaminated NHL rows have been cleaned from official surfaces.
+Basic Auth is active.
+Fallback behavior is live:
+if no official picks qualify, the page shows a clearly labeled Model Watch card
+PASS rows do not leak into official history/performance
+Performance truth
+The public /performance page is not broken, but it is not usable for calibration review right now.
+Because of PUBLIC_TRACK_RECORD_CUTOFFS, the 14 / 30 / 45 day windows currently collapse to the same effective production sample.
+That means the public page is a public track record surface, not a model-review surface.
+CLV truth
+CLV writeback for non-moneyline markets was previously broken.
+That was fixed.
+Contaminated rows were labeled and filtered.
+CLV is still the right acceptance standard, but current public CLV sample is still too thin to treat as broad proof.
+Market truth
+Current live-production picture:
+
+NBA spread is the only market that currently looks close to commercially defensible as an Official market.
+NHL spread still carries unresolved upstream integrity risk and small-sample uncertainty.
+MLB moneyline exists only as candidate-only / non-public / non-official behavior.
+NBA moneyline, NBA total, NHL moneyline, NHL total are not commercially safe right now and should remain disabled.
+MLB spread/run line and total do not currently have live official support.
+UI/product truth
+The worst public experience was not just weak math — it was weak math being displayed in a way that looked like official product confidence.
+That is now partially corrected by:
+
+gating
+Model Watch fallback
+removal of PASS leakage into official metrics
+3. Why we are behind
+We are behind because the product matured faster than the proof.
+
+Specifically:
+
+too many markets were attempted too early
+telemetry was not trustworthy early enough
+historical contamination and ingest issues distorted feedback
+calibration/ranking questions were being asked before the data-quality layer was fully trustworthy
+public surfaces made the product look broader and stronger than the math actually justified
+This is not a concept failure.
+It is a sequencing and proof problem.
+
+4. Current diagnosis of the model layer
+We should stop talking about “the model” as one thing.
+
+The correct unit is the market bucket.
+
+Not commercially ready
+NHL moneyline
+NHL total
+NBA moneyline
+NBA total
+MLB spread/run line
+MLB total
+Still under investigation
+NHL spread
+likely upstream odds/snapshot integrity issue was a major contributor
+not ready for recalibration-first decisions
+MLB moneyline
+candidates exist
+zero official scored picks
+no production evidence strong enough yet
+Best current official candidate
+NBA spread
+That means the engine is not “dead,” but it is far too narrow and uneven to pretend the full cross-league concept is already proven.
+
+5. What should count as success
+Not:
+
+broad market coverage
+lots of daily official picks
+premium pricing
+a public page that always looks full
+Instead, success should mean:
+
+Market-level success
+A market stays Official only if it can show:
+
+positive CLV
+positive ROI
+enough graded sample
+clean input data
+no ranking/calibration inversion
+stable enough publish behavior to matter
+Product-level success
+The paid product is sellable only if:
+
+there is at least one or two markets that truly earn trust
+official picks remain selective
+public performance is honest
+fallback content adds daily value without pretending to be official
+6. Immediate product stance
+Pricing
+Keep:
+Free
+Full Access $21
+Remove / ignore:
+$39.99
+Public official market posture
+Official: NBA spread
+Model Watch only: NHL spread, MLB moneyline
+Disabled / not publicly sold: everything else for now
+Public site behavior
+show official picks only when they exist
+otherwise show a single clearly labeled Model Watch fallback
+do not show broad disabled/pass clutter as the main public product story
+7. What must happen next
+A. Internal calibration-review path
+We need an internal review workflow that is not constrained by the public cutoff.
+
+It must be able to evaluate:
+
+PRE vs POST fix cohorts
+CLV
+ROI
+win rate
+Brier
+avg EV / edge
+rank / edge monotonicity
+data-quality-labeled rows as flagged, not silently removed
+This is the right next “math” tool.
+
+B. MLB production-state clarity
+We need a final explicit MLB status:
+
+candidate-only
+not public
+not official
+no scored picks in production
+no broad rollout until evidence exists
+C. NHL spread upstream review
+We should continue treating NHL spread as:
+
+an integrity-first investigation
+not a recalibration-first one
+D. Daily CLV review
+New graded rows must be checked daily for:
+
+close fields populated
+CLV deltas populated where possible
+no silent telemetry failure
+8. Recommended next operating model
+For the next 2–3 weeks:
+
+Daily
+production CLV verification
+official picks count
+pass reasons
+data-integrity warnings
+official vs Model Watch review
+Twice weekly
+market-by-market performance review
+reliability / ranking review
+official / monitor / model-watch / disabled classification
+Weekly
+Decide for each market:
+
+keep Official
+move to Model Watch
+disable
+continue monitoring
+No emotional threshold loosening.
+No broad re-expansion.
+No pretending the broader concept is already proven.
+
+9. Final conclusion
+SportsMVP does not currently have a broad, premium-grade official picks engine.
+
+It does have:
+
+a viable concept
+a cleaner data pipeline
+better production integrity
+a path to proving one or two real market edges
+The right move now is:
+
+narrow the official promise
+use CLV as the main acceptance standard
+build the internal review path
+let only proven markets survive
+That is the path most likely to turn the current product into something users can eventually trust and pay for.
+
