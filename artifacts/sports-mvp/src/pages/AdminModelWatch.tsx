@@ -5,7 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatPercentage, formatDecimal } from "@/lib/utils";
-import { AlertCircle, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  AlertCircle,
+  ClipboardCopy,
+  Download,
+  Loader2,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
 
 const SERIF = "'Playfair Display', serif";
 
@@ -74,6 +81,10 @@ export function AdminModelWatch() {
   const [backfillError, setBackfillError] = useState<string | null>(null);
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
 
+  const [copyingMd, setCopyingMd] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
   async function fetchScoreboard(opts: { withBackfill?: boolean } = {}) {
     if (!secret) {
       setError("Enter the admin secret first.");
@@ -133,6 +144,79 @@ export function AdminModelWatch() {
     } finally {
       setLoading(false);
       setBackfilling(false);
+    }
+  }
+
+  async function copyMarkdown() {
+    if (!secret) {
+      setExportError("Enter the admin secret first.");
+      return;
+    }
+    if (since && !ISO_DATE_RE.test(since)) {
+      setExportError("`since` must be YYYY-MM-DD.");
+      return;
+    }
+    setExportError(null);
+    setExportStatus(null);
+    setCopyingMd(true);
+    try {
+      const body: Record<string, unknown> = { secret, format: "markdown" };
+      if (since) body.since = since;
+      const res = await axios.post<string>(
+        "/admin/model-watch/performance",
+        body,
+        { responseType: "text", transformResponse: [(d) => d] }
+      );
+      const text = typeof res.data === "string" ? res.data : String(res.data);
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API unavailable in this browser.");
+      }
+      await navigator.clipboard.writeText(text);
+      setExportStatus(`Copied ${text.length} chars of Markdown to clipboard.`);
+    } catch (e: unknown) {
+      const msg =
+        axios.isAxiosError(e) && e.response?.status === 401
+          ? "Unauthorized — secret rejected."
+          : axios.isAxiosError(e) && e.response?.data
+          ? typeof e.response.data === "string"
+            ? e.response.data
+            : String(e.response.data?.error ?? "Request failed.")
+          : e instanceof Error
+          ? e.message
+          : "Request failed.";
+      setExportError(msg);
+    } finally {
+      setCopyingMd(false);
+    }
+  }
+
+  function downloadCsv() {
+    if (!data) {
+      setExportError("Load the scoreboard first.");
+      return;
+    }
+    setExportError(null);
+    setExportStatus(null);
+    try {
+      const csv = bucketsToCsv(data.buckets);
+      const stamp = data.generatedAt.replace(/[:.]/g, "-");
+      const filename = `model-watch-${stamp}.csv`;
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setExportStatus(
+        `Downloaded ${filename} (${data.buckets.length * 4} row${
+          data.buckets.length * 4 === 1 ? "" : "s"
+        }).`
+      );
+    } catch (e: unknown) {
+      setExportError(e instanceof Error ? e.message : "CSV export failed.");
     }
   }
 
@@ -277,6 +361,59 @@ export function AdminModelWatch() {
             <div className="flex items-center gap-2 mb-5 text-[11px] font-bold uppercase tracking-[0.2em] text-white/40">
               <span className="text-[#FFC107]">Per-market scoreboard</span>
               <span className="flex-1 h-px bg-[#1A3066] ml-2" />
+            </div>
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                onClick={copyMarkdown}
+                disabled={copyingMd || !secret}
+                variant="outline"
+                size="sm"
+                className="border-[#1A3066] bg-[#0D1B3E] text-white hover:bg-[#112454] hover:text-white font-bold uppercase tracking-widest text-[11px]"
+                data-testid="button-copy-markdown"
+              >
+                {copyingMd ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin mr-2" />
+                    Copying…
+                  </>
+                ) : (
+                  <>
+                    <ClipboardCopy size={12} className="mr-2" />
+                    Copy Markdown
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                onClick={downloadCsv}
+                disabled={!data || data.buckets.length === 0}
+                variant="outline"
+                size="sm"
+                className="border-[#1A3066] bg-[#0D1B3E] text-white hover:bg-[#112454] hover:text-white font-bold uppercase tracking-widest text-[11px]"
+                data-testid="button-download-csv"
+              >
+                <Download size={12} className="mr-2" />
+                Download CSV
+              </Button>
+              {exportStatus && (
+                <span
+                  className="text-xs text-[#4ADE80]"
+                  data-testid="text-export-status"
+                >
+                  {exportStatus}
+                </span>
+              )}
+              {exportError && (
+                <span
+                  className="text-xs text-[#FCA5A5] flex items-center gap-1"
+                  role="alert"
+                  data-testid="text-export-error"
+                >
+                  <AlertCircle size={12} />
+                  {exportError}
+                </span>
+              )}
             </div>
             {data.buckets.length === 0 ? (
               <div className="py-16 text-center border border-[#1A3066] rounded-sm bg-[#0D1B3E]/50 text-white/50">
@@ -487,4 +624,72 @@ function BucketRow({
       </td>
     </tr>
   );
+}
+
+const CSV_HEADERS = [
+  "league",
+  "market",
+  "tier",
+  "samples",
+  "resolved",
+  "wins",
+  "losses",
+  "pushes",
+  "pending",
+  "win_rate",
+  "roi",
+  "units_won",
+  "avg_edge",
+  "avg_ev",
+  "clv_sample_size",
+  "clv_hit_rate",
+  "avg_clv",
+] as const;
+
+function csvEscape(value: string | number): string {
+  const s = String(value);
+  if (s === "") return "";
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function statsRow(
+  league: string,
+  market: string,
+  tier: string,
+  stats: BucketStats
+): string {
+  const cells: Array<string | number> = [
+    league,
+    market,
+    tier,
+    stats.samples,
+    stats.resolved,
+    stats.wins,
+    stats.losses,
+    stats.pushes,
+    stats.pending,
+    stats.winRate,
+    stats.roi,
+    stats.unitsWon,
+    stats.avgEdge,
+    stats.avgEv,
+    stats.clvSampleSize,
+    stats.clvHitRate,
+    stats.avgClv,
+  ];
+  return cells.map(csvEscape).join(",");
+}
+
+export function bucketsToCsv(buckets: readonly MarketBucket[]): string {
+  const lines: string[] = [CSV_HEADERS.join(",")];
+  for (const b of buckets) {
+    lines.push(statsRow(b.league, b.market, "Overall", b.total));
+    lines.push(statsRow(b.league, b.market, "A", b.byTier.A));
+    lines.push(statsRow(b.league, b.market, "B", b.byTier.B));
+    lines.push(statsRow(b.league, b.market, "C", b.byTier.C));
+  }
+  return lines.join("\n") + "\n";
 }
