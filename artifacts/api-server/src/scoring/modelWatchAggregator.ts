@@ -22,6 +22,27 @@ export interface AggregatorRow {
   ev: string | number;
   result: string;
   clvImpliedDelta: string | number | null;
+  // Optional row identity used only when the caller asks for per-bucket
+  // "recent picks" via aggregateByLeagueMarket(rows, keys, { recentLimit }).
+  // Aggregate math never reads these.
+  date?: string;
+  gameKey?: string;
+  pick?: string;
+}
+
+/**
+ * One raw row included in a bucket's `recent` slice. Mirrors the columns
+ * the admin "Recent picks" table renders so the UI does not need to
+ * reach into model_watch_results directly.
+ */
+export interface RecentPick {
+  date: string;
+  gameKey: string;
+  tier: string;
+  pick: string;
+  publishOdds: number;
+  result: string;
+  clvImpliedDelta: number | null;
 }
 
 export interface BucketStats {
@@ -46,6 +67,18 @@ export interface MarketBucket {
   market: string;
   total: BucketStats;
   byTier: Record<"A" | "B" | "C", BucketStats>;
+  /**
+   * Up to `recentLimit` raw rows for this league_market bucket, in the
+   * order the aggregator received them. Only set when
+   * aggregateByLeagueMarket is called with `{ recentLimit }`. Caller is
+   * responsible for ordering input rows (typically date desc).
+   */
+  recent?: RecentPick[];
+}
+
+export interface AggregateOptions {
+  /** When set, attach up to N raw rows per bucket as `recent`. */
+  recentLimit?: number;
 }
 
 const MAX_CLV_DELTA = 0.2;
@@ -137,7 +170,8 @@ export function aggregateRows(rows: readonly AggregatorRow[]): BucketStats {
  */
 export function aggregateByLeagueMarket(
   rows: readonly AggregatorRow[],
-  marketKeys: readonly string[]
+  marketKeys: readonly string[],
+  opts: AggregateOptions = {}
 ): MarketBucket[] {
   const groups = new Map<string, AggregatorRow[]>();
   for (const r of rows) {
@@ -150,6 +184,9 @@ export function aggregateByLeagueMarket(
   const allKeys = new Set<string>([...marketKeys, ...groups.keys()]);
   const out: MarketBucket[] = [];
 
+  const wantsRecent =
+    typeof opts.recentLimit === "number" && opts.recentLimit > 0;
+
   for (const key of Array.from(allKeys).sort()) {
     const groupRows = groups.get(key) ?? [];
     const [league, ...rest] = key.split("_");
@@ -161,15 +198,35 @@ export function aggregateByLeagueMarket(
       C: aggregateRows(groupRows.filter((r) => r.tier === "C")),
     };
 
-    out.push({
+    const bucket: MarketBucket = {
       league,
       market,
       total: aggregateRows(groupRows),
       byTier,
-    });
+    };
+
+    if (wantsRecent) {
+      bucket.recent = groupRows
+        .slice(0, opts.recentLimit)
+        .map(toRecentPick);
+    }
+
+    out.push(bucket);
   }
 
   return out;
+}
+
+function toRecentPick(r: AggregatorRow): RecentPick {
+  return {
+    date: r.date ?? "",
+    gameKey: r.gameKey ?? "",
+    tier: r.tier,
+    pick: r.pick ?? "",
+    publishOdds: asNum(r.publishOdds),
+    result: r.result,
+    clvImpliedDelta: asNumOrNull(r.clvImpliedDelta),
+  };
 }
 
 /**

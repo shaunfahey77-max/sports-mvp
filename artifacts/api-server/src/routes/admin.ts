@@ -10,7 +10,7 @@ import {
   scoredPicksTable,
   modelWatchResultsTable,
 } from "@workspace/db";
-import { and, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, gte, inArray, sql } from "drizzle-orm";
 import { backfillModelWatchResults } from "../scoring/modelWatchGrader";
 import {
   aggregateByLeagueMarket,
@@ -230,9 +230,13 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const isValidIsoDate = (s: unknown): s is string =>
   typeof s === "string" && ISO_DATE_RE.test(s) && !Number.isNaN(Date.parse(s));
 
+const DEFAULT_RECENT_LIMIT = 25;
+const MAX_RECENT_LIMIT = 200;
+
 router.post("/admin/model-watch/performance", async (req, res) => {
   try {
-    const { secret, backfill, since, format } = req.body ?? {};
+    const { secret, backfill, since, format, includeRecent, recentLimit } =
+      req.body ?? {};
     const expected = process.env.SESSION_SECRET;
     if (!expected || !secret || secret !== expected) {
       return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -243,6 +247,34 @@ router.post("/admin/model-watch/performance", async (req, res) => {
         ok: false,
         error: "since must be a YYYY-MM-DD date string",
       });
+    }
+
+    if (
+      includeRecent !== undefined &&
+      includeRecent !== null &&
+      typeof includeRecent !== "boolean"
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "includeRecent must be a boolean",
+      });
+    }
+    const wantsRecent = includeRecent === true;
+
+    let recentLimitN = DEFAULT_RECENT_LIMIT;
+    if (recentLimit !== undefined && recentLimit !== null) {
+      const n = Number(recentLimit);
+      if (
+        !Number.isInteger(n) ||
+        n < 1 ||
+        n > MAX_RECENT_LIMIT
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: `recentLimit must be an integer in [1, ${MAX_RECENT_LIMIT}]`,
+        });
+      }
+      recentLimitN = n;
     }
 
     let backfillResult: Awaited<ReturnType<typeof backfillModelWatchResults>> | null = null;
@@ -273,12 +305,23 @@ router.post("/admin/model-watch/performance", async (req, res) => {
       backfillResult = await backfillModelWatchResults(startDate, endDate);
     }
 
+    // Order so the per-bucket "recent" slice is genuinely the most recent rows.
+    // Stable across calls for identical data via the id tiebreaker.
+    const orderBy = [
+      desc(modelWatchResultsTable.date),
+      desc(modelWatchResultsTable.eventStart),
+      desc(modelWatchResultsTable.id),
+    ] as const;
     const rows = since
       ? await db
           .select()
           .from(modelWatchResultsTable)
           .where(sql`${modelWatchResultsTable.date} >= ${since}`)
-      : await db.select().from(modelWatchResultsTable);
+          .orderBy(...orderBy)
+      : await db
+          .select()
+          .from(modelWatchResultsTable)
+          .orderBy(...orderBy);
 
     const aggRows: AggregatorRow[] = rows.map((r) => ({
       league: r.league,
@@ -289,13 +332,20 @@ router.post("/admin/model-watch/performance", async (req, res) => {
       ev: r.ev,
       result: r.result,
       clvImpliedDelta: r.clvImpliedDelta,
+      date: r.date,
+      gameKey: r.gameKey,
+      pick: r.pick,
     }));
 
     const registryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
       .filter(([, enabled]) => enabled)
       .map(([k]) => k);
 
-    const buckets = aggregateByLeagueMarket(aggRows, registryKeys);
+    const buckets = aggregateByLeagueMarket(
+      aggRows,
+      registryKeys,
+      wantsRecent ? { recentLimit: recentLimitN } : {}
+    );
 
     if (format === "markdown") {
       return res.type("text/markdown").send(renderMarkdownReport(buckets));
@@ -307,6 +357,7 @@ router.post("/admin/model-watch/performance", async (req, res) => {
       since: since ?? null,
       registry: registryKeys,
       backfill: backfillResult,
+      recentLimit: wantsRecent ? recentLimitN : null,
       buckets,
     });
   } catch (err) {

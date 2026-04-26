@@ -158,3 +158,99 @@ test("renderMarkdownReport: empty buckets produces a friendly placeholder", () =
   const md = renderMarkdownReport([]);
   assert.match(md, /No graded rows yet/);
 });
+
+test("aggregateByLeagueMarket: omits `recent` when no recentLimit option is passed (back-compat)", () => {
+  const rows: AggregatorRow[] = [
+    baseRow({ result: "win", date: "2026-04-01", gameKey: "g1", pick: "home" }),
+  ];
+  const buckets = aggregateByLeagueMarket(rows, []);
+  for (const b of buckets) {
+    assert.equal(b.recent, undefined);
+  }
+});
+
+test("aggregateByLeagueMarket: attaches per-bucket recent slice in input order with limit", () => {
+  // Caller supplies rows pre-ordered desc by date; the aggregator just slices
+  // the first N per bucket. Verify both slicing and per-bucket isolation.
+  const rows: AggregatorRow[] = [
+    baseRow({ league: "nhl", market: "spread", date: "2026-04-05", gameKey: "g5", pick: "home", tier: "A", result: "win", publishOdds: -110, clvImpliedDelta: 0.02 }),
+    baseRow({ league: "nhl", market: "spread", date: "2026-04-04", gameKey: "g4", pick: "away", tier: "B", result: "loss", clvImpliedDelta: -0.01 }),
+    baseRow({ league: "nhl", market: "spread", date: "2026-04-03", gameKey: "g3", pick: "home", tier: "A", result: "push", clvImpliedDelta: null }),
+    baseRow({ league: "nhl", market: "spread", date: "2026-04-02", gameKey: "g2", pick: "away", tier: "C", result: "pending", clvImpliedDelta: null }),
+    baseRow({ league: "mlb", market: "moneyline", date: "2026-04-06", gameKey: "m1", pick: "home", tier: "A", result: "win", publishOdds: 130, clvImpliedDelta: 0.04 }),
+  ];
+  const buckets = aggregateByLeagueMarket(rows, [], { recentLimit: 3 });
+
+  const nhl = buckets.find((b) => b.league === "nhl" && b.market === "spread")!;
+  assert.ok(nhl.recent);
+  assert.equal(nhl.recent!.length, 3);
+  assert.deepEqual(
+    nhl.recent!.map((r) => r.gameKey),
+    ["g5", "g4", "g3"]
+  );
+  // First row mapped end-to-end so the UI does not have to reach into the DB.
+  assert.deepEqual(nhl.recent![0], {
+    date: "2026-04-05",
+    gameKey: "g5",
+    tier: "A",
+    pick: "home",
+    publishOdds: -110,
+    result: "win",
+    clvImpliedDelta: 0.02,
+  });
+
+  // Other bucket gets its own slice — recent is per-bucket, not global.
+  const mlb = buckets.find((b) => b.league === "mlb" && b.market === "moneyline")!;
+  assert.equal(mlb.recent!.length, 1);
+  assert.equal(mlb.recent![0].gameKey, "m1");
+});
+
+test("aggregateByLeagueMarket: registry-only buckets (no rows) get an empty recent array", () => {
+  const buckets = aggregateByLeagueMarket([], ["nhl_spread"], { recentLimit: 25 });
+  assert.equal(buckets.length, 1);
+  assert.deepEqual(buckets[0].recent, []);
+});
+
+test("aggregateByLeagueMarket: recentLimit=0 is treated as 'do not include recent'", () => {
+  const rows: AggregatorRow[] = [
+    baseRow({ date: "2026-04-05", gameKey: "g1", pick: "home", result: "win" }),
+  ];
+  const buckets = aggregateByLeagueMarket(rows, [], { recentLimit: 0 });
+  for (const b of buckets) {
+    assert.equal(b.recent, undefined);
+  }
+});
+
+test("aggregateByLeagueMarket: stringy publishOdds and clvImpliedDelta are coerced to numbers in recent", () => {
+  // DB returns numeric columns as strings via drizzle; the recent payload
+  // must be numbers so the React table can format without re-parsing.
+  const rows: AggregatorRow[] = [
+    baseRow({
+      date: "2026-04-05",
+      gameKey: "g1",
+      pick: "home",
+      publishOdds: "-110",
+      clvImpliedDelta: "0.0125",
+    }),
+  ];
+  const buckets = aggregateByLeagueMarket(rows, [], { recentLimit: 5 });
+  const r = buckets[0].recent![0];
+  assert.equal(typeof r.publishOdds, "number");
+  assert.equal(r.publishOdds, -110);
+  assert.equal(typeof r.clvImpliedDelta, "number");
+  assert.ok(Math.abs((r.clvImpliedDelta as number) - 0.0125) < 1e-9);
+});
+
+test("aggregateByLeagueMarket: per-bucket recent does NOT alter aggregate stats", () => {
+  // Same rows aggregated with and without recentLimit should produce
+  // identical totals/per-tier breakdowns. Locks in that the recent slice
+  // is purely additive.
+  const rows: AggregatorRow[] = [
+    baseRow({ tier: "A", result: "win", publishOdds: -110, date: "2026-04-05", gameKey: "g1", pick: "home" }),
+    baseRow({ tier: "B", result: "loss", date: "2026-04-04", gameKey: "g2", pick: "away" }),
+  ];
+  const a = aggregateByLeagueMarket(rows, []);
+  const b = aggregateByLeagueMarket(rows, [], { recentLimit: 25 });
+  assert.deepEqual(a[0].total, b[0].total);
+  assert.deepEqual(a[0].byTier, b[0].byTier);
+});

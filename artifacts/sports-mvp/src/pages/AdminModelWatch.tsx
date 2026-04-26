@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { formatPercentage, formatDecimal } from "@/lib/utils";
 import {
   AlertCircle,
+  ChevronDown,
+  ChevronRight,
   ClipboardCopy,
   Download,
   Loader2,
@@ -33,11 +35,22 @@ interface BucketStats {
   avgClv: number;
 }
 
+interface RecentPick {
+  date: string;
+  gameKey: string;
+  tier: string;
+  pick: string;
+  publishOdds: number;
+  result: string;
+  clvImpliedDelta: number | null;
+}
+
 interface MarketBucket {
   league: string;
   market: string;
   total: BucketStats;
   byTier: Record<"A" | "B" | "C", BucketStats>;
+  recent?: RecentPick[];
 }
 
 interface BackfillResult {
@@ -53,8 +66,12 @@ interface ModelWatchResponse {
   since: string | null;
   registry: string[];
   backfill: BackfillResult | null;
+  recentLimit: number | null;
   buckets: MarketBucket[];
 }
+
+const RECENT_PICKS_LIMIT = 25;
+type TierFilter = "all" | "A" | "B" | "C";
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -111,7 +128,11 @@ export function AdminModelWatch() {
       setLoading(true);
     }
     try {
-      const body: Record<string, unknown> = { secret };
+      const body: Record<string, unknown> = {
+        secret,
+        includeRecent: true,
+        recentLimit: RECENT_PICKS_LIMIT,
+      };
       if (since) body.since = since;
       if (opts.withBackfill) {
         body.backfill = { startDate: backfillStart, endDate: backfillEnd };
@@ -522,6 +543,13 @@ export function AdminModelWatch() {
 
 function BucketCard({ bucket }: { bucket: MarketBucket }) {
   const key = `${bucket.league}_${bucket.market}`;
+  const recent = bucket.recent ?? [];
+  const [recentOpen, setRecentOpen] = useState(false);
+  const [tierFilter, setTierFilter] = useState<TierFilter>("all");
+  const filteredRecent =
+    tierFilter === "all"
+      ? recent
+      : recent.filter((r) => r.tier === tierFilter);
   return (
     <div
       className="rounded-sm border border-[#1A3066] bg-[#0D1B3E] overflow-hidden"
@@ -561,7 +589,212 @@ function BucketCard({ bucket }: { bucket: MarketBucket }) {
           </tbody>
         </table>
       </div>
+      <RecentPicksPanel
+        bucketKey={key}
+        recent={recent}
+        filtered={filteredRecent}
+        open={recentOpen}
+        onToggle={() => setRecentOpen((v) => !v)}
+        tierFilter={tierFilter}
+        onTierFilterChange={setTierFilter}
+      />
     </div>
+  );
+}
+
+function RecentPicksPanel({
+  bucketKey,
+  recent,
+  filtered,
+  open,
+  onToggle,
+  tierFilter,
+  onTierFilterChange,
+}: {
+  bucketKey: string;
+  recent: RecentPick[];
+  filtered: RecentPick[];
+  open: boolean;
+  onToggle: () => void;
+  tierFilter: TierFilter;
+  onTierFilterChange: (next: TierFilter) => void;
+}) {
+  const total = recent.length;
+  const disabled = total === 0;
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <div className="border-t border-[#1A3066]">
+      <button
+        type="button"
+        onClick={disabled ? undefined : onToggle}
+        disabled={disabled}
+        aria-expanded={open}
+        className={`w-full flex items-center justify-between px-5 py-3 text-[11px] font-bold uppercase tracking-[0.2em] ${
+          disabled
+            ? "text-white/30 cursor-not-allowed"
+            : "text-white/60 hover:text-white hover:bg-[#112454] cursor-pointer"
+        }`}
+        data-testid={`button-recent-toggle-${bucketKey}`}
+      >
+        <span className="flex items-center gap-2">
+          <Chevron size={14} />
+          Recent picks
+          <span className="text-white/40 normal-case tracking-normal text-xs ml-1">
+            {disabled ? "(none yet)" : `(${total})`}
+          </span>
+        </span>
+      </button>
+      {open && !disabled && (
+        <div data-testid={`recent-panel-${bucketKey}`}>
+          <div
+            className="px-5 py-3 flex flex-wrap items-center gap-2 border-t border-[#1A3066]/50 bg-[#091534]"
+            role="group"
+            aria-label="Filter recent picks by tier"
+          >
+            <span className="text-[10px] uppercase tracking-widest text-white/40 mr-1">
+              Tier
+            </span>
+            {(["all", "A", "B", "C"] as const).map((t) => (
+              <TierFilterButton
+                key={t}
+                bucketKey={bucketKey}
+                value={t}
+                active={tierFilter === t}
+                onClick={() => onTierFilterChange(t)}
+              />
+            ))}
+            <span
+              className="ml-auto text-[10px] uppercase tracking-widest text-white/40"
+              data-testid={`recent-count-${bucketKey}`}
+            >
+              Showing {filtered.length} of {total}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            {filtered.length === 0 ? (
+              <div
+                className="px-5 py-6 text-sm text-white/40 text-center"
+                data-testid={`recent-empty-${bucketKey}`}
+              >
+                No picks for tier {tierFilter} in the recent slice.
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-widest text-white/40 border-b border-[#1A3066]">
+                    <th className="px-5 py-3 font-medium">Date</th>
+                    <th className="px-3 py-3 font-medium">Game</th>
+                    <th className="px-3 py-3 font-medium text-center">Tier</th>
+                    <th className="px-3 py-3 font-medium">Side</th>
+                    <th className="px-3 py-3 font-medium text-right">Publish odds</th>
+                    <th className="px-3 py-3 font-medium text-center">Result</th>
+                    <th className="px-5 py-3 font-medium text-right">CLV Δ</th>
+                  </tr>
+                </thead>
+                <tbody data-testid={`recent-table-${bucketKey}`}>
+                  {filtered.map((row, idx) => (
+                    <RecentPickRow
+                      key={`${row.date}-${row.gameKey}-${row.pick}-${idx}`}
+                      row={row}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TierFilterButton({
+  bucketKey,
+  value,
+  active,
+  onClick,
+}: {
+  bucketKey: string;
+  value: TierFilter;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const label = value === "all" ? "All" : value;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`px-2.5 py-1 rounded-sm border text-[11px] font-bold uppercase tracking-widest transition-colors ${
+        active
+          ? "bg-[#FFC107] text-[#060D1F] border-[#FFC107]"
+          : "bg-[#060D1F] text-white/70 border-[#1A3066] hover:text-white hover:border-[#FFC107]"
+      }`}
+      data-testid={`button-recent-tier-${bucketKey}-${value}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function formatAmericanOdds(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const rounded = Math.round(n);
+  return rounded > 0 ? `+${rounded}` : `${rounded}`;
+}
+
+function resultClass(result: string): string {
+  if (result === "win") return "text-[#4ADE80]";
+  if (result === "loss") return "text-[#F87171]";
+  if (result === "push") return "text-white/60";
+  return "text-white/40";
+}
+
+function clvClass(delta: number | null): string {
+  if (delta == null) return "text-white/40";
+  if (delta > 0) return "text-[#4ADE80]";
+  if (delta < 0) return "text-[#F87171]";
+  return "text-white/85";
+}
+
+function RecentPickRow({ row }: { row: RecentPick }) {
+  return (
+    <tr
+      className="border-t border-[#1A3066]/50"
+      data-testid={`recent-row-${row.gameKey}-${row.pick}`}
+    >
+      <td className="px-5 py-2.5 font-mono text-white/85 whitespace-nowrap">
+        {row.date}
+      </td>
+      <td className="px-3 py-2.5 font-mono text-white/85 truncate max-w-[260px]">
+        {row.gameKey || "—"}
+      </td>
+      <td className="px-3 py-2.5 text-center font-mono text-white/85">
+        {row.tier}
+      </td>
+      <td className="px-3 py-2.5 font-mono text-white/85">
+        {row.pick || "—"}
+      </td>
+      <td className="px-3 py-2.5 text-right font-mono text-white/85">
+        {formatAmericanOdds(row.publishOdds)}
+      </td>
+      <td
+        className={`px-3 py-2.5 text-center font-bold uppercase tracking-widest text-[10px] ${resultClass(
+          row.result
+        )}`}
+      >
+        {row.result}
+      </td>
+      <td
+        className={`px-5 py-2.5 text-right font-mono ${clvClass(
+          row.clvImpliedDelta
+        )}`}
+      >
+        {row.clvImpliedDelta == null
+          ? "—"
+          : formatDecimal(row.clvImpliedDelta, 4)}
+      </td>
+    </tr>
   );
 }
 
