@@ -203,15 +203,20 @@ test("precedence: odds_out_of_range wins over model_watch_only (mlb_moneyline)",
   assert.equal(tiered.selectionReason, "odds_out_of_range");
 });
 
-test("scope: a market NOT in MARKET_MODEL_WATCH_ONLY (nba_spread) is unaffected", () => {
-  // nba_spread is intentionally absent from MARKET_MODEL_WATCH_ONLY — a
-  // healthy candidate should keep its assignTier outcome. We use a
-  // rank_score that clears the nba_spread Tier-A override (0.95) so the
-  // expected outcome is Tier A / 'high_rank_score'.
-  assert.notEqual(MARKET_MODEL_WATCH_ONLY["nba_spread"], true);
+test("scope: a market in NEITHER MARKET_MODEL_WATCH_ONLY nor MARKET_DISABLED (ncaam_spread) is unaffected", () => {
+  // Control: a candidate in a market that is gated by NEITHER list should
+  // keep its assignTier outcome. ncaam_spread is intentionally absent from
+  // MARKET_MODEL_WATCH_ONLY AND from MARKET_DISABLED, and ncaam is not in
+  // ODDS_RANGE_GUARDRAIL_LEAGUES, so a rank_score that clears the default
+  // Tier-A floor (0.65) should yield Tier A / 'high_rank_score'.
+  //
+  // (Originally this test used nba_spread, but nba_spread was added to
+  // MARKET_DISABLED on 2026-04-26 per the calibration-review demote, so
+  // it no longer functions as an "ungated" control.)
+  assert.notEqual(MARKET_MODEL_WATCH_ONLY["ncaam_spread"], true);
 
   const c = makeCandidate({
-    league: "nba",
+    league: "ncaam",
     marketType: "spread",
     publishOdds: -110,
     publishLine: -3.5,

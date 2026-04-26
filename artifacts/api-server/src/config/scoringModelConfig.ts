@@ -236,12 +236,30 @@ export const LEAGUE_MARKET_QUALITY = {
  *                drift, not bad luck. Per-market MIN_EDGE of 0.04 is
  *                not enough; gate it.
  *
+ * 2026-04-26 calibration-review addition (NBA spread demote from Official):
+ *   - nba_spread: PRE clean 175 resolved (67-105-3) → 39.0% wr,
+ *                 -21.46% ROI, Brier skill -3.97% vs market_prob_fair.
+ *                 Edge→winRate monotonicity inverted on the large-n
+ *                 cohort (corr -0.933): the top-edge bucket posted
+ *                 30.0% wr / -38.41% ROI, the lowest-edge bucket
+ *                 42.6% wr. POST clean is only 12 resolved (well below
+ *                 minResolved=50) and POST monotonicity also inverts
+ *                 on n=1-3 buckets. CLV sample size is 0 across all
+ *                 NBA spread rows (separate telemetry investigation),
+ *                 so the standard CLV half of the promotion gate is
+ *                 inapplicable. Disabling per the calibration-review
+ *                 conclusion and explicit user direction. Re-evaluate
+ *                 only after a model recalibration is performed AND a
+ *                 fresh post-recalibration sample of resolved>=50
+ *                 clears the promotion bar.
+ *
  * Re-evaluate after the next 7-day post-fix settlement window.
  */
 export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   nhl_moneyline: true,
   nba_moneyline: true,
   nhl_total: true,
+  nba_spread: true,
   // NBA total: model-edge ceiling sits well below the per-market 10% floor
   // (max edge across 214 candidates over a 14d window: 6.8%). Bucket has
   // been functionally dead — formal disable makes the state explicit and
