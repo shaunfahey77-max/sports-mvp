@@ -1,0 +1,42 @@
+Let me check the current state — what time is it now, has anything settled yet since deploy, and what's the next event horizon:
+
+
+3 actions
+Big update: it's now 16:36 UTC on April 27 — about 17.5 hours after deploy. Tonight's slate has finalized: 28 games went final since deploy, but 0 scored_picks have settled in that window. That's a discrepancy worth investigating before backfill.
+
+
+3 actions
+Concerning finding before I proceed. Let me check one more thing — when did the publish pipeline last produce any scored_picks rows at all:
+
+
+3 actions
+Halting before any further action — there's a separate, larger issue that affects the plan.
+
+Discovery: the publish pipeline has produced 0 picks for 7 days
+Period	scored_picks rows created
+Since deploy (April 26 23:00 UTC → now, ~17.5 hours)	0
+Most recent pick created (anywhere)	2026-04-20 19:40 UTC — a single NBA spread
+Total picks created in last 7 days	1
+This is not caused by today's deploy — it predates the deploy by a week. The publish-side cron has been running (logs show Cron: ingest complete for league with picks: 0 repeatedly), it's just that no game has cleared whatever publish criteria are in force.
+
+What this means for your plan:
+
+Step 1 (verify forward CLV path on real new rows) is blocked — not by anything we can wait out. There are 28 finalized games since deploy, but none of them had any associated scored_picks rows (publish path produced 0 picks for them). Waiting longer won't help unless the publish pipeline starts producing picks again, which it hasn't done in 7 days.
+The forward CLV path itself is probably fine — we already have indirect proof (snapshot-side close_spread / close_total / close_ml all writing post-deploy, validation cron already calls writeback for all markets). But empirical proof on a real new scored_pick requires the publish pipeline to actually emit something first.
+Steps 2-5 (backfill dry-run / review / apply / re-check) are independent of Step 1. The backfill operates on legacy already-settled picks that already exist in the DB; it doesn't need any new picks to run.
+Two separate things to decide
+Decision A — what to do about the publish drought (the bigger surprise here):
+
+The 0-picks-in-7-days is its own incident. Likely candidates: thresholds tightened too far, plausibility filters dropping everything, MARKET_DISABLED registry over-broad, or an upstream bug. Investigating it would touch model/threshold territory, which you've explicitly fenced off. I will not investigate without your go-ahead. Options as I see them:
+
+A1: Defer — note the drought, do nothing about it now, continue today's plan around it.
+A2: Investigate just enough to identify root cause (read-only — looking at logs, registry, threshold values) without changing anything.
+A3: Treat as separate workstream entirely; raise it later.
+Decision B — what to do about Step 1 today:
+
+B1: Skip Step 1, proceed directly to Step 2 (backfill dry-run). Forward verification gets carried forward to whenever the publish pipeline next produces a pick that subsequently settles.
+B2: Pause everything until the publish drought is resolved (would block today's plan indefinitely).
+B3: Wait one more night — if tonight's slate also produces 0 picks, accept that and proceed.
+My recommendation: A1 + B1 — proceed with Steps 2-5 now (they're independent and read-only by default), keep the publish-drought question open as a separate decision. The backfill will give you concrete movement on the spread/total CLV gap regardless.
+
+Stopping until you tell me which combination of A and B to take. No backfill run, no investigation of the publish drought, no model/threshold work.
