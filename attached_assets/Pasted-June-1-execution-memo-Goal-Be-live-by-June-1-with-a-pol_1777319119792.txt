@@ -1,0 +1,144 @@
+June 1 execution memo
+
+Goal
+Be live by June 1 with a polished, trustworthy application and a model stack that is honest about what is Official, what is Model Watch, and what is Disabled.
+
+Important:
+“All leagues and all markets” for launch does NOT mean every market is Official.
+It means every target league/market has an intentional launch state, and only proven markets are promoted to Official.
+
+Priority order
+1. Truth layer
+2. Replay / validation
+3. Controlled market recovery
+4. Official promotion only where earned
+5. Product polish and launch lock
+
+Launch gates
+A market can be Official only if it shows:
+- positive mean CLV
+- acceptable recent realized performance
+- enough settled sample to matter
+- no obvious rank/tier inversion
+- no data-integrity issues
+- stable publish behavior
+
+If a market does not clear that bar by launch:
+- Model Watch only
+or
+- Disabled
+
+Dates and workstreams
+
+Now through May 3
+Priority: truth layer / CLV integrity
+Do now:
+- continue verifying forward close capture and CLV writeback on newly settled rows
+- keep nhl_total accumulating in Model Watch
+- keep using the fixed 45-day validation window
+- finish any low-risk legacy CLV cleanup that is already scoped and read-only/recoverable
+Success by end of this phase:
+- forward CLV is visibly working on new settled rows
+- no return of publish==close contamination
+- moneyline / spread / total writeback status is understood per market
+
+May 1 through May 8
+Priority: replay / validation harness
+Do now:
+- use the replay harness to test market/gate changes on the fixed 45-day window
+- start with the smallest reversible changes only
+- save timestamped replay outputs for comparison
+Success by end of this phase:
+- every proposed market-state change can be tested offline before going live
+- no live gate/config change happens without replay evidence
+
+May 4 through May 15
+Priority: controlled market recovery
+Do now:
+- observe nhl_total in live Model Watch
+- run next recovery replays for the smallest reversible changes
+- likely order:
+  - nhl_total watch review
+  - nba_spread recovery replay
+  - mlb_moneyline recovery replay
+Success by end of this phase:
+- useful publish/watch volume starts to return
+- no fake Official breadth
+- each recovery step is evidence-based and reversible
+
+May 10 through May 22
+Priority: market classification for launch
+Do now:
+- classify every launch market as:
+  - Official
+  - Model Watch
+  - Disabled
+Markets to classify explicitly:
+- NBA moneyline
+- NBA spread
+- NBA total
+- NHL moneyline
+- NHL spread
+- NHL total
+- MLB moneyline
+- MLB spread
+- MLB total
+Success by end of this phase:
+- every market has a defined launch state
+- no market is Official just because it was in the roadmap
+
+May 15 through May 27
+Priority: product polish
+Do now:
+- polish Today’s Picks
+- ensure Official vs Model Watch labeling is explicit
+- confirm Performance / History language matches actual tracking rules
+- verify auth / member / mobile / payment flows
+- remove stale or misleading messaging
+Success by end of this phase:
+- the app feels intentional and trustworthy
+- no confusing PASS/disabled internals dominate the user experience
+
+May 27 through June 1
+Priority: launch lock
+Do now:
+- freeze core model/gate changes except critical fixes
+- run daily smoke tests
+- run daily CLV health checks
+- do one final market-state review
+Success by launch:
+- stable production
+- honest Official / Model Watch / Disabled structure
+- at least 1–2 markets with defensible positive signals
+- all remaining markets intentionally classified
+
+Do now
+- verify post-deploy forward CLV on newly settled rows
+- keep nhl_total in Model Watch and evaluate it
+- use replay before any more live market changes
+- classify every market for launch
+- keep the public story honest
+
+Do later
+- validation-cron split for West Coast settlement freshness
+- historical odds backfill only if/when the Odds API plan supports it
+- broader market expansion after replay + live evidence support it
+- premium pricing upgrades after proof exists
+
+Don’t do
+- do not reopen multiple markets at once
+- do not recalibrate blindly without replay evidence
+- do not rely on the public Performance page as the calibration tool
+- do not treat all leagues/markets as equally launch-ready
+- do not ship fake Official picks just to fill the page
+
+Expected launch shape
+By June 1 we should have:
+- a polished live app
+- trustworthy close capture / CLV pipeline
+- all target leagues/markets represented in an intentional state
+- a small set of Official markets
+- a broader Model Watch surface
+- disabled markets kept off until they earn their way back
+
+That is the path I want us executing against now.
