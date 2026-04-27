@@ -258,7 +258,6 @@ export const LEAGUE_MARKET_QUALITY = {
 export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   nhl_moneyline: true,
   nba_moneyline: true,
-  nhl_total: true,
   nba_spread: true,
   // NBA total: model-edge ceiling sits well below the per-market 10% floor
   // (max edge across 214 candidates over a 14d window: 6.8%). Bucket has
@@ -319,6 +318,15 @@ export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
 export const MARKET_MODEL_WATCH_ONLY: Partial<Record<string, boolean>> = {
   nhl_spread: true,
   mlb_moneyline: true,
+  // R1 recovery (2026-04-27): lifted from MARKET_DISABLED into watch-only
+  // after a 45-day read-only replay (validateGateChange.ts --proposal=R1)
+  // showed 132 candidates would surface, with 57.3% realized win rate on
+  // 82 decided games (Tier A 60.9%, Tier B 55.9%) and mean CLV +2.07%.
+  // Both watch-promotion bars were cleared (>=5 surfaced; mean CLV >= -2%).
+  // No Official picks are produced from this market — promotion to Official
+  // requires a fresh post-watch-window analysis on the post-2026-04-12
+  // line-shopping-fix sample only.
+  nhl_total: true,
 };
 
 /**
