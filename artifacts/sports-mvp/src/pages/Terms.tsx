@@ -35,7 +35,7 @@ export function Terms() {
           </Section>
 
           <Section title="2. Description of Service">
-            SportsMVP is a sports analytics platform that uses machine learning models to generate sports betting predictions for NBA and NHL markets. The Service provides:
+            SportsMVP is a sports analytics platform that uses machine learning models to generate sports betting predictions across NBA, NHL, and MLB markets. Picks publish as Official only when the underlying market clears our launch thresholds; other markets and signals may surface in a Model Watch lane while they earn promotion. The Service provides:
             <ul className="list-disc pl-5 space-y-1.5 mt-3">
               <li>Automated pick recommendations with tier grades (A, B, C)</li>
               <li>Expected value (EV) and edge calculations</li>
@@ -57,8 +57,7 @@ export function Terms() {
           <Section title="5. Subscription Plans and Billing">
             <ul className="list-disc pl-5 space-y-2 mt-2">
               <li><strong className="text-white">Free Tier:</strong> No credit card required. Limited to one top pick per day.</li>
-              <li><strong className="text-white">MVP ($19.99/month or $149/year):</strong> Full access to all picks, metrics, and history. Billed in advance. Annual plan saves approximately 38%.</li>
-              <li><strong className="text-white">MVP Pro ($39.99/month or $299/year):</strong> All MVP features plus alerts, notifications, and API access.</li>
+              <li><strong className="text-white">MVP ($19.99/month or $149/year):</strong> Full access to all picks, metrics, and history, including the Model Watch lane. Billed in advance. Annual plan saves approximately 38%.</li>
               <li><strong className="text-white">Auto-Renewal:</strong> Subscriptions automatically renew at the end of each billing period unless cancelled at least 24 hours before renewal.</li>
               <li><strong className="text-white">Refunds:</strong> Payments are generally non-refundable. We may grant refunds at our sole discretion for technical errors or exceptional circumstances. Contact support@sportsmvp.com within 48 hours of a billing issue.</li>
               <li><strong className="text-white">Cancellation:</strong> You may cancel your subscription at any time via your account settings. Cancellation takes effect at the end of the current billing period.</li>

@@ -1,6 +1,8 @@
 # Overview
 
-SportsMVP is a premium sports prediction and scoring engine focused on NBA and NHL betting markets (moneyline, spread, and total). It provides users with data-driven picks, performance analytics, and tools like a parlay builder. The platform aims to help users "Bet Like an MVP" by offering sophisticated predictive models and clear insights into betting opportunities, including expected value (EV) and edge percentages. The project uses live game odds from The Odds API and is built as a pnpm workspace monorepo.
+SportsMVP is a premium sports prediction and scoring engine covering NBA, NHL, and MLB betting markets. Picks publish as Official only when the underlying market clears the launch thresholds (calibration, edge, CLV); newer or recovering markets surface in a separate Model Watch lane while they earn promotion. The platform provides data-driven picks, performance analytics, and tools like a parlay builder, with expected value (EV) and edge percentages exposed on every pick. Live odds come from The Odds API. Built as a pnpm workspace monorepo.
+
+Pricing is launched at two tiers: a Free Guest Pass (one delayed Tier-A pick + public history) and Members at $19.99/mo or $149/yr (full slate including the Model Watch lane). The legacy `mvp_pro` tier ($39.99 "Inner Circle") is retired from new acquisition — backend types and webhook handling for it remain so existing subscriptions continue to render correctly, but `/stripe/prices` filters it out and `/stripe/checkout` rejects it with HTTP 410.
 
 # User Preferences
 

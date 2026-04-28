@@ -102,7 +102,7 @@ function HeroSection({ stats }: { stats: ReturnType<typeof buildStats> }) {
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#FFC107]/30 bg-[#FFC107]/5 mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-[#FFC107] animate-pulse" />
             <span className="text-xs font-bold text-[#FFC107] uppercase tracking-widest">
-              Live Models · NBA + NHL
+              Live Models · NBA · NHL · MLB
             </span>
           </div>
 
@@ -341,11 +341,13 @@ function TodaysTopPick() {
             ) : (
               <div className="bg-[#060D1F] border border-dashed border-[#FFC107]/20 p-10 text-center rounded-sm">
                 <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-2">
-                  Awaiting Today's Slate
+                  Awaiting Today's Official Slate
                 </div>
                 <p className="text-white/50 text-sm">
-                  No Tier-A play has cleared the threshold yet today. The model
-                  re-scores every 10 minutes — check back, or sign up to be notified.
+                  No Tier-A Official play has cleared today's threshold yet.
+                  Members can still see the full Model Watch lane — picks the
+                  model surfaces in markets that are still earning their
+                  Official promotion. The slate re-scores every 10 minutes.
                 </p>
               </div>
             )}
@@ -381,9 +383,9 @@ function MethodologySection() {
     {
       step: "03",
       title: "Tiered Grading",
-      desc: "Surviving plays are tiered A / B / C by composite rank score. Every published pick is graded against the final score the next morning — wins, losses, pushes, and CLV are all public.",
+      desc: "Every candidate is tiered A / B / C by composite rank score. Markets only earn the Official label when calibration, edge, and CLV consistently clear our launch thresholds — newer or recovering markets surface in a separate Model Watch lane, visible to members and graded the same way. Every result is published the next morning.",
       icon: Shield,
-      meta: ["A/B/C tiers", "CLV tracked"],
+      meta: ["A/B/C tiers", "Official + Model Watch lanes", "CLV tracked"],
     },
   ];
 
@@ -575,7 +577,8 @@ function MembershipSection() {
       ctaHref: "/subscribe",
       ctaStyle: "bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F]",
       features: [
-        { ok: true, text: "Every Tier A / B / C pick, every day" },
+        { ok: true, text: "Every Official Tier A / B / C pick, every day" },
+        { ok: true, text: "Full Model Watch lane while markets earn promotion" },
         { ok: true, text: "Full edge, EV, model & market probability" },
         { ok: true, text: "CLV tracked on every pick" },
         { ok: true, text: "Best line across all sportsbooks" },
@@ -584,27 +587,6 @@ function MembershipSection() {
       ],
       highlight: true,
       badge: "Most Popular",
-    },
-    {
-      name: "Inner Circle",
-      tagline: "Programmatic access for serious analysts.",
-      billingNote: "Billed as MVP Pro",
-      price: "$39.99",
-      priceUnit: "/ mo",
-      priceMeta: "Or $299 billed annually",
-      cta: "Join Inner Circle",
-      ctaHref: "/subscribe",
-      ctaStyle: "border border-white hover:bg-white hover:text-[#060D1F] text-white",
-      features: [
-        { ok: true, text: "Everything in Members" },
-        { ok: true, text: "Email alerts on every Tier-A surface" },
-        { ok: true, text: "Line-movement notifications" },
-        { ok: true, text: "Early publish access (before public)" },
-        { ok: true, text: "Programmatic API access" },
-        { ok: true, text: "Priority support" },
-      ],
-      highlight: false,
-      badge: null,
     },
   ];
 
@@ -632,7 +614,7 @@ function MembershipSection() {
           </div>
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-8 items-stretch">
+        <div className="grid md:grid-cols-2 gap-8 items-stretch max-w-4xl mx-auto">
           {tiers.map((tier) => (
             <div
               key={tier.name}
@@ -714,8 +696,10 @@ function LandingFooter() {
             </div>
             <p className="text-white/40 text-sm leading-relaxed max-w-sm">
               SportsMVP is a data-driven sports analytics platform. We use calibrated
-              machine-learning models to identify positive expected-value plays in NBA
-              and NHL markets, and publish every result.
+              machine-learning models across NBA, NHL, and MLB. Picks publish as
+              Official only when their market clears our launch thresholds — others
+              surface in a Model Watch lane while they earn promotion. Every result
+              is graded publicly.
             </p>
             <p className="text-white/25 text-xs mt-4">
               For entertainment and informational purposes only. Always wager responsibly.

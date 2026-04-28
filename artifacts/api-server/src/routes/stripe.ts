@@ -6,6 +6,15 @@ import { getUncachableStripeClient } from '../stripeClient';
 
 const router = Router();
 
+/**
+ * Tiers that may not be acquired by new checkouts. Backend continues to
+ * recognize these tiers on existing subscriptions (account display, webhook
+ * sync, etc.) but they are removed from the public price list and rejected
+ * by the checkout endpoint. As of the launch-polish pass, mvp_pro ($39.99
+ * "Inner Circle") is the only blocked tier — sales of it are retired.
+ */
+const BLOCKED_TIERS_FOR_NEW_CHECKOUT = new Set(['mvp_pro']);
+
 function getBaseUrl(req: any): string {
   const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
   if (domain) return `https://${domain}/sports-mvp`;
@@ -22,7 +31,10 @@ router.get('/stripe/prices', async (_req, res) => {
     ]);
 
     // Only include SportsMVP products (they have a tier metadata field)
-    const sportProducts = productsRes.data.filter(p => p.metadata?.tier);
+    // and exclude any tier retired from new acquisition.
+    const sportProducts = productsRes.data.filter(
+      p => p.metadata?.tier && !BLOCKED_TIERS_FOR_NEW_CHECKOUT.has(p.metadata.tier)
+    );
 
     const productMap = new Map<string, any>();
     for (const p of sportProducts) {
@@ -65,6 +77,21 @@ router.post('/stripe/checkout', async (req, res) => {
   if (!priceId) return res.status(400).json({ error: 'priceId required' });
 
   try {
+    // Reject any priceId whose product belongs to a tier retired from new
+    // acquisition. This is the server-side gate that backstops the public
+    // price list filter — a client posting a known-but-blocked priceId
+    // (e.g. a saved bookmark for the old mvp_pro plan) cannot create a
+    // checkout session for it.
+    const stripe = await getUncachableStripeClient();
+    const price = await stripe.prices.retrieve(priceId, { expand: ['product'] });
+    const product = typeof price.product === 'object' && price.product && !('deleted' in price.product)
+      ? price.product
+      : null;
+    const tier = product?.metadata?.tier;
+    if (tier && BLOCKED_TIERS_FOR_NEW_CHECKOUT.has(tier)) {
+      return res.status(410).json({ error: 'This plan is no longer available for new subscriptions.' });
+    }
+
     const user = await storage.getUser(userId);
     const url = await stripeService.createCheckoutSession(userId, user?.email ?? undefined, priceId, getBaseUrl(req));
     return res.json({ url });

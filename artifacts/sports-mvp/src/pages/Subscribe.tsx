@@ -121,8 +121,7 @@ export function Subscribe() {
   });
 
   const products = data?.products ?? [];
-  const mvp = products.find(p => p.metadata?.tier === 'mvp' || p.name?.toLowerCase().includes('mvp') && !p.name?.toLowerCase().includes('pro'));
-  const mvpPro = products.find(p => p.metadata?.tier === 'mvp_pro' || p.name?.toLowerCase().includes('pro'));
+  const mvp = products.find(p => p.metadata?.tier === 'mvp' || (p.name?.toLowerCase().includes('mvp') && !p.name?.toLowerCase().includes('pro')));
 
   function getPrice(product: Product | undefined, interval: string) {
     return product?.prices.find(p => p.recurring?.interval === interval);
@@ -141,7 +140,7 @@ export function Subscribe() {
 
   return (
     <PageLayout title="Choose your level of access." subtitle="Start free. Upgrade when the picks prove themselves. Cancel any time." tagline="MATH, NOT MYSTIQUE.">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
         <PlanCard
           name="Guest Pass"
           tierKey="free"
@@ -161,7 +160,8 @@ export function Subscribe() {
           billingNote="Billed as MVP"
           description="Full daily slate plus the math behind every pick."
           features={[
-            "Every Tier A / B / C pick, every day",
+            "Every Official Tier A / B / C pick, every day",
+            "Full Model Watch lane while markets earn promotion",
             "Full edge, EV, model & market probability",
             "CLV tracked on every pick",
             "Best line across all sportsbooks",
@@ -171,26 +171,6 @@ export function Subscribe() {
           monthlyPrice={getPrice(mvp, 'month')}
           yearlyPrice={getPrice(mvp, 'year')}
           highlight
-          currentTier={tier}
-          onSelect={handleSelect}
-          loading={loading}
-          pricesLoading={pricesLoading}
-        />
-        <PlanCard
-          name="Inner Circle"
-          tierKey="mvp_pro"
-          billingNote="Billed as MVP Pro"
-          description="Programmatic access for serious analysts."
-          features={[
-            "Everything in Members",
-            "Email alerts on every Tier-A surface",
-            "Line-movement notifications",
-            "Early publish access (before public)",
-            "Programmatic API access",
-            "Priority support",
-          ]}
-          monthlyPrice={getPrice(mvpPro, 'month')}
-          yearlyPrice={getPrice(mvpPro, 'year')}
           currentTier={tier}
           onSelect={handleSelect}
           loading={loading}
