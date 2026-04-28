@@ -10,7 +10,14 @@
  *
  * Usage:
  *   tsx src/scripts/validateGateChange.ts --proposal=R1
+ *   tsx src/scripts/validateGateChange.ts --proposal=R2
  *   tsx src/scripts/validateGateChange.ts --proposal=R1 --window-start=2026-03-12 --window-end=2026-04-27
+ *
+ * Proposal "R2" demonstrates the in-memory sigmoidA override path: the proposed
+ * sigmoidA value is applied to model_prob_raw via the production calibration
+ * formula, edge/EV/rank_score are recomputed against market_prob_fair and
+ * publish_odds (also production formulas), then the gate-replay runs as
+ * normal. No DB write, no live config touch.
  *
  * STRICTLY READ-ONLY:
  *   - No INSERT / UPDATE / DELETE on any table.
@@ -42,9 +49,18 @@ import {
   DEFAULT_ODDS_RANGE,
   ODDS_RANGE_OVERRIDE,
   ODDS_RANGE_GUARDRAIL_LEAGUES,
+  RANK_WEIGHTS,
+  MAX_EV_CAP,
+  MAX_EDGE_CAP,
 } from "../config/scoringModelConfig";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { computeClvWritebackValues } from "../scoring/clvWriteback";
+import {
+  calibrateProb,
+  getCalibrationParams,
+  getCalibrationConfidence,
+} from "../scoring/calibration";
+import { computeEdge, computeEV } from "../scoring/expectedValue";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -68,7 +84,7 @@ function parseArgs(): Args {
     else if (a.startsWith("--window-end=")) args.windowEnd = a.slice("--window-end=".length);
     else if (a === "--help" || a === "-h") {
       console.log(
-        "Usage: tsx src/scripts/validateGateChange.ts --proposal=R1 [--window-start=YYYY-MM-DD] [--window-end=YYYY-MM-DD]"
+        "Usage: tsx src/scripts/validateGateChange.ts --proposal=R1|R2 [--window-start=YYYY-MM-DD] [--window-end=YYYY-MM-DD]"
       );
       process.exit(0);
     }
@@ -85,6 +101,15 @@ interface GateConfig {
   marketWatchOnly: Record<string, boolean>;
   marketMinEdge: Record<string, number>;
   tierAOverride: Record<string, number>;
+  /**
+   * In-memory sigmoidA override per `${league}_${marketType}` key. When a key
+   * has an entry here AND the production calibration method for that market
+   * is "sigmoid", the replay recomputes calibrated_prob → edge → ev →
+   * rank_score from `model_prob_raw` using the override value (other params
+   * inherit from production). Markets without an entry use the persisted
+   * edge/ev/rank_score values directly.
+   */
+  sigmoidAOverride: Record<string, number>;
 }
 
 function baselineConfig(): GateConfig {
@@ -93,6 +118,7 @@ function baselineConfig(): GateConfig {
     marketWatchOnly: { ...(MARKET_MODEL_WATCH_ONLY as Record<string, boolean>) },
     marketMinEdge: { ...(MARKET_MIN_EDGE as Record<string, number>) },
     tierAOverride: { ...(TIER_A_THRESHOLD_OVERRIDE as Record<string, number>) },
+    sigmoidAOverride: {},
   };
 }
 
@@ -106,6 +132,7 @@ function applyProposal(name: string, base: GateConfig): GateConfig {
     marketWatchOnly: { ...base.marketWatchOnly },
     marketMinEdge: { ...base.marketMinEdge },
     tierAOverride: { ...base.tierAOverride },
+    sigmoidAOverride: { ...base.sigmoidAOverride },
   };
   switch (name) {
     case "R1":
@@ -113,8 +140,22 @@ function applyProposal(name: string, base: GateConfig): GateConfig {
       cfg.marketDisabled.nhl_total = false;
       cfg.marketWatchOnly.nhl_total = true;
       break;
+    case "R2":
+      // NBA spread, staged recovery (Watch only, no Official):
+      //   1. Partial sigmoidA recovery: 0.85 → 0.92 (loosens compression
+      //      toward 0.5, lifting calibrated probabilities — and therefore
+      //      edge / EV / rank_score — back toward the un-shrunk model
+      //      output without fully reverting the post-fix correction).
+      //   2. Lift gate: MARKET_DISABLED → MARKET_MODEL_WATCH_ONLY.
+      // MARKET_MIN_EDGE.nba_spread (0.05) and TIER_A_THRESHOLD_OVERRIDE
+      // .nba_spread (0.95) are intentionally unchanged — this is the
+      // smallest staged change that exercises both pieces of the recovery.
+      cfg.sigmoidAOverride.nba_spread = 0.92;
+      cfg.marketDisabled.nba_spread = false;
+      cfg.marketWatchOnly.nba_spread = true;
+      break;
     default:
-      console.error(`ERROR: unknown proposal '${name}' (supported: R1)`);
+      console.error(`ERROR: unknown proposal '${name}' (supported: R1, R2)`);
       process.exit(2);
   }
   return cfg;
@@ -130,6 +171,10 @@ interface CandidateForReplay {
   ev: number;
   rankScore: number;
   marketQuality: number;
+  /** Raw model probability persisted on candidate_bets — input to recompute under sigmoidA override. */
+  modelProbRaw: number;
+  /** Fair market probability persisted on candidate_bets — second input to edge recompute. */
+  marketProbFair: number;
 }
 
 interface ReplayOutcome {
@@ -152,9 +197,64 @@ interface ReplayOutcome {
    * (raw tier is A/B/C AND market is NOT in watch-only).
    */
   officialSurfaced: boolean;
+  /**
+   * Edge / EV / rank_score values actually used by the gate logic for this
+   * outcome. These equal the persisted values for proposals that do NOT
+   * touch calibration (e.g. R1). For sigmoidA-override proposals (e.g. R2)
+   * they are the recomputed values from applySigmoidOverride.
+   */
+  effectiveEdge: number;
+  effectiveEv: number;
+  effectiveRankScore: number;
 }
 
-function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome {
+/**
+ * Apply a sigmoidA override (if configured for the candidate's market) by
+ * recomputing calibrated_prob → edge → ev → rank_score from model_prob_raw,
+ * using the production calibration / EV / rank formulas verbatim. Returns a
+ * NEW candidate object with the recomputed fields; the input is not mutated.
+ *
+ * Returns the original candidate unchanged if:
+ *   - no override is configured for this market, OR
+ *   - production calibration method for this market is not "sigmoid"
+ *     (sigmoidA only meaningful for sigmoid; isotonic/none are silently
+ *     no-op'd to keep the harness safe to point at any market).
+ *
+ * NOTE: market_quality is taken as-persisted (it is a market-microstructure
+ * signal that does NOT depend on calibration). calibration_confidence is
+ * recomputed via getCalibrationConfidence(league, market, model_prob_raw)
+ * but is in practice unchanged under a sigmoidA-only swap (it depends on
+ * model_prob_raw, not on the calibrated value).
+ */
+function applySigmoidOverride(c: CandidateForReplay, cfg: GateConfig): CandidateForReplay {
+  const marketKey = `${c.league}_${c.marketType}`;
+  const overrideA = cfg.sigmoidAOverride[marketKey];
+  if (overrideA == null) return c;
+  const baseParams = getCalibrationParams(c.league, c.marketType);
+  if (baseParams.method !== "sigmoid") return c;
+
+  const overrideParams = { ...baseParams, sigmoidA: overrideA };
+  const newCalibrated = calibrateProb(c.modelProbRaw, overrideParams);
+  const newEdge = computeEdge(newCalibrated, c.marketProbFair);
+  // Mirror production parity: scorePicks.ts:198/252/314 caps EV at MAX_EV_CAP
+  // before persistence, so the recompute must do the same to be a faithful
+  // replay (matters for `effectiveEv` reporting; rank normalization already
+  // saturates at the cap so tier outcomes are unaffected either way).
+  const newEv = Math.min(MAX_EV_CAP, computeEV(newCalibrated, c.publishOdds));
+  const calibConfidence = getCalibrationConfidence(c.league, c.marketType, c.modelProbRaw);
+  const normEv = newEv > 0 ? Math.min(1, newEv / MAX_EV_CAP) : 0;
+  const normEdge = newEdge > 0 ? Math.min(1, newEdge / MAX_EDGE_CAP) : 0;
+  const newRank =
+    RANK_WEIGHTS.ev * normEv +
+    RANK_WEIGHTS.edge * normEdge +
+    RANK_WEIGHTS.calibrationConfidence * calibConfidence +
+    RANK_WEIGHTS.marketLiquidityConfidence * c.marketQuality;
+
+  return { ...c, edge: newEdge, ev: newEv, rankScore: newRank };
+}
+
+function replayAssignTier(c0: CandidateForReplay, cfg: GateConfig): ReplayOutcome {
+  const c = applySigmoidOverride(c0, cfg);
   const marketKey = `${c.league}_${c.marketType}`;
   const guardrailEnabled = (ODDS_RANGE_GUARDRAIL_LEAGUES as readonly string[]).includes(c.league);
 
@@ -170,6 +270,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
         finalReason: "odds_out_of_range",
         surfaced: false,
         officialSurfaced: false,
+        effectiveEdge: c.edge,
+        effectiveEv: c.ev,
+        effectiveRankScore: c.rankScore,
       };
     }
   }
@@ -182,6 +285,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
       finalReason: "market_disabled",
       surfaced: false,
       officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
     };
   }
   // 3. market_quality_too_low.
@@ -193,6 +299,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
       finalReason: "market_quality_too_low",
       surfaced: false,
       officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
     };
   }
   // 4. MIN_EDGE (per-market override or global).
@@ -205,6 +314,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
       finalReason: "insufficient_edge",
       surfaced: false,
       officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
     };
   }
   // 5. MIN_EV.
@@ -216,6 +328,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
       finalReason: "negative_ev",
       surfaced: false,
       officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
     };
   }
 
@@ -240,6 +355,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
       finalReason: "rank_score_below_threshold",
       surfaced: false,
       officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
     };
   }
 
@@ -252,6 +370,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
       finalReason: "model_watch_only",
       surfaced: true, // surfaced in Model Watch dashboard
       officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
     };
   }
 
@@ -262,6 +383,9 @@ function replayAssignTier(c: CandidateForReplay, cfg: GateConfig): ReplayOutcome
     finalReason: rawReason,
     surfaced: true,
     officialSurfaced: true,
+    effectiveEdge: c.edge,
+    effectiveEv: c.ev,
+    effectiveRankScore: c.rankScore,
   };
 }
 
@@ -273,9 +397,24 @@ interface NewlySurfacedRow {
   side: string;
   publishOdds: number;
   publishLine: number | null;
+  /**
+   * As-PERSISTED edge / ev / rank_score from the candidate_bets row (i.e.
+   * the values that production cron computed under the live calibration).
+   * Retained for backward compatibility with R1 artifacts and for delta
+   * inspection vs the proposed values below.
+   */
   edge: number;
   ev: number;
   rankScore: number;
+  /**
+   * Edge / ev / rank_score the proposed gate logic actually used for THIS
+   * candidate. Equals the persisted values for proposals that do NOT touch
+   * calibration (R1). For sigmoidA-override proposals (R2) these are
+   * recomputed from model_prob_raw via applySigmoidOverride.
+   */
+  proposedEffectiveEdge: number;
+  proposedEffectiveEv: number;
+  proposedEffectiveRankScore: number;
   baselineFinalTier: Tier;
   baselineFinalReason: string | null;
   proposedRawTier: Tier;
@@ -402,6 +541,8 @@ async function main(): Promise<void> {
       ev: parseFloat(c.ev),
       rankScore: parseFloat(c.rankScore),
       marketQuality: parseFloat(c.marketQuality),
+      modelProbRaw: parseFloat(c.modelProbRaw),
+      marketProbFair: parseFloat(c.marketProbFair),
     };
 
     const baseOut = replayAssignTier(replayInput, baseCfg);
@@ -485,6 +626,9 @@ async function main(): Promise<void> {
       edge: parseFloat(c.edge),
       ev: parseFloat(c.ev),
       rankScore: parseFloat(c.rankScore),
+      proposedEffectiveEdge: propOut.effectiveEdge,
+      proposedEffectiveEv: propOut.effectiveEv,
+      proposedEffectiveRankScore: propOut.effectiveRankScore,
       baselineFinalTier: baseOut.finalTier,
       baselineFinalReason: baseOut.finalReason,
       proposedRawTier: propOut.rawTier,
