@@ -258,7 +258,10 @@ export const LEAGUE_MARKET_QUALITY = {
 export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
   nhl_moneyline: true,
   nba_moneyline: true,
-  nba_spread: true,
+  // nba_spread: lifted out of MARKET_DISABLED on 2026-04-28 (R2 recovery)
+  // and routed into MARKET_MODEL_WATCH_ONLY below alongside the calibration
+  // relaxation in calibration.ts (sigmoidA 0.85 → 0.92, version v3 → v4).
+  // No Official picks are produced from this market.
   // NBA total: model-edge ceiling sits well below the per-market 10% floor
   // (max edge across 214 candidates over a 14d window: 6.8%). Bucket has
   // been functionally dead — formal disable makes the state explicit and
@@ -327,6 +330,17 @@ export const MARKET_MODEL_WATCH_ONLY: Partial<Record<string, boolean>> = {
   // requires a fresh post-watch-window analysis on the post-2026-04-12
   // line-shopping-fix sample only.
   nhl_total: true,
+  // R2 recovery (2026-04-28): lifted from MARKET_DISABLED into watch-only
+  // alongside the calibration relaxation in calibration.ts (sigmoidA
+  // 0.85 → 0.92, version v3 → v4). Read-only replay (validateGateChange.ts
+  // --proposal=R2 over 2026-03-12 → 2026-04-27) surfaced 25 candidates with
+  // 56.0% realized win rate (Tier-A 10W-5L = 66.7% n=15, Tier-B 4W-6L =
+  // 40.0% n=10) and mean CLV +0.24pp (n=19). Both watch-promotion bars
+  // cleared (>=5 surfaced; mean CLV >= -2pp). No Official picks are
+  // produced from this market — promotion to Official requires the
+  // universal Tier-A floor (n>=75 graded picks) AND a fresh post-R2-window
+  // analysis on the post-2026-04-28 sample only.
+  nba_spread: true,
 };
 
 /**

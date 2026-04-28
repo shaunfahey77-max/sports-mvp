@@ -24,7 +24,12 @@ export const DEFAULT_CALIBRATION_PARAMS: Record<string, Record<string, Calibrati
     // model probabilities toward 0.5. POST evidence: meanModel 0.574 in the
     // [0.55,0.60) bucket realized 44.4% — overconfident by ~13pts. Sigmoid
     // with a<1 compresses without changing the rank ordering of picks.
-    spread: { method: "sigmoid", version: "v3", sigmoidA: 0.85, sigmoidB: 0.0 },
+    // R2 recovery (2026-04-28): relaxed sigmoidA 0.85 → 0.92 alongside the
+    // MARKET_DISABLED → MARKET_MODEL_WATCH_ONLY lift below. Read-only replay
+    // (validateGateChange.ts --proposal=R2 over 2026-03-12 → 2026-04-27)
+    // surfaced 25 candidates: 56.0% realized win rate (Tier-A 66.7% n=15,
+    // Tier-B 40.0% n=10), mean CLV +0.24pp (n=19). No promotion to Official.
+    spread: { method: "sigmoid", version: "v4", sigmoidA: 0.92, sigmoidB: 0.0 },
     // NBA totals: compressed toward 50% — model noise alone should not generate strong edges.
     total: { method: "isotonic", version: "v2", isotonicBuckets: nbaTotalIsotonicBuckets() },
   },
