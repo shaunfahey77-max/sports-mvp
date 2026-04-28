@@ -91,6 +91,51 @@ The frontend is a React + Vite application adhering to specific brand guidelines
 - **Rank Score**: `0.50 * norm_ev + 0.25 * norm_edge + 0.15 * calib_conf + 0.10 * mkt_quality`
 - **Tier Thresholds**: A (rank_score ≥ 0.65), B (≥ 0.50), C (≥ 0.35), PASS (< 0.35).
 
+# Pending Follow-Ups
+
+These are tracked here because the task-board follow-up slot for the
+launch-polish session was already exhausted by an unrelated prior phase.
+Any agent picking up SportsMVP work should treat them as live until done.
+
+## In-app consistency sweep for the NBA/NHL/MLB + Watch-lane launch messaging
+
+**Status:** approved by user, not yet started.
+**Why:** The launch-polish copy/pricing pass (April 28, 2026) updated the
+homepage, Subscribe page, and Terms to advertise NBA/NHL/MLB coverage and
+the Official-vs-Watch lane posture. Several member-only tools were
+intentionally out of that pass because they're feature work, not copy
+work. After launch, a Member opening these tools will see a credibility
+gap: marketing promises MLB and a Watch lane, but the in-app filters and
+pickers still show only NBA + NHL.
+
+**Done looks like:**
+- Every league filter / dropdown / picker in the member tools includes
+  MLB alongside NBA and NHL.
+- Default selection and "All leagues" behavior is sensible — don't
+  silently filter MLB out, don't show MLB rows that can never have data.
+- Empty states render correctly when MLB has no qualifying picks today,
+  consistent with the Official-vs-Watch posture the homepage describes.
+- A walk-through of each member page confirms nothing on screen
+  contradicts the homepage copy (no leftover "NBA & NHL only" labels,
+  tooltips, or help text).
+
+**Starting points (search the artifact for hardcoded `['nba','nhl']` or
+similar to catch anything missed):**
+- `artifacts/sports-mvp/src/pages/Tracker.tsx`
+- `artifacts/sports-mvp/src/pages/ParlayGenerator.tsx`
+- `artifacts/sports-mvp/src/components/AddBetPanel.tsx`
+- `artifacts/sports-mvp/src/pages/Performance.tsx`
+- `artifacts/sports-mvp/src/pages/Dashboard.tsx` (review for league-scoped copy/filters)
+- `artifacts/sports-mvp/src/pages/History.tsx` (same review)
+
+**Out of scope:**
+- Pricing changes (locked per user as of April 28, 2026).
+- Backend market enablement decisions — current
+  `MARKET_DISABLED` / `MARKET_MODEL_WATCH_ONLY` config in
+  `artifacts/api-server/src/config/scoringModelConfig.ts` is the source
+  of truth; the UI just needs to reflect MLB as a selectable filter
+  even when no Official MLB picks exist that day.
+
 # External Dependencies
 
 - **The Odds API**: Used for pulling live game odds and historical scores (`ODDS_API_KEY`).
