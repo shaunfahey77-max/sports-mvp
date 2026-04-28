@@ -63,7 +63,7 @@ function HistoryGuide({ open, onToggle }: { open: boolean; onToggle: () => void 
           {[
             {
               title: "Filtering",
-              body: "Filter by league, market, or tier to analyze segments — for example, Tier-A NHL moneylines vs NCAAM spreads.",
+              body: "Filter by league, market, or tier to analyze segments — for example, Tier-A picks within a single league or market.",
             },
             {
               title: "Reading Results",
@@ -134,6 +134,7 @@ export function History() {
             { value: "ALL", label: "All Leagues" },
             { value: "nba", label: "NBA" },
             { value: "nhl", label: "NHL" },
+            { value: "mlb", label: "MLB" },
             { value: "ncaam", label: "NCAAM" },
           ]} />
           <FilterSelect label="Market" value={market} onChange={(v) => setMarket(v as any)} options={[

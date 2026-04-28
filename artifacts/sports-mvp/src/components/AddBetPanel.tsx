@@ -8,7 +8,7 @@ import {
 } from "@/lib/betTracker";
 import { halfKellyStake } from "@/lib/kellyCalc";
 
-const LEAGUES = ["nba", "nhl"];
+const LEAGUES = ["nba", "nhl", "mlb"];
 const MARKETS = ["moneyline", "spread", "total", "parlay"];
 const SPORTSBOOK_OPTIONS = SPORTSBOOKS;
 

@@ -99,42 +99,33 @@ Any agent picking up SportsMVP work should treat them as live until done.
 
 ## In-app consistency sweep for the NBA/NHL/MLB + Watch-lane launch messaging
 
-**Status:** approved by user, not yet started.
-**Why:** The launch-polish copy/pricing pass (April 28, 2026) updated the
-homepage, Subscribe page, and Terms to advertise NBA/NHL/MLB coverage and
-the Official-vs-Watch lane posture. Several member-only tools were
-intentionally out of that pass because they're feature work, not copy
-work. After launch, a Member opening these tools will see a credibility
-gap: marketing promises MLB and a Watch lane, but the in-app filters and
-pickers still show only NBA + NHL.
+**Status:** DONE (2026-04-28, holding-pattern session).
+**What landed:**
+- `AddBetPanel.tsx`: `LEAGUES` constant now `["nba", "nhl", "mlb"]`.
+- `Tracker.tsx`: ledger league filter row includes `mlb`.
+- `ParlayGenerator.tsx`: league filter row includes `mlb`.
+- `History.tsx`: `FilterSelect` League options now
+  `[All, NBA, NHL, MLB, NCAAM]`. MLB added for the launch posture; NCAAM
+  retained so any historical NCAAM rows from earlier phases stay
+  filterable. Stale Filtering help text that named NCAAM was rewritten
+  to be league-agnostic.
+- `Performance.tsx`: `LEAGUE_COLORS` now includes `mlb: "#0E5C2E"`
+  alongside NBA/NHL/NCAAM, so any future Official MLB segment renders
+  with a distinct color.
+- `Dashboard.tsx`: reviewed; no hardcoded league pair found.
+- Ripgrep for hardcoded `["nba", "nhl"]`/`['nba','nhl']` in
+  `artifacts/sports-mvp/src/` returns no remaining hits.
+- Sports-mvp typecheck unchanged at baseline 17 errors (zero new).
 
-**Done looks like:**
-- Every league filter / dropdown / picker in the member tools includes
-  MLB alongside NBA and NHL.
-- Default selection and "All leagues" behavior is sensible — don't
-  silently filter MLB out, don't show MLB rows that can never have data.
-- Empty states render correctly when MLB has no qualifying picks today,
-  consistent with the Official-vs-Watch posture the homepage describes.
-- A walk-through of each member page confirms nothing on screen
-  contradicts the homepage copy (no leftover "NBA & NHL only" labels,
-  tooltips, or help text).
-
-**Starting points (search the artifact for hardcoded `['nba','nhl']` or
-similar to catch anything missed):**
-- `artifacts/sports-mvp/src/pages/Tracker.tsx`
-- `artifacts/sports-mvp/src/pages/ParlayGenerator.tsx`
-- `artifacts/sports-mvp/src/components/AddBetPanel.tsx`
-- `artifacts/sports-mvp/src/pages/Performance.tsx`
-- `artifacts/sports-mvp/src/pages/Dashboard.tsx` (review for league-scoped copy/filters)
-- `artifacts/sports-mvp/src/pages/History.tsx` (same review)
-
-**Out of scope:**
-- Pricing changes (locked per user as of April 28, 2026).
-- Backend market enablement decisions — current
-  `MARKET_DISABLED` / `MARKET_MODEL_WATCH_ONLY` config in
-  `artifacts/api-server/src/config/scoringModelConfig.ts` is the source
-  of truth; the UI just needs to reflect MLB as a selectable filter
-  even when no Official MLB picks exist that day.
+**Holding-pattern context (May-5 watch read locked in):**
+- Live config in `scoringModelConfig.ts` is READ-ONLY through 2026-05-05.
+- Companion docs landed in `.local/` for the launch period:
+  `launch-market-state.md` (full posture), `may-5-watch-read-runbook.md`
+  (exact T+7 read commands), `validation-cron-proposal.md` (parked).
+- Parked-but-implementation-ready stub:
+  `artifacts/api-server/src/services/validationCronService.ts`
+  is NOT imported anywhere; wiring it on is a one-line change in a
+  future, explicit greenlight commit.
 
 # External Dependencies
 

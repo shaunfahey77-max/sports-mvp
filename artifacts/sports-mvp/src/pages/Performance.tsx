@@ -13,7 +13,7 @@ const TIER_COLORS: Record<string, string> = {
   A: "#FFC107", B: "#4488FF", C: "#7E57C2", PASS: "#1A3066",
 };
 const LEAGUE_COLORS: Record<string, string> = {
-  nba: "#C9082A", nhl: "#006BB6", ncaam: "#CC8800",
+  nba: "#C9082A", nhl: "#006BB6", mlb: "#0E5C2E", ncaam: "#CC8800",
 };
 const MARKET_COLORS: Record<string, string> = {
   moneyline: "#0033A0", spread: "#7E57C2", total: "#00897B",

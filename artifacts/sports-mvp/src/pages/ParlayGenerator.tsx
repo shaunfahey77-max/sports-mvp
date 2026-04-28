@@ -472,7 +472,7 @@ export function ParlayGenerator() {
           <div>
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Filter:</span>
-              {[null, "nba", "nhl"].map((league) => (
+              {[null, "nba", "nhl", "mlb"].map((league) => (
                 <button
                   key={league ?? "all"}
                   onClick={() => setLeagueFilter(league)}

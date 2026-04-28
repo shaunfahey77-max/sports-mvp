@@ -434,7 +434,7 @@ export function Tracker() {
         <span className="text-xs font-bold font-display uppercase tracking-wider text-muted-foreground mr-2">
           Ledger
         </span>
-        {[null, 'nba', 'nhl'].map(l => (
+        {[null, 'nba', 'nhl', 'mlb'].map(l => (
           <button key={l ?? 'all'} onClick={() => setLeagueFilter(l)}
             className={cn("px-2.5 py-1 rounded text-[10px] font-bold uppercase border transition-all",
               leagueFilter === l
