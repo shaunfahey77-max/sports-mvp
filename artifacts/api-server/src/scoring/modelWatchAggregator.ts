@@ -230,6 +230,67 @@ function toRecentPick(r: AggregatorRow): RecentPick {
 }
 
 /**
+ * Public Model-Watch summary shape, as returned by
+ * `GET /performance/model-watch` (sans `windowDays`, which the route owns).
+ *
+ * Keep this intentionally narrow — the public Performance page surfaces
+ * only Leans-graded / Win Rate / Mean CLV / Active markets. ROI, units,
+ * per-tier and per-market breakdowns are admin-only and live on
+ * `/admin/model-watch/performance`.
+ */
+export interface PublicModelWatchSummary {
+  leansGraded: number;
+  winRate: number;
+  meanClv: number;
+  clvSampleSize: number;
+  activeMarkets: number;
+  totalRegistryMarkets: number;
+}
+
+/**
+ * Build the public Model-Watch strip payload from a flat list of
+ * already-window-filtered, already-resolved rows and the registry.
+ *
+ * - leansGraded mirrors `aggregateRows().resolved` (wins + losses + pushes)
+ *   so the public count matches the same denominator the admin scoreboard
+ *   uses for ROI.
+ * - winRate / meanClv / clvSampleSize reuse `aggregateRows` so the math
+ *   (push exclusion, |delta| <= 0.20 CLV filter) is identical to the
+ *   admin scoreboard. The two surfaces can never silently diverge.
+ * - activeMarkets counts distinct `${league}_${market}` keys present in
+ *   the rows that ALSO appear as truthy entries in the registry. A row
+ *   from a market that has been demoted out of the registry is ignored
+ *   for this count (it would otherwise inflate the "N / M" headline).
+ * - totalRegistryMarkets = count of truthy registry entries.
+ */
+export function summarizeModelWatchRows(
+  rows: readonly AggregatorRow[],
+  registry: Partial<Record<string, boolean>>,
+): PublicModelWatchSummary {
+  const stats = aggregateRows(rows);
+
+  let totalRegistryMarkets = 0;
+  for (const v of Object.values(registry)) {
+    if (v) totalRegistryMarkets++;
+  }
+
+  const activeKeys = new Set<string>();
+  for (const r of rows) {
+    const key = `${r.league}_${r.market}`;
+    if (registry[key]) activeKeys.add(key);
+  }
+
+  return {
+    leansGraded: stats.resolved,
+    winRate: stats.winRate,
+    meanClv: stats.avgClv,
+    clvSampleSize: stats.clvSampleSize,
+    activeMarkets: activeKeys.size,
+    totalRegistryMarkets,
+  };
+}
+
+/**
  * Render a Model-Watch report as a Markdown string. Useful for pasting
  * into review docs / decision threads without bringing up the JSON
  * payload.

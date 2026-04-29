@@ -1,11 +1,25 @@
 import { useState } from "react";
-import { useGetPerformance, getGetPerformanceQueryKey, GetPerformanceWindow } from "@workspace/api-client-react";
+import {
+  useGetPerformance,
+  getGetPerformanceQueryKey,
+  useGetPerformanceModelWatch,
+  getGetPerformanceModelWatchQueryKey,
+  type ModelWatchSummary,
+} from "@workspace/api-client-react";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { formatPercentage, formatDecimal } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChevronDown, ChevronUp, TrendingUp, Activity, Target } from "lucide-react";
+import { ChevronDown, ChevronUp, TrendingUp, Activity, Target, FlaskConical } from "lucide-react";
+
+// Both /performance and /performance/model-watch accept the same window
+// values (14 / 30 / 45). The codegen produces two nominally-distinct
+// const enums (GetPerformanceWindow vs GetPerformanceModelWatchWindow)
+// that are structurally identical. Defining a single shared literal
+// union here lets the same `window` state flow into both hooks without
+// any `as unknown as` double-casts (Code Review #32 follow-up).
+type PerformanceWindow = 14 | 30 | 45;
 
 const SERIF = "'Playfair Display', serif";
 
@@ -51,6 +65,10 @@ function MethodologyDisclosure({ open, onToggle }: { open: boolean; onToggle: ()
               n: "04", title: "Tier Assignment",
               body: "Top-ranked picks above thresholds are tiered. A ≥ 0.65, B ≥ 0.50, C ≥ 0.35. Below 0.35 is PASS. Only A–C are published.",
             },
+            {
+              n: "05", title: "Model Watch Lane",
+              body: "A separate evaluation lane for markets that aren't yet trusted enough for the Official record (e.g. newly recovered or freshly recalibrated). Watch leans are graded the same way but never enter the numbers above — they live in their own summary at the bottom of this page.",
+            },
           ].map((item) => (
             <div key={item.n}>
               <div className="text-[#FFC107]/40 text-2xl font-bold mb-1" style={{ fontFamily: SERIF }}>
@@ -69,7 +87,7 @@ function MethodologyDisclosure({ open, onToggle }: { open: boolean; onToggle: ()
 }
 
 export function Performance() {
-  const [window, setWindow] = useState<GetPerformanceWindow>(30);
+  const [window, setWindow] = useState<PerformanceWindow>(30);
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
 
   const { data: metrics, isLoading } = useGetPerformance(
@@ -77,12 +95,20 @@ export function Performance() {
     { query: { queryKey: getGetPerformanceQueryKey({ window }) } }
   );
 
+  // Model Watch lane is a SEPARATE read against model_watch_results. It is
+  // never mixed into the metrics above and renders in its own visually
+  // muted section so it cannot be mistaken for the Official record.
+  const { data: watch, isLoading: watchLoading } = useGetPerformanceModelWatch(
+    { window },
+    { query: { queryKey: getGetPerformanceModelWatchQueryKey({ window }) } }
+  );
+
   return (
     <PageLayout>
       <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-[#1A3066]">
         <div>
           <div className="text-[#FFC107] text-[11px] font-bold tracking-[0.25em] uppercase mb-3">
-            Public Track Record
+            Official Picks — Public Track Record
           </div>
           <h1 className="text-4xl md:text-5xl font-bold text-white leading-tight" style={{ fontFamily: SERIF }}>
             Performance
@@ -90,10 +116,13 @@ export function Performance() {
           <p className="text-white/55 mt-3 text-base max-w-xl">
             Every pick graded the next morning. No cherry-picking. No hidden losers.
           </p>
+          <p className="text-white/45 mt-2 text-sm max-w-xl">
+            Model Watch leans are summarized separately below and never mixed into these numbers.
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-[10px] uppercase tracking-widest text-white/40">Window</span>
-          <Select value={window.toString()} onValueChange={(v) => setWindow(Number(v) as GetPerformanceWindow)}>
+          <Select value={window.toString()} onValueChange={(v) => setWindow(Number(v) as PerformanceWindow)}>
             <SelectTrigger className="w-[180px] bg-[#0D1B3E] border-[#1A3066] text-white">
               <SelectValue placeholder="Time Window" />
             </SelectTrigger>
@@ -223,6 +252,13 @@ export function Performance() {
               />
             </div>
           </section>
+
+          {/* MODEL WATCH (BETA) — visually muted, separate lane */}
+          <ModelWatchStrip
+            data={watch}
+            isLoading={watchLoading}
+            windowDays={window}
+          />
         </div>
       ) : (
         <div className="py-24 text-center border border-[#1A3066] rounded-sm bg-[#0D1B3E]/50">
@@ -348,6 +384,144 @@ function DistributionPanel({
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model Watch (Beta) — separate visual lane
+// ---------------------------------------------------------------------------
+//
+// Visually muted vs. the Official sections above (slate background, no gold
+// accents, BETA tag) so members cannot mistake these numbers for the
+// Official record. Sourced from the brand-new /performance/model-watch
+// endpoint — never from scored_picks / validation_metrics.
+
+export function ModelWatchStrip({
+  data,
+  isLoading,
+  windowDays,
+}: {
+  data: ModelWatchSummary | undefined;
+  isLoading: boolean;
+  windowDays: number;
+}) {
+  const isEmpty = !!data && data.leansGraded === 0;
+
+  return (
+    <section data-testid="model-watch-strip">
+      <div className="flex items-center gap-2 mb-5 text-[11px] font-bold uppercase tracking-[0.2em] text-white/40">
+        <span className="text-white/40"><FlaskConical size={12} /></span>
+        Model Watch — Live Evaluation Lane
+        <span className="ml-1 px-1.5 py-0.5 rounded-sm bg-white/10 text-white/70 text-[9px] tracking-[0.15em]">
+          BETA
+        </span>
+        <span className="flex-1 h-px bg-white/10 ml-2" />
+      </div>
+
+      <div className="rounded-sm border border-dashed border-white/15 bg-[#0A1530]/60 p-6">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-5">
+          <div className="max-w-2xl">
+            <p className="text-sm text-white/65 leading-relaxed">
+              A separate evaluation lane for markets that aren't yet trusted enough for the Official record.
+              These leans are graded the same way but live in their own scoreboard.
+            </p>
+            <p className="text-[11px] uppercase tracking-[0.18em] text-white/45 mt-3">
+              Does not count toward Official performance or history.
+            </p>
+          </div>
+          <div className="text-[10px] uppercase tracking-widest text-white/35 md:text-right">
+            Last {windowDays} days
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} className="h-24 rounded-sm bg-white/5" />
+            ))}
+          </div>
+        ) : !data ? (
+          <div className="text-white/45 text-sm py-2">
+            Model Watch summary is temporarily unavailable.
+          </div>
+        ) : isEmpty ? (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <WatchStat label="Leans Graded" value="—" />
+              <WatchStat label="Win Rate" value="—" />
+              <WatchStat label="Mean CLV" value="—" />
+              <WatchStat
+                label="Active Markets"
+                value={`${data.activeMarkets} / ${data.totalRegistryMarkets}`}
+                subLabel="active evaluation markets"
+              />
+            </div>
+            <p className="text-white/45 text-sm mt-5">
+              No graded Model Watch picks in this window yet.
+            </p>
+          </>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <WatchStat
+              label="Leans Graded"
+              value={data.leansGraded.toString()}
+              tooltip="Resolved Model Watch picks in the selected window (wins + losses + pushes). Pending picks are excluded."
+            />
+            <WatchStat
+              label="Win Rate"
+              value={formatPercentage(data.winRate)}
+              tooltip="wins / (wins + losses) on Model Watch picks. Pushes excluded — same convention as Official."
+            />
+            <WatchStat
+              label="Mean CLV"
+              value={
+                data.clvSampleSize > 0
+                  ? `${data.meanClv >= 0 ? "+" : ""}${formatPercentage(data.meanClv)}`
+                  : "—"
+              }
+              subLabel={data.clvSampleSize > 0 ? `n=${data.clvSampleSize}` : "no closing line data"}
+              tooltip="Average closing-line value on Watch picks. Same |delta| ≤ 0.20 filter as Official."
+            />
+            <WatchStat
+              label="Active Markets"
+              value={`${data.activeMarkets} / ${data.totalRegistryMarkets}`}
+              subLabel="active evaluation markets"
+              tooltip="Markets in the Model Watch registry that have at least one graded pick in the selected window, over the total Watch registry size."
+            />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function WatchStat({
+  label,
+  value,
+  subLabel,
+  tooltip,
+}: {
+  label: string;
+  value: string;
+  subLabel?: string;
+  tooltip?: string;
+}) {
+  return (
+    <div className="bg-[#0D1B3E]/60 border border-white/10 rounded-sm p-4">
+      <div className="text-[10px] uppercase tracking-widest text-white/40 mb-2 flex items-center">
+        {label}
+        {tooltip && <InfoTooltip content={tooltip} />}
+      </div>
+      <div
+        className="text-2xl font-bold leading-none text-white/90"
+        style={{ fontFamily: SERIF }}
+      >
+        {value}
+      </div>
+      {subLabel && (
+        <div className="text-[10px] text-white/40 mt-2">{subLabel}</div>
       )}
     </div>
   );

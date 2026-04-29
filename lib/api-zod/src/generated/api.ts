@@ -290,6 +290,11 @@ export const GetPerformanceResponse = zod.object({
   avgEdge: zod.number(),
   clvHitRate: zod.number(),
   avgClv: zod.number(),
+  clvSampleSize: zod
+    .number()
+    .describe(
+      "Number of picks in the window with usable closing-line data\n(the same population behind clvHitRate \/ avgClv). The UI uses\nthis as the gate for showing CLV stats — anything below 20\nshows an em-dash. Returned by `computeValidationMetrics`.\n",
+    ),
   brierScore: zod.number(),
   logLoss: zod.number(),
   passRate: zod.number(),
@@ -327,6 +332,57 @@ export const GetPerformanceHistoryResponseItem = zod.object({
 export const GetPerformanceHistoryResponse = zod.array(
   GetPerformanceHistoryResponseItem,
 );
+
+/**
+ * Read-only summary of the internal Model Watch lane, sourced from
+`model_watch_results`. This is a separate evaluation lane and is
+never mixed into Official Performance numbers.
+
+ * @summary Get Model Watch (Beta) summary for the public Performance page
+ */
+export const getPerformanceModelWatchQueryWindowDefault = 30;
+
+export const GetPerformanceModelWatchQueryParams = zod.object({
+  window: zod
+    .union([zod.literal(14), zod.literal(30), zod.literal(45)])
+    .default(getPerformanceModelWatchQueryWindowDefault),
+});
+
+export const GetPerformanceModelWatchResponse = zod
+  .object({
+    windowDays: zod.number(),
+    leansGraded: zod
+      .number()
+      .describe(
+        "Count of resolved Watch rows in the window (wins + losses + pushes).",
+      ),
+    winRate: zod
+      .number()
+      .describe(
+        "wins \/ (wins + losses); pushes excluded. 0 when no decided rows.",
+      ),
+    meanClv: zod
+      .number()
+      .describe(
+        "Mean clv_implied_delta over rows with non-null delta and |delta| <= 0.20.",
+      ),
+    clvSampleSize: zod
+      .number()
+      .describe(
+        "Sample size used for meanClv (rows that pass the |delta| <= 0.20 filter).",
+      ),
+    activeMarkets: zod
+      .number()
+      .describe(
+        "Count of distinct league_market keys (in MARKET_MODEL_WATCH_ONLY) with >= 1 graded row in the window.",
+      ),
+    totalRegistryMarkets: zod
+      .number()
+      .describe("Total count of truthy entries in MARKET_MODEL_WATCH_ONLY."),
+  })
+  .describe(
+    "Read-only Model Watch summary for the public Performance page.\nSourced from `model_watch_results` and intentionally narrow — no\nROI, no units, no per-tier or per-market breakdown.\n",
+  );
 
 /**
  * @summary Start a 45-day simulation run

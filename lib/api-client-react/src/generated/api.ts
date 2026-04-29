@@ -22,12 +22,14 @@ import type {
   GameSnapshot,
   GenerateSnapshotsRequest,
   GetPerformanceHistoryParams,
+  GetPerformanceModelWatchParams,
   GetPerformanceParams,
   HealthStatus,
   ListCandidatesParams,
   ListPicksParams,
   ListPicksResponse,
   ListSnapshotsParams,
+  ModelWatchSummary,
   PerformanceMetrics,
   PipelineResult,
   ScoreDateRequest,
@@ -936,6 +938,113 @@ export function useGetPerformanceHistory<
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetPerformanceHistoryQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * Read-only summary of the internal Model Watch lane, sourced from
+`model_watch_results`. This is a separate evaluation lane and is
+never mixed into Official Performance numbers.
+
+ * @summary Get Model Watch (Beta) summary for the public Performance page
+ */
+export const getGetPerformanceModelWatchUrl = (
+  params?: GetPerformanceModelWatchParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/performance/model-watch?${stringifiedParams}`
+    : `/api/performance/model-watch`;
+};
+
+export const getPerformanceModelWatch = async (
+  params?: GetPerformanceModelWatchParams,
+  options?: RequestInit,
+): Promise<ModelWatchSummary> => {
+  return customFetch<ModelWatchSummary>(
+    getGetPerformanceModelWatchUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetPerformanceModelWatchQueryKey = (
+  params?: GetPerformanceModelWatchParams,
+) => {
+  return [`/api/performance/model-watch`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetPerformanceModelWatchQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPerformanceModelWatch>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPerformanceModelWatchParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPerformanceModelWatch>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPerformanceModelWatchQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPerformanceModelWatch>>
+  > = ({ signal }) =>
+    getPerformanceModelWatch(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPerformanceModelWatch>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPerformanceModelWatchQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPerformanceModelWatch>>
+>;
+export type GetPerformanceModelWatchQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get Model Watch (Beta) summary for the public Performance page
+ */
+
+export function useGetPerformanceModelWatch<
+  TData = Awaited<ReturnType<typeof getPerformanceModelWatch>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: GetPerformanceModelWatchParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPerformanceModelWatch>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPerformanceModelWatchQueryOptions(params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

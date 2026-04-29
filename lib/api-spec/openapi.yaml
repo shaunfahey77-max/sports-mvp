@@ -277,6 +277,30 @@ paths:
                 items:
                   $ref: "#/components/schemas/ValidationMetricRecord"
 
+  /performance/model-watch:
+    get:
+      operationId: getPerformanceModelWatch
+      tags: [performance]
+      summary: Get Model Watch (Beta) summary for the public Performance page
+      description: |
+        Read-only summary of the internal Model Watch lane, sourced from
+        `model_watch_results`. This is a separate evaluation lane and is
+        never mixed into Official Performance numbers.
+      parameters:
+        - name: window
+          in: query
+          schema:
+            type: integer
+            enum: [14, 30, 45]
+            default: 30
+      responses:
+        "200":
+          description: Model Watch summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelWatchSummary"
+
   /simulate:
     post:
       operationId: startSimulation
@@ -635,6 +659,13 @@ components:
           type: number
         avgClv:
           type: number
+        clvSampleSize:
+          type: integer
+          description: |
+            Number of picks in the window with usable closing-line data
+            (the same population behind clvHitRate / avgClv). The UI uses
+            this as the gate for showing CLV stats — anything below 20
+            shows an em-dash. Returned by `computeValidationMetrics`.
         brierScore:
           type: number
         logLoss:
@@ -669,6 +700,7 @@ components:
         - avgEdge
         - clvHitRate
         - avgClv
+        - clvSampleSize
         - brierScore
         - logLoss
         - passRate
@@ -676,6 +708,42 @@ components:
         - tierBreakdown
         - leagueBreakdown
         - marketBreakdown
+
+    ModelWatchSummary:
+      type: object
+      description: |
+        Read-only Model Watch summary for the public Performance page.
+        Sourced from `model_watch_results` and intentionally narrow — no
+        ROI, no units, no per-tier or per-market breakdown.
+      properties:
+        windowDays:
+          type: integer
+        leansGraded:
+          type: integer
+          description: Count of resolved Watch rows in the window (wins + losses + pushes).
+        winRate:
+          type: number
+          description: wins / (wins + losses); pushes excluded. 0 when no decided rows.
+        meanClv:
+          type: number
+          description: Mean clv_implied_delta over rows with non-null delta and |delta| <= 0.20.
+        clvSampleSize:
+          type: integer
+          description: Sample size used for meanClv (rows that pass the |delta| <= 0.20 filter).
+        activeMarkets:
+          type: integer
+          description: Count of distinct league_market keys (in MARKET_MODEL_WATCH_ONLY) with >= 1 graded row in the window.
+        totalRegistryMarkets:
+          type: integer
+          description: Total count of truthy entries in MARKET_MODEL_WATCH_ONLY.
+      required:
+        - windowDays
+        - leansGraded
+        - winRate
+        - meanClv
+        - clvSampleSize
+        - activeMarkets
+        - totalRegistryMarkets
 
     ValidationMetricRecord:
       type: object

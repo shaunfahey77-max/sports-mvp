@@ -1,11 +1,24 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { scoredPicksTable, validationMetricsTable, candidateBetsTable } from "@workspace/db";
+import {
+  scoredPicksTable,
+  validationMetricsTable,
+  candidateBetsTable,
+  modelWatchResultsTable,
+} from "@workspace/db";
 import { eq, and, gte, desc, ne, count, inArray, or, isNull } from "drizzle-orm";
+import { GetPerformanceModelWatchQueryParams } from "@workspace/api-zod";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { americanToDecimal } from "../scoring/marketProb";
-import { DATA_QUALITY_PRE_FIX } from "../config/scoringModelConfig";
+import {
+  DATA_QUALITY_PRE_FIX,
+  MARKET_MODEL_WATCH_ONLY,
+} from "../config/scoringModelConfig";
 import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
+import {
+  summarizeModelWatchRows,
+  type AggregatorRow,
+} from "../scoring/modelWatchAggregator";
 
 // Production leagues surfaced in performance metrics by default.
 // NCAAM is experimental (hash-noise models) and must be opted into explicitly.
@@ -161,5 +174,84 @@ router.get("/performance/history", async (req, res): Promise<void> => {
 // table (with the `data_quality` label distinguishing pre-fix rows) and
 // are accessible only via internal database tooling — keeping the public
 // HTTP surface free of any path that could leak the contaminated history.
+
+// ---------------------------------------------------------------------------
+// Public Model-Watch summary
+// ---------------------------------------------------------------------------
+//
+// Read-only summary strip surfaced on the public Performance page. The
+// scored_picks / validation_metrics queries above stay untouched —
+// Model-Watch data flows ONLY through this endpoint and the wall between
+// Official and Watch is preserved (separate table, separate query,
+// separate visual lane in the UI).
+//
+// Math is shared with the admin scoreboard via `aggregateRows` so the
+// public surface and the admin surface can never disagree.
+
+router.get("/performance/model-watch", async (req, res): Promise<void> => {
+  // Express delivers query params as strings (e.g. `?window=30` →
+  // `req.query.window === "30"`). The generated Zod schema uses literal
+  // numbers (14 / 30 / 45), so coerce a present `window` to a number
+  // before validation. A missing `window` falls through to the schema
+  // default (30).
+  const rawWindow = req.query.window;
+  const queryForParse: Record<string, unknown> = { ...req.query };
+  if (typeof rawWindow === "string" && rawWindow.length > 0) {
+    const asNum = Number(rawWindow);
+    if (Number.isFinite(asNum)) {
+      queryForParse.window = asNum;
+    }
+  }
+  const parsed = GetPerformanceModelWatchQueryParams.safeParse(queryForParse);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const window = parsed.data.window;
+
+  const cutoffDate = new Date();
+  cutoffDate.setUTCDate(cutoffDate.getUTCDate() - window);
+  const cutoff = cutoffDate.toISOString().split("T")[0];
+
+  // Filter to resolved rows only — the public strip reports "Leans graded",
+  // not pending. This matches the way the Official Performance numbers are
+  // built (validate-then-aggregate).
+  const rows = await db
+    .select({
+      league: modelWatchResultsTable.league,
+      market: modelWatchResultsTable.market,
+      tier: modelWatchResultsTable.tier,
+      publishOdds: modelWatchResultsTable.publishOdds,
+      edge: modelWatchResultsTable.edge,
+      ev: modelWatchResultsTable.ev,
+      result: modelWatchResultsTable.result,
+      clvImpliedDelta: modelWatchResultsTable.clvImpliedDelta,
+    })
+    .from(modelWatchResultsTable)
+    .where(
+      and(
+        gte(modelWatchResultsTable.date, cutoff),
+        inArray(modelWatchResultsTable.result, ["win", "loss", "push"]),
+      ),
+    );
+
+  const aggRows: AggregatorRow[] = rows.map((r) => ({
+    league: r.league,
+    market: r.market,
+    tier: r.tier,
+    publishOdds: r.publishOdds,
+    edge: r.edge,
+    ev: r.ev,
+    result: r.result,
+    clvImpliedDelta: r.clvImpliedDelta,
+  }));
+
+  const summary = summarizeModelWatchRows(aggRows, MARKET_MODEL_WATCH_ONLY);
+
+  res.json({
+    windowDays: window,
+    ...summary,
+  });
+});
 
 export default router;

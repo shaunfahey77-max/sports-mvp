@@ -25,6 +25,12 @@ export interface PerformanceMetrics {
   avgEdge: number;
   clvHitRate: number;
   avgClv: number;
+  /** Number of picks in the window with usable closing-line data
+(the same population behind clvHitRate / avgClv). The UI uses
+this as the gate for showing CLV stats — anything below 20
+shows an em-dash. Returned by `computeValidationMetrics`.
+ */
+  clvSampleSize: number;
   brierScore: number;
   logLoss: number;
   passRate: number;

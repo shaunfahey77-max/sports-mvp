@@ -171,6 +171,11 @@ export interface PerformanceMetrics {
   avgEdge: number;
   clvHitRate: number;
   avgClv: number;
+  /** Number of picks in the window with usable closing-line data
+(the same population behind clvHitRate / avgClv). The UI uses
+this as the gate for showing CLV stats — anything below 20
+shows an em-dash. Returned by `computeValidationMetrics`.
+ */
   clvSampleSize: number;
   brierScore: number;
   logLoss: number;
@@ -179,6 +184,28 @@ export interface PerformanceMetrics {
   tierBreakdown: PerformanceMetricsTierBreakdown;
   leagueBreakdown: PerformanceMetricsLeagueBreakdown;
   marketBreakdown: PerformanceMetricsMarketBreakdown;
+}
+
+/**
+ * Read-only Model Watch summary for the public Performance page.
+Sourced from `model_watch_results` and intentionally narrow — no
+ROI, no units, no per-tier or per-market breakdown.
+
+ */
+export interface ModelWatchSummary {
+  windowDays: number;
+  /** Count of resolved Watch rows in the window (wins + losses + pushes). */
+  leansGraded: number;
+  /** wins / (wins + losses); pushes excluded. 0 when no decided rows. */
+  winRate: number;
+  /** Mean clv_implied_delta over rows with non-null delta and |delta| <= 0.20. */
+  meanClv: number;
+  /** Sample size used for meanClv (rows that pass the |delta| <= 0.20 filter). */
+  clvSampleSize: number;
+  /** Count of distinct league_market keys (in MARKET_MODEL_WATCH_ONLY) with >= 1 graded row in the window. */
+  activeMarkets: number;
+  /** Total count of truthy entries in MARKET_MODEL_WATCH_ONLY. */
+  totalRegistryMarkets: number;
 }
 
 export interface ValidationMetricRecord {
@@ -372,3 +399,16 @@ export type GetPerformanceHistoryParams = {
   market?: MarketType;
   days?: number;
 };
+
+export type GetPerformanceModelWatchParams = {
+  window?: GetPerformanceModelWatchWindow;
+};
+
+export type GetPerformanceModelWatchWindow =
+  (typeof GetPerformanceModelWatchWindow)[keyof typeof GetPerformanceModelWatchWindow];
+
+export const GetPerformanceModelWatchWindow = {
+  NUMBER_14: 14,
+  NUMBER_30: 30,
+  NUMBER_45: 45,
+} as const;
