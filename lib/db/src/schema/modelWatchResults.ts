@@ -39,9 +39,11 @@ export const modelWatchResultsTable = pgTable(
     league: text("league").notNull(),
     market: text("market").notNull(),
     pick: text("pick").notNull(),
-    // Would-be tier (A/B/C) re-derived by re-running assignTier WITHOUT the
-    // model_watch_only override. Only A/B/C survive the grader's filter —
-    // PASS-by-risk-control candidates are not graded.
+    // Tier (A / B / C / PASS) re-derived by re-running assignTier on the
+    // recorded inputs. Informational only — the grader writes a row for
+    // every Model-Watch candidate's outcome regardless of tier (watch
+    // markets sit below the per-market production edge floor by design,
+    // so PASS is the common case here).
     tier: text("tier").notNull(),
     publishOdds: numeric("publish_odds").notNull(),
     publishLine: numeric("publish_line"),

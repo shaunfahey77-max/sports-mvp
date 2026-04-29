@@ -1,18 +1,20 @@
 /**
  * Model-Watch grader.
  *
- * For markets in MARKET_MODEL_WATCH_ONLY (currently nhl_spread and
- * mlb_moneyline) the scoring pipeline writes a candidate row to
- * candidate_bets with selection_reason='model_watch_only' but never lets
- * those candidates enter scored_picks (so they cannot leak into the
- * public Performance / History numbers).
+ * For markets in MARKET_MODEL_WATCH_ONLY (currently nhl_spread,
+ * nhl_total, nba_spread, mlb_moneyline) the scoring pipeline writes a
+ * candidate row to candidate_bets with selection_reason='model_watch_only'
+ * but never lets those candidates enter scored_picks (so they cannot leak
+ * into the public Performance / History numbers).
  *
- * This grader replays what would have happened if those markets were
- * Official picks: it re-runs assignTier WITHOUT the model_watch_only
- * override (so we see the would-be tier), grades the outcome via
- * computeOutcomeResult, computes CLV via computeClvWritebackValues, and
- * upserts the row into model_watch_results. That table is the internal
- * scoreboard consumed only by /admin/model-watch/performance.
+ * This grader persists the OUTCOME of every such candidate, regardless of
+ * what tier assignTier would derive when re-run on the recorded inputs.
+ * That is the contract: model_watch_results reflects the realized result
+ * of every row the scorer already labeled `model_watch_only`. Tier (A /
+ * B / C / PASS) is captured for downstream analysis but is NOT a write
+ * gate — gating writes on tier=A/B caused the table to stay empty when
+ * watch markets are below the per-market production edge floor (which is
+ * the entire reason those markets are watch-only in the first place).
  *
  * Reuses computeOutcomeResult and computeClvWritebackValues so this code
  * stays in lockstep with the live nightly settlement path.
@@ -89,9 +91,13 @@ export async function gradeModelWatchForSnapshot(
 }
 
 /**
- * Re-tier a single Model-Watch candidate as if the override were lifted.
- * Returns true when a row was upserted; false when the candidate would
- * have been PASS-by-risk-control (no Official pick → nothing to grade).
+ * Grade a single Model-Watch candidate and upsert its outcome.
+ * Returns true on every successful upsert. Tier is recorded as whatever
+ * assignTier derives on the recorded inputs (commonly PASS for watch
+ * markets, since they sit below the per-market production edge floor by
+ * design); it is informational only and never gates the write. The
+ * PUBLIC strip on /performance/model-watch and the admin scoreboard
+ * filter / weight by tier downstream as needed.
  */
 async function gradeOneCandidate(
   snap: GameSnapshot,
@@ -115,8 +121,6 @@ async function gradeOneCandidate(
       ODDS_RANGE_GUARDRAIL_LEAGUES as readonly League[]
     ).includes(league),
   });
-
-  if (tier === "PASS") return false;
 
   const result = computeOutcomeResult({
     market: marketType,
