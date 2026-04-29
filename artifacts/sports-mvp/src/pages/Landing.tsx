@@ -3,8 +3,8 @@ import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import {
-  Star, Shield, Crown, ChevronRight, Lock, TrendingUp, Zap, Clock,
-  Check, ArrowRight, Cpu, Database, BarChart2, Activity, CheckCircle2,
+  Shield, ChevronRight, Lock, TrendingUp, Eye,
+  Check, ArrowRight, Cpu, Database, Activity, CheckCircle2,
 } from "lucide-react";
 import { parseGameMatchup, getTeamLogoUrl } from "@/lib/teamLogos";
 import { formatOdds } from "@/lib/utils";
@@ -13,7 +13,18 @@ import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
 const STAT_WINDOW = 47;
 const SERIF = "'Playfair Display', serif";
 
-function useLandingStats() {
+// Hardcoded current-state truth, sourced 1:1 from
+// artifacts/api-server/src/config/scoringModelConfig.ts (READ-ONLY through
+// the May-5 watch-read window). Update only when the config changes.
+//
+//   MARKET_DISABLED:           nhl_moneyline, nba_moneyline, nba_total,
+//                              mlb_spread, mlb_total, nfl_*, ncaaf_*
+//   MARKET_MODEL_WATCH_ONLY:   nhl_spread, mlb_moneyline, nhl_total (R1),
+//                              nba_spread (R2)
+//   Active Official markets across NBA + NHL + MLB:  none
+const ACTIVE_EVALUATION_MARKETS = 4;
+
+function useLandingPerf() {
   return useQuery({
     queryKey: ["landing-perf-stats"],
     queryFn: async () => {
@@ -22,28 +33,6 @@ function useLandingStats() {
     },
     staleTime: 10 * 60 * 1000,
   });
-}
-
-const BASELINE_STATS = {
-  winRate: 0.600,
-  roi: 0.2710,
-  unitsWon: 165.1,
-  avgEv: 0.232,
-};
-
-function buildStats(perf: any) {
-  const hasResults = perf && (perf.wins + perf.losses) > 0;
-  const winRate = hasResults ? perf.wins / (perf.wins + perf.losses) : BASELINE_STATS.winRate;
-  const roi = hasResults ? (perf.roi ?? 0) : BASELINE_STATS.roi;
-  const units = hasResults ? (perf.unitsWon ?? 0) : BASELINE_STATS.unitsWon;
-  const avgEv = hasResults ? (perf.avgEv ?? 0) : BASELINE_STATS.avgEv;
-  return {
-    winRate: `${(winRate * 100).toFixed(1)}%`,
-    roi: `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(1)}%`,
-    units: `${units >= 0 ? "+" : ""}${units.toFixed(1)}`,
-    avgEv: `${avgEv >= 0 ? "+" : ""}${(avgEv * 100).toFixed(1)}%`,
-    isLive: hasResults,
-  };
 }
 
 /* ---------------- NAV ---------------- */
@@ -83,7 +72,25 @@ function LandingNav() {
 }
 
 /* ---------------- HERO ---------------- */
-function HeroSection({ stats }: { stats: ReturnType<typeof buildStats> }) {
+function HeroSection() {
+  const pillars = [
+    {
+      icon: Shield,
+      title: "Selective by design",
+      body: "Picks earn the Official label only when their market clears the launch thresholds. Newer or recovering markets surface in the Model Watch lane while they earn promotion.",
+    },
+    {
+      icon: TrendingUp,
+      title: "Closing line value tracked",
+      body: "CLV is the one metric a sportsbook can't fake. Every pick is measured against the closing line so you can see whether the model beat the market, not just the result.",
+    },
+    {
+      icon: Eye,
+      title: "Public grading the next morning",
+      body: "Every pick is graded the morning after — wins, losses, and pushes. No private records, no cherry-picked highlight reels.",
+    },
+  ];
+
   return (
     <section className="relative pt-20 pb-28 overflow-hidden">
       {/* background */}
@@ -110,14 +117,15 @@ function HeroSection({ stats }: { stats: ReturnType<typeof buildStats> }) {
             className="text-5xl md:text-7xl font-bold leading-[1.05] mb-6 text-white"
             style={{ fontFamily: SERIF }}
           >
-            The math-driven edge,{" "}
-            <span className="italic text-[#FFC107]">made transparent.</span>
+            Sportsbook-grade math.{" "}
+            <span className="italic text-[#FFC107]">Member-only picks.</span>{" "}
+            Public grading.
           </h1>
 
           <p className="text-xl text-white/70 mb-10 leading-relaxed max-w-2xl font-light">
-            SportsMVP is an analyst's instrument, not a tipster service. We run calibrated
-            machine-learning models against live sportsbook odds to find statistically
-            significant positive expected-value plays — and publish every result.
+            Calibrated models score every NBA, NHL, and MLB market every 10 minutes.
+            When a market clears our launch thresholds, the picks publish to your
+            Official slate. Every result is graded the next morning — no cherry-picking.
           </p>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-8">
@@ -125,14 +133,14 @@ function HeroSection({ stats }: { stats: ReturnType<typeof buildStats> }) {
               href="/sign-up"
               className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#FFC107] to-[#B38700] hover:from-[#FFD54F] hover:to-[#FFC107] text-[#060D1F] font-bold uppercase tracking-widest text-sm transition-all shadow-[0_0_30px_rgba(255,193,7,0.2)] hover:shadow-[0_0_40px_rgba(255,193,7,0.4)] flex items-center justify-center gap-2 rounded-sm"
             >
-              Become a Member <ChevronRight size={16} />
+              Start free — see what the model surfaces today <ChevronRight size={16} />
             </Link>
-            <a
-              href="#methodology"
-              className="w-full sm:w-auto px-8 py-4 border border-white/20 hover:bg-white/5 text-white/80 font-medium uppercase tracking-widest text-sm transition-colors rounded-sm text-center"
+            <Link
+              href="/subscribe"
+              className="w-full sm:w-auto px-8 py-4 border border-[#FFC107]/40 hover:bg-[#FFC107]/10 text-white font-bold uppercase tracking-widest text-sm transition-colors rounded-sm text-center flex items-center justify-center gap-2"
             >
-              View Methodology
-            </a>
+              Become a Member · $19.99/mo
+            </Link>
           </div>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/50 font-mono">
@@ -151,22 +159,100 @@ function HeroSection({ stats }: { stats: ReturnType<typeof buildStats> }) {
           </div>
         </div>
 
-        {/* Floating perf stats — real data */}
-        <div className="mt-16 grid grid-cols-2 md:grid-cols-4 gap-px bg-[#FFC107]/20 border border-[#FFC107]/30 rounded-sm overflow-hidden">
-          {[
-            { label: "Win Rate", value: stats.winRate, color: "#388E3C" },
-            { label: `ROI · ${STAT_WINDOW}d`, value: stats.roi, color: "#388E3C" },
-            { label: "Units Won", value: stats.units, color: "#388E3C" },
-            { label: "Avg EV / Pick", value: stats.avgEv, color: "#FFC107" },
-          ].map((s) => (
-            <div key={s.label} className="bg-[#0D1B3E]/95 backdrop-blur p-5 text-center">
-              <div className="text-3xl md:text-4xl font-black" style={{ color: s.color, fontFamily: SERIF }}>{s.value}</div>
-              <div className="text-white/50 text-[10px] md:text-xs font-bold uppercase tracking-widest mt-1">{s.label}</div>
+        {/* Capability pillars — replaces the floating perf-stat tiles. */}
+        <div className="mt-16 grid md:grid-cols-3 gap-px bg-[#FFC107]/20 border border-[#FFC107]/30 rounded-sm overflow-hidden">
+          {pillars.map((p) => (
+            <div key={p.title} className="bg-[#0D1B3E]/95 backdrop-blur p-6">
+              <p.icon className="w-6 h-6 text-[#FFC107] mb-3" />
+              <div className="text-white font-bold text-base mb-2" style={{ fontFamily: SERIF }}>
+                {p.title}
+              </div>
+              <p className="text-white/60 text-sm leading-relaxed font-light">{p.body}</p>
             </div>
           ))}
         </div>
-        <div className="mt-3 text-center text-white/40 text-xs">
-          {stats.isLive ? "Live performance" : "Baseline shown — live data publishes after first graded slate"} · rolling {STAT_WINDOW}-day window
+
+        {/* Honest current-state lane disclosure. */}
+        <div className="mt-6 mx-auto max-w-3xl text-center text-white/55 text-sm leading-relaxed">
+          <span className="text-[#FFC107] font-mono text-xs uppercase tracking-widest mr-2">Today</span>
+          Active markets: <span className="text-white/80">NBA spreads, NHL spreads, NHL totals, and MLB moneylines</span> are
+          in Model Watch evaluation. Markets earn Official status only after they
+          clear the promotion bar.
+        </div>
+
+        <div className="mt-3 text-center">
+          <Link
+            href="/performance"
+            className="text-white/40 hover:text-[#FFC107] text-xs font-bold uppercase tracking-widest transition-colors"
+          >
+            View full performance →
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- ACCESS SUMMARY (Free vs Members) ---------------- */
+function AccessSummarySection() {
+  return (
+    <section className="py-16 bg-[#060D1F] border-y border-[#FFC107]/10">
+      <div className="max-w-6xl mx-auto px-6">
+        <div className="text-center mb-10">
+          <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-2">
+            Choose your starting point
+          </div>
+          <h2 className="text-2xl md:text-3xl font-bold text-white" style={{ fontFamily: SERIF }}>
+            Free shows you the model. Members see the slate.
+          </h2>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-px bg-white/10 border border-white/10 rounded-sm overflow-hidden">
+          <div className="bg-[#0D1B3E] p-7">
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-white font-bold text-lg">Free</div>
+              <div className="text-white/40 text-xs font-mono uppercase tracking-widest">No card required</div>
+            </div>
+            <ul className="space-y-2.5 text-sm text-white/75">
+              <li className="flex items-start gap-2.5">
+                <Check size={16} className="text-[#388E3C] shrink-0 mt-0.5" />
+                Today's top Tier-A Official pick — when one clears (delayed)
+              </li>
+              <li className="flex items-start gap-2.5">
+                <Check size={16} className="text-[#388E3C] shrink-0 mt-0.5" />
+                Public final result the next morning
+              </li>
+              <li className="flex items-start gap-2.5 text-white/40">
+                <span className="w-4 h-4 flex items-center justify-center shrink-0 mt-0.5">—</span>
+                No edge / EV / probability metrics
+              </li>
+            </ul>
+          </div>
+
+          <div className="bg-gradient-to-b from-[#112454] to-[#0D1B3E] p-7 border-l-2 border-[#FFC107]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-[#FFC107] font-bold text-lg">Members · $19.99/mo</div>
+              <div className="text-white/40 text-xs font-mono uppercase tracking-widest">Cancel any time</div>
+            </div>
+            <ul className="space-y-2.5 text-sm text-white/85">
+              <li className="flex items-start gap-2.5">
+                <Check size={16} className="text-[#FFC107] shrink-0 mt-0.5" />
+                Full daily slate, all tiers — Official + Model Watch
+              </li>
+              <li className="flex items-start gap-2.5">
+                <Check size={16} className="text-[#FFC107] shrink-0 mt-0.5" />
+                Edge, EV, and CLV on every pick
+              </li>
+              <li className="flex items-start gap-2.5">
+                <Check size={16} className="text-[#FFC107] shrink-0 mt-0.5" />
+                Best-line shopping across 8+ sportsbooks
+              </li>
+              <li className="flex items-start gap-2.5">
+                <Check size={16} className="text-[#FFC107] shrink-0 mt-0.5" />
+                Re-scored every 10 minutes
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
     </section>
@@ -316,9 +402,10 @@ function TodaysTopPick() {
               A glimpse inside the vault.
             </h2>
             <p className="text-white/60 mb-8 leading-relaxed font-light text-lg">
-              Members get the entire daily slate the moment our model surfaces it. Here's
-              one Tier-A play from today — published with the same metrics members see:
-              market probability, model probability, and the true edge between them.
+              Members get the entire daily slate the moment our model surfaces it.
+              When a Tier-A Official play clears today's threshold, it lands here —
+              published with the same metrics members see: market probability, model
+              probability, and the true edge between them.
             </p>
 
             <div className="grid grid-cols-2 gap-6 mb-2">
@@ -343,11 +430,10 @@ function TodaysTopPick() {
                 <div className="text-[#FFC107] text-xs font-bold tracking-widest uppercase mb-2">
                   Awaiting Today's Official Slate
                 </div>
-                <p className="text-white/50 text-sm">
-                  No Tier-A Official play has cleared today's threshold yet.
-                  Members can still see the full Model Watch lane — picks the
-                  model surfaces in markets that are still earning their
-                  Official promotion. The slate re-scores every 10 minutes.
+                <p className="text-white/60 text-sm leading-relaxed">
+                  No Tier-A Official play has cleared today's threshold yet —
+                  that's the discipline. Members still see the full Model Watch
+                  lane and the slate re-scores every 10 minutes.
                 </p>
               </div>
             )}
@@ -486,7 +572,32 @@ function LiveOutputStrip() {
 }
 
 /* ---------------- TRACK RECORD ---------------- */
-function TrackRecordSection({ stats, picksTracked }: { stats: ReturnType<typeof buildStats>; picksTracked: number }) {
+function TrackRecordSection() {
+  const { data: perf, isLoading } = useLandingPerf();
+  const picksGraded = perf
+    ? (perf.wins ?? 0) + (perf.losses ?? 0) + (perf.pushes ?? 0)
+    : null;
+  const clvTracked = perf ? (perf.clvSampleSize ?? 0) : null;
+
+  const tiles = [
+    {
+      label: "Picks graded",
+      value: isLoading || picksGraded === null ? "—" : `${picksGraded}`,
+    },
+    {
+      label: "Active evaluation markets",
+      value: `${ACTIVE_EVALUATION_MARKETS}`,
+    },
+    {
+      label: "CLV-tracked picks",
+      value: isLoading || clvTracked === null ? "—" : `${clvTracked}`,
+    },
+    {
+      label: "Refresh cadence",
+      value: "10 min",
+    },
+  ];
+
   return (
     <section id="track-record" className="py-20 bg-[#FFC107] text-[#060D1F]">
       <div className="max-w-7xl mx-auto px-6">
@@ -499,8 +610,9 @@ function TrackRecordSection({ stats, picksTracked }: { stats: ReturnType<typeof 
               Transparency is the product.
             </h2>
             <p className="text-[#060D1F]/70 font-medium max-w-xl">
-              We publish every pick the moment it surfaces and grade every result the
-              next morning. No cherry-picked highlight reels.
+              Operational state from the live pipeline. Win rate, ROI, units, and CLV
+              breakdown all publish on the Performance page — no aggregates rounded,
+              no losing periods omitted.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -518,28 +630,21 @@ function TrackRecordSection({ stats, picksTracked }: { stats: ReturnType<typeof 
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[#060D1F]/10 border border-[#060D1F]/10 rounded-sm overflow-hidden">
-          <div className="bg-[#FFC107] p-8 text-center">
-            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.winRate}</div>
-            <div className="text-xs font-bold uppercase tracking-widest opacity-70">Win Rate</div>
-          </div>
-          <div className="bg-[#FFC107] p-8 text-center">
-            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.roi}</div>
-            <div className="text-xs font-bold uppercase tracking-widest opacity-70">ROI</div>
-          </div>
-          <div className="bg-[#FFC107] p-8 text-center">
-            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.units}</div>
-            <div className="text-xs font-bold uppercase tracking-widest opacity-70">Units Won</div>
-          </div>
-          <div className="bg-[#FFC107] p-8 text-center">
-            <div className="text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>{stats.avgEv}</div>
-            <div className="text-xs font-bold uppercase tracking-widest opacity-70">Avg EV / Pick</div>
-          </div>
+          {tiles.map((t) => (
+            <div key={t.label} className="bg-[#FFC107] p-8 text-center">
+              <div className="text-4xl md:text-5xl font-black mb-1" style={{ fontFamily: SERIF }}>
+                {t.value}
+              </div>
+              <div className="text-xs font-bold uppercase tracking-widest opacity-70">
+                {t.label}
+              </div>
+            </div>
+          ))}
         </div>
 
         <div className="mt-4 text-xs text-[#060D1F]/60 font-medium text-center md:text-left">
-          {stats.isLive
-            ? `Live performance · ${picksTracked} picks tracked in window`
-            : "Baseline shown — live track record publishes after first graded slate"}
+          Live performance, ROI, units, and CLV breakdown publish on the
+          Performance page. Operational state above reflects the live pipeline.
         </div>
       </div>
     </section>
@@ -558,7 +663,7 @@ function MembershipSection() {
       ctaHref: "/sign-up",
       ctaStyle: "border border-white/20 hover:bg-white/5 text-white",
       features: [
-        { ok: true, text: "Today's #1 Tier-A pick (delayed)" },
+        { ok: true, text: "Today's top Tier-A Official pick — when one clears (delayed)" },
         { ok: true, text: "Public tier badge + final result" },
         { ok: false, text: "No edge / EV / probability metrics" },
         { ok: false, text: "No full slate or history" },
@@ -568,7 +673,7 @@ function MembershipSection() {
     },
     {
       name: "Members",
-      tagline: "Full access to the daily slate and the math behind it.",
+      tagline: "See every pick the model surfaces, with the edge and CLV that justify it — graded publicly the next morning.",
       billingNote: "Billed as MVP",
       price: "$19.99",
       priceUnit: "/ mo",
@@ -577,13 +682,11 @@ function MembershipSection() {
       ctaHref: "/subscribe",
       ctaStyle: "bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F]",
       features: [
-        { ok: true, text: "Every Official Tier A / B / C pick, every day" },
-        { ok: true, text: "Full Model Watch lane while markets earn promotion" },
-        { ok: true, text: "Full edge, EV, model & market probability" },
-        { ok: true, text: "CLV tracked on every pick" },
-        { ok: true, text: "Best line across all sportsbooks" },
-        { ok: true, text: "Parlay Builder + Bet Tracker" },
-        { ok: true, text: "Re-scored every 10 minutes" },
+        { ok: true, text: "Every pick the model surfaces — Official + Model Watch — every day" },
+        { ok: true, text: "Edge, EV, and CLV on every pick — the same data the model uses to rank it" },
+        { ok: true, text: "Best-line shopping across 8+ sportsbooks, refreshed every 10 minutes" },
+        { ok: true, text: "Parlay Builder + Bet Tracker with Kelly sizing" },
+        { ok: true, text: "Public grading the next morning — your record is our record" },
       ],
       highlight: true,
       badge: "Most Popular",
@@ -604,14 +707,6 @@ function MembershipSection() {
             Start free. Upgrade when the picks prove themselves. Cancel any time —
             no contracts, no pressure.
           </p>
-          <div className="mt-8 mx-auto max-w-2xl border-l-2 border-[#FFC107] pl-5 text-left">
-            <p className="text-white text-base md:text-lg leading-relaxed">
-              <span className="text-[#FFC107] font-semibold">Members get every model-approved bet,</span>{" "}
-              <span className="text-white/90">live edge data,</span> and{" "}
-              <span className="text-white/90">closing-line tracking</span> — all in one feed,
-              graded publicly the next morning.
-            </p>
-          </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-8 items-stretch max-w-4xl mx-auto">
@@ -641,15 +736,24 @@ function MembershipSection() {
                   </span>
                 </div>
               )}
-              <p className="text-white/50 text-sm mb-6 min-h-[2.5rem]">{tier.tagline}</p>
+              <p className="text-white/50 text-sm mb-6 min-h-[3.5rem]">{tier.tagline}</p>
 
               <div className="flex items-baseline gap-2 mb-1">
                 <span className="text-4xl font-bold text-white">{tier.price}</span>
                 {tier.priceUnit && <span className="text-white/50">{tier.priceUnit}</span>}
               </div>
-              <div className={`text-sm mb-8 font-medium ${tier.highlight ? "text-[#FFC107]" : "text-white/40"}`}>
+              <div className={`text-sm mb-3 font-medium ${tier.highlight ? "text-[#FFC107]" : "text-white/40"}`}>
                 {tier.priceMeta}
               </div>
+              {tier.highlight && (
+                <div className="inline-flex items-center self-start gap-1.5 mb-6 px-2.5 py-1 rounded-full border border-white/20 bg-white/5">
+                  <Check size={11} className="text-[#388E3C]" />
+                  <span className="text-[11px] text-white/70 font-mono uppercase tracking-wide">
+                    Cancel any time · no contracts
+                  </span>
+                </div>
+              )}
+              {!tier.highlight && <div className="mb-5" />}
 
               <ul className="space-y-3 mb-8 flex-1">
                 {tier.features.map((f, i) => (
@@ -735,18 +839,15 @@ function LandingFooter() {
 
 /* ---------------- ROOT ---------------- */
 export function Landing() {
-  const { data: perf } = useLandingStats();
-  const stats = buildStats(perf);
-  const picksTracked = perf ? (perf.wins ?? 0) + (perf.losses ?? 0) + (perf.pushes ?? 0) : 0;
-
   return (
     <div className="min-h-screen bg-[#060D1F] text-white selection:bg-[#FFC107] selection:text-[#060D1F]">
       <LandingNav />
-      <HeroSection stats={stats} />
+      <HeroSection />
+      <AccessSummarySection />
       <TodaysTopPick />
       <MethodologySection />
       <LiveOutputStrip />
-      <TrackRecordSection stats={stats} picksTracked={picksTracked} />
+      <TrackRecordSection />
       <MembershipSection />
       <LandingFooter />
     </div>
