@@ -4,15 +4,16 @@ import type { ScoredPick, CandidateBet } from "@workspace/api-client-react";
 import { format } from "date-fns";
 import { PickCard } from "@/components/PickCard";
 import { CandidateCard } from "@/components/CandidateCard";
-import { FallbackCandidateCard } from "@/components/FallbackCandidateCard";
+import { NoOfficialPicksSection } from "@/components/NoOfficialPicksSection";
 import { TopPickCallout } from "@/components/TopPickCallout";
 import { AddBetPanel } from "@/components/AddBetPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageLayout } from "@/components/layout/PageLayout";
-import { ChevronDown, ChevronUp, Lock, Crown, Eye } from "lucide-react";
+import { ChevronDown, ChevronUp, Lock, Crown } from "lucide-react";
 import { addBet, LogPickData } from "@/lib/betTracker";
 import { parseGameMatchup } from "@/lib/teamLogos";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { selectFallbackSection } from "@/lib/modelWatchBoard";
 import { Link } from "wouter";
 
 function pickToLogData(pick: ScoredPick): LogPickData {
@@ -204,9 +205,12 @@ export function Dashboard() {
   //    row, clearly labeled as Model Watch / Not an Official Pick.
   const liveCandidates = candidates.filter(c => c.tier !== 'PASS');
   const passCandidates = candidates.filter(c => c.tier === 'PASS');
-  const fallbackCandidate = passCandidates.length > 0
-    ? passCandidates.reduce((best, c) => Number(c.rankScore) > Number(best.rankScore) ? c : best)
-    : null;
+  // Pure render-decision for the no-Official-day section. Returning a
+  // discriminated union here keeps Dashboard.tsx free of the branching
+  // logic and makes case (a)-(e) of the spec independently testable in
+  // selectFallbackSection's unit tests, without standing up a React
+  // rendering harness.
+  const fallbackSection = selectFallbackSection({ passCandidates, isMvp });
 
   const topPickId = allPicks.length > 0
     ? allPicks.reduce((best, p) => Number(p.rankScore) > Number(best.rankScore) ? p : best).id
@@ -289,29 +293,11 @@ export function Dashboard() {
             ))}
           </div>
         </div>
-      ) : fallbackCandidate ? (
-        <div className="space-y-6" data-testid="fallback-section">
-          <div className="bg-[#0B142E]/70 px-4 py-3 rounded-lg border border-dashed border-white/20 flex items-start gap-3">
-            <Eye size={14} className="text-white/60 mt-0.5 shrink-0" />
-            <div>
-              <div className="text-sm font-bold text-white/80 mb-0.5">No Official Picks Today — Top Candidate (Model Watch)</div>
-              <p className="text-xs text-muted-foreground">
-                No bets cleared the model's scoring gates. We're surfacing the single highest-ranked candidate below for transparency.
-                It is <span className="font-semibold text-white/70">not an official pick</span>, is not counted in performance or CLV reporting,
-                and will not appear in History.
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <FallbackCandidateCard bet={fallbackCandidate} onLogPick={() => handleLogCandidate(fallbackCandidate)} />
-          </div>
-        </div>
       ) : (
-        <div className="py-20 text-center border border-border rounded-xl bg-card/30">
-          <img src="/logo-shield.png" alt="" className="h-14 w-auto mx-auto mb-4 opacity-20" />
-          <h3 className="text-2xl font-display font-bold mb-2">No Action Today</h3>
-          <p className="text-muted-foreground">The model hasn't found any edges worth betting. Sharp bettors wait for the right spots — check back later.</p>
-        </div>
+        <NoOfficialPicksSection
+          section={fallbackSection}
+          onLogPick={handleLogCandidate}
+        />
       )}
 
       <AddBetPanel

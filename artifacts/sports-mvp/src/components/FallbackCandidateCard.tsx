@@ -52,9 +52,28 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
 interface FallbackCandidateCardProps {
   bet: CandidateBet;
   onLogPick?: () => void;
+  /**
+   * 1-based rank within the Model Watch Board (Member view). When present
+   * a small "#N" pip is rendered next to the MODEL WATCH badge to make it
+   * unmistakable that this is a ranked watch board, not an Official slate.
+   * Omitting the prop leaves the card visually identical to today's
+   * single-card Free render.
+   */
+  rank?: number;
+  /**
+   * When true, the existing 2-stat grid (Edge / EV) expands to a 4-stat
+   * grid that also surfaces Model probability vs Market (fair) probability.
+   * Member-board cards opt in; the Free single-card render does not.
+   */
+  showProbabilities?: boolean;
 }
 
-export function FallbackCandidateCard({ bet, onLogPick }: FallbackCandidateCardProps) {
+export function FallbackCandidateCard({
+  bet,
+  onLogPick,
+  rank,
+  showProbabilities = false,
+}: FallbackCandidateCardProps) {
   const matchup = parseGameMatchup(bet.gameKey, bet.league);
   const leagueLogo = getLeagueLogoUrl(bet.league);
 
@@ -73,6 +92,15 @@ export function FallbackCandidateCard({ bet, onLogPick }: FallbackCandidateCardP
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
+          {rank != null && (
+            <Badge
+              variant="outline"
+              data-testid="model-watch-rank-pip"
+              className="border-white/30 text-white/85 bg-white/10 text-[10px] px-1.5 py-0 font-bold"
+            >
+              #{rank}
+            </Badge>
+          )}
           <Badge variant="outline" style={{ color: getLeagueColor(bet.league), borderColor: getLeagueColor(bet.league) }} className="bg-transparent uppercase text-[10px] px-1.5 py-0 opacity-80">
             {bet.league}
           </Badge>
@@ -133,7 +161,16 @@ export function FallbackCandidateCard({ bet, onLogPick }: FallbackCandidateCardP
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 pt-3 border-t border-white/10">
+      <div
+        className={cn(
+          "grid gap-2 pt-3 border-t border-white/10",
+          // Member-board mode shows 5 stats (Edge, EV, Rank score, Model %, Market %)
+          // per the task's "Each card shows full context" requirement. The
+          // Free single-card render keeps the original 2-stat grid so the
+          // Public surface is visually unchanged.
+          showProbabilities ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-2"
+        )}
+      >
         <div>
           <div className="text-[10px] uppercase text-muted-foreground tracking-wider flex items-center">
             Edge
@@ -152,6 +189,37 @@ export function FallbackCandidateCard({ bet, onLogPick }: FallbackCandidateCardP
             {formatPercentage(Number(bet.ev))}
           </div>
         </div>
+        {showProbabilities && (
+          <>
+            <div data-testid="model-watch-rank-score">
+              <div className="text-[10px] uppercase text-muted-foreground tracking-wider flex items-center">
+                Rank
+                <InfoTooltip content="Composite rank score the model uses to order candidates. Higher = stronger lean." />
+              </div>
+              <div className="font-bold text-sm text-white/80">
+                {Number(bet.rankScore).toFixed(2)}
+              </div>
+            </div>
+            <div data-testid="model-watch-model-prob">
+              <div className="text-[10px] uppercase text-muted-foreground tracking-wider flex items-center">
+                Model %
+                <InfoTooltip content="Our model's calibrated probability that this side wins / covers." />
+              </div>
+              <div className="font-bold text-sm text-white/80">
+                {formatPercentage(Number(bet.modelProbCalibrated))}
+              </div>
+            </div>
+            <div data-testid="model-watch-market-prob">
+              <div className="text-[10px] uppercase text-muted-foreground tracking-wider flex items-center">
+                Market %
+                <InfoTooltip content="The market's fair probability after vig removal — what the book implies this side is worth." />
+              </div>
+              <div className="font-bold text-sm text-white/80">
+                {formatPercentage(Number(bet.marketProbFair))}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="pt-1">
