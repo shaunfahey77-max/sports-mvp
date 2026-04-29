@@ -82,6 +82,26 @@ test("MARKET_MODEL_WATCH_ONLY registry includes nhl_spread and mlb_moneyline", (
   assert.equal(MARKET_MODEL_WATCH_ONLY["mlb_moneyline"], true);
 });
 
+test("MARKET_MODEL_WATCH_ONLY: holding-pattern set-exactness lock (active until 2026-05-05 watch read)", () => {
+  // Holding-pattern guardrail. The May-5 watch read scope is locked to the
+  // four markets currently in Watch — nhl_spread, mlb_moneyline (legacy),
+  // plus nhl_total (R1, 2026-04-27) and nba_spread (R2, 2026-04-28). Any
+  // accidental promotion or deletion in scoringModelConfig.ts before the
+  // May 5 read fires this assertion. Update the EXPECTED set ONLY when an
+  // explicit greenlight commit lands; do not edit it as part of unrelated
+  // refactors.
+  const EXPECTED = ["mlb_moneyline", "nba_spread", "nhl_spread", "nhl_total"];
+  const actual = Object.entries(MARKET_MODEL_WATCH_ONLY)
+    .filter(([, v]) => v === true)
+    .map(([k]) => k)
+    .sort();
+  assert.deepEqual(
+    actual,
+    EXPECTED,
+    `MARKET_MODEL_WATCH_ONLY drift detected. Expected exactly ${EXPECTED.join(", ")}; got ${actual.join(", ")}. If this is intentional and post-2026-05-05 greenlit, update the EXPECTED list in this test.`,
+  );
+});
+
 test("model-watch-only override: clean nhl_spread Tier-A candidate → PASS / model_watch_only", () => {
   // nhl_spread is NOT in MARKET_DISABLED, has market_quality 0.90 and a
   // per-market MIN_EDGE of 0.06; rank_score 0.99 clears the 0.85 NHL

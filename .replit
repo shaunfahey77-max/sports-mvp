@@ -52,7 +52,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "LOG_LEVEL=silent pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts src/scoring/__tests__/ncaafTeamAbbreviations.test.ts src/scoring/__tests__/nflSpreadModel.test.ts src/scoring/__tests__/ncaafSpreadModel.test.ts src/scoring/__tests__/clvWriteback.test.ts src/scoring/__tests__/modelWatchAggregator.test.ts src/scoring/__tests__/modelWatchAlerts.test.ts src/scoring/__tests__/marketModelWatchOnly.test.ts src/scoring/__tests__/brierScore.test.ts src/scoring/__tests__/monotonicity.test.ts src/scoring/__tests__/cohortAnalysis.test.ts src/lib/__tests__/pickBestLines.test.ts src/lib/__tests__/transformGame.test.ts"
+args = "LOG_LEVEL=silent pnpm --filter @workspace/api-server exec tsx --test src/scoring/__tests__/computeOutcomeResult.test.ts src/scoring/__tests__/ncaafTeamAbbreviations.test.ts src/scoring/__tests__/nflSpreadModel.test.ts src/scoring/__tests__/ncaafSpreadModel.test.ts src/scoring/__tests__/clvWriteback.test.ts src/scoring/__tests__/modelWatchAggregator.test.ts src/scoring/__tests__/modelWatchAlerts.test.ts src/scoring/__tests__/marketModelWatchOnly.test.ts src/scoring/__tests__/brierScore.test.ts src/scoring/__tests__/monotonicity.test.ts src/scoring/__tests__/cohortAnalysis.test.ts src/scoring/__tests__/cohortReportMarkdown.test.ts src/lib/__tests__/pickBestLines.test.ts src/lib/__tests__/transformGame.test.ts"
 
 [agent]
 stack = "PNPM_WORKSPACE"
