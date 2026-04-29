@@ -22,12 +22,17 @@ export interface AggregatorRow {
   ev: string | number;
   result: string;
   clvImpliedDelta: string | number | null;
-  // Optional row identity used only when the caller asks for per-bucket
-  // "recent picks" via aggregateByLeagueMarket(rows, keys, { recentLimit }).
-  // Aggregate math never reads these.
+  // Optional row identity used by `aggregateByLeagueMarket(... { recentLimit })`
+  // and by the public summarizer's favored-side dedup. Admin aggregate math
+  // (per-tier / per-market totals) never reads these.
   date?: string;
   gameKey?: string;
   pick?: string;
+  // Required by the public summarizer to dedup the home/away pair down to
+  // the model-favored side per (gameKey, league, market). Optional so
+  // synthetic fixtures and the admin scoreboard (which keeps BOTH sides
+  // by design) need not populate it.
+  modelProbCalibrated?: string | number;
 }
 
 /**
@@ -267,7 +272,20 @@ export function summarizeModelWatchRows(
   rows: readonly AggregatorRow[],
   registry: Partial<Record<string, boolean>>,
 ): PublicModelWatchSummary {
-  const stats = aggregateRows(rows);
+  // Reduce home/away pairs to the model-favored side per (gameKey,
+  // league, market) before aggregating. Without this the win rate is
+  // structurally pinned to ~50%: the scorer writes BOTH sides of every
+  // watched game to model_watch_results (so the admin scoreboard can
+  // diagnose calibration drift on either side), and any moneyline /
+  // spread / total has its two sides resolve to opposite outcomes by
+  // construction. The favored side is the one the model would actually
+  // recommend if the market crossed its production edge floor — i.e.
+  // model_prob_calibrated > 0.5 — which is the only meaningful ledger
+  // for "would this model have won?". Rows lacking the dedup keys
+  // (gameKey + modelProbCalibrated) pass through untouched, preserving
+  // synthetic-fixture behaviour.
+  const favored = selectFavoredSidePerGame(rows);
+  const stats = aggregateRows(favored);
 
   let totalRegistryMarkets = 0;
   for (const v of Object.values(registry)) {
@@ -275,7 +293,7 @@ export function summarizeModelWatchRows(
   }
 
   const activeKeys = new Set<string>();
-  for (const r of rows) {
+  for (const r of favored) {
     const key = `${r.league}_${r.market}`;
     if (registry[key]) activeKeys.add(key);
   }
@@ -288,6 +306,57 @@ export function summarizeModelWatchRows(
     activeMarkets: activeKeys.size,
     totalRegistryMarkets,
   };
+}
+
+/**
+ * For each `(gameKey, league, market)` group, keep ONLY the row whose
+ * model_prob_calibrated is the highest — i.e. the side the model
+ * favors. With a well-formed pair (home + away) this collapses two
+ * complementary rows down to one, which is the only way the public
+ * win-rate can break out of the structural 50% trap.
+ *
+ * Rows without `gameKey` or without a finite `modelProbCalibrated` are
+ * passed through untouched (no group is formed for them). This keeps
+ * every existing synthetic-fixture test working unchanged while making
+ * the production path — which always populates both fields — meaningful.
+ *
+ * Exported for direct unit tests and for any future consumer that wants
+ * to apply the same dedup semantics outside `summarizeModelWatchRows`.
+ */
+export function selectFavoredSidePerGame(
+  rows: readonly AggregatorRow[],
+): AggregatorRow[] {
+  const passthrough: AggregatorRow[] = [];
+  const groups = new Map<string, AggregatorRow>();
+
+  for (const r of rows) {
+    const probRaw = r.modelProbCalibrated;
+    if (!r.gameKey || probRaw == null) {
+      passthrough.push(r);
+      continue;
+    }
+    const prob = typeof probRaw === "number" ? probRaw : parseFloat(probRaw);
+    if (!Number.isFinite(prob)) {
+      passthrough.push(r);
+      continue;
+    }
+    const key = `${r.gameKey}|${r.league}_${r.market}`;
+    const incumbent = groups.get(key);
+    if (!incumbent) {
+      groups.set(key, r);
+      continue;
+    }
+    const incumbentProbRaw = incumbent.modelProbCalibrated;
+    const incumbentProb =
+      typeof incumbentProbRaw === "number"
+        ? incumbentProbRaw
+        : parseFloat(incumbentProbRaw as string);
+    if (prob > incumbentProb) {
+      groups.set(key, r);
+    }
+  }
+
+  return [...passthrough, ...groups.values()];
 }
 
 /**

@@ -216,6 +216,9 @@ router.get("/performance/model-watch", async (req, res): Promise<void> => {
   // Filter to resolved rows only — the public strip reports "Leans graded",
   // not pending. This matches the way the Official Performance numbers are
   // built (validate-then-aggregate).
+  // gameKey + modelProbCalibrated are required by summarizeModelWatchRows
+  // to dedup the home/away pair down to the model-favored side per game.
+  // Without them the public win-rate is structurally pinned at ~50%.
   const rows = await db
     .select({
       league: modelWatchResultsTable.league,
@@ -226,6 +229,8 @@ router.get("/performance/model-watch", async (req, res): Promise<void> => {
       ev: modelWatchResultsTable.ev,
       result: modelWatchResultsTable.result,
       clvImpliedDelta: modelWatchResultsTable.clvImpliedDelta,
+      gameKey: modelWatchResultsTable.gameKey,
+      modelProbCalibrated: modelWatchResultsTable.modelProbCalibrated,
     })
     .from(modelWatchResultsTable)
     .where(
@@ -233,6 +238,17 @@ router.get("/performance/model-watch", async (req, res): Promise<void> => {
         gte(modelWatchResultsTable.date, cutoff),
         inArray(modelWatchResultsTable.result, ["win", "loss", "push"]),
       ),
+    )
+    // Deterministic order so the favored-side dedup's tie-break (first
+    // row wins on equal modelProbCalibrated) is stable across calls. id
+    // is the primary key, guaranteeing total ordering.
+    .orderBy(
+      desc(modelWatchResultsTable.date),
+      desc(modelWatchResultsTable.eventStart),
+      modelWatchResultsTable.gameKey,
+      modelWatchResultsTable.market,
+      modelWatchResultsTable.pick,
+      modelWatchResultsTable.id,
     );
 
   const aggRows: AggregatorRow[] = rows.map((r) => ({
@@ -244,6 +260,8 @@ router.get("/performance/model-watch", async (req, res): Promise<void> => {
     ev: r.ev,
     result: r.result,
     clvImpliedDelta: r.clvImpliedDelta,
+    gameKey: r.gameKey,
+    modelProbCalibrated: r.modelProbCalibrated,
   }));
 
   const summary = summarizeModelWatchRows(aggRows, MARKET_MODEL_WATCH_ONLY);
