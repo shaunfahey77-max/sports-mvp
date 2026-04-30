@@ -5,6 +5,7 @@ import axios from "axios";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { Card } from "@/components/ui/card";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useLaunchConfig } from "@/hooks/useLaunchConfig";
 import { Crown, Shield, Star } from "lucide-react";
 
 const SERIF = "'Playfair Display', serif";
@@ -21,6 +22,7 @@ export function Account() {
   const { signOut } = useAuth();
   const { user: clerkUser } = useUser();
   const { tier } = useCurrentUser();
+  const { betaMode } = useLaunchConfig();
   const [, setLocation] = useLocation();
   const [portalLoading, setPortalLoading] = useState(false);
 
@@ -100,7 +102,7 @@ export function Account() {
                 onClick={() => setLocation('/subscribe')}
                 className="w-full py-3 rounded-sm bg-[#FFC107] text-[#060D1F] text-xs font-bold uppercase tracking-[0.2em] hover:bg-[#FFD54F] transition-colors"
               >
-                Upgrade to MVP
+                {betaMode ? 'Join the Waitlist' : 'Upgrade to MVP'}
               </button>
             ) : (
               <button

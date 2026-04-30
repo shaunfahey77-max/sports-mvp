@@ -6,3 +6,4 @@ export * from "./simulationRuns";
 export * from "./users";
 export * from "./modelWatchResults";
 export * from "./modelWatchAlerts";
+export * from "./waitlistSignups";

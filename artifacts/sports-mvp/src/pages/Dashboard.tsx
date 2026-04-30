@@ -13,6 +13,7 @@ import { ChevronDown, ChevronUp, Lock, Crown } from "lucide-react";
 import { addBet, LogPickData } from "@/lib/betTracker";
 import { parseGameMatchup } from "@/lib/teamLogos";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useLaunchConfig } from "@/hooks/useLaunchConfig";
 import { selectFallbackSection } from "@/lib/modelWatchBoard";
 import { Link } from "wouter";
 
@@ -138,7 +139,7 @@ function LockedPickCard() {
   );
 }
 
-function UpgradeBanner({ pickCount }: { pickCount: number }) {
+function UpgradeBanner({ pickCount, betaMode }: { pickCount: number; betaMode: boolean }) {
   return (
     <div className="rounded-sm border border-[#FFC107]/40 bg-gradient-to-r from-[#0D1B3E] to-[#112454] p-5 flex flex-col md:flex-row items-center gap-4 mt-2">
       <div className="flex items-center gap-3 flex-1">
@@ -147,10 +148,14 @@ function UpgradeBanner({ pickCount }: { pickCount: number }) {
         </div>
         <div>
           <div className="text-white font-bold text-sm">
-            {pickCount - 1} more pick{pickCount - 1 !== 1 ? 's' : ''} available today
+            {betaMode
+              ? `${pickCount - 1} more pick${pickCount - 1 !== 1 ? 's' : ''} reserved for Members`
+              : `${pickCount - 1} more pick${pickCount - 1 !== 1 ? 's' : ''} available today`}
           </div>
           <div className="text-white/55 text-xs mt-0.5">
-            Upgrade to MVP for all Tier A, B, and C picks with full edge, EV, and CLV data.
+            {betaMode
+              ? "Paid Membership opens when our first market reaches Official status with 30 days of clean public record. Join the waitlist and we'll email you the moment it does."
+              : "Upgrade to MVP for all Tier A, B, and C picks with full edge, EV, and CLV data."}
           </div>
         </div>
       </div>
@@ -158,7 +163,7 @@ function UpgradeBanner({ pickCount }: { pickCount: number }) {
         href="/subscribe"
         className="shrink-0 inline-flex items-center gap-2 bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F] text-xs font-bold uppercase tracking-[0.2em] px-5 py-2.5 rounded-sm transition-colors whitespace-nowrap"
       >
-        Upgrade to MVP — $19.99/mo
+        {betaMode ? "Join the Waitlist" : "Upgrade to MVP — $19.99/mo"}
       </Link>
     </div>
   );
@@ -170,6 +175,7 @@ export function Dashboard() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelData, setPanelData] = useState<LogPickData | undefined>(undefined);
   const { tier, isMvp } = useCurrentUser();
+  const { betaMode } = useLaunchConfig();
 
   function handleLogPick(pick: ScoredPick) {
     setPanelData(pickToLogData(pick));
@@ -236,10 +242,17 @@ export function Dashboard() {
         <div className="mb-6 rounded-lg border border-[#FFC107]/25 bg-[#FFC107]/5 px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-2 flex-1">
             <Lock size={14} className="text-[#FFC107] shrink-0" />
-            <span className="text-sm text-white/70">
-              <span className="text-[#FFC107] font-bold">Free plan</span> — showing 1 of {allPicks.length} picks today.
-              <Link href="/subscribe" className="ml-1 text-[#FFC107] hover:underline font-medium">Upgrade to MVP</Link> to unlock all picks.
-            </span>
+            {betaMode ? (
+              <span className="text-sm text-white/70">
+                <span className="text-[#FFC107] font-bold">Open Beta</span> — Free Guest Pass shows 1 of {allPicks.length} picks today.
+                <Link href="/subscribe" className="ml-1 text-[#FFC107] hover:underline font-medium">Join the waitlist</Link> for the full slate when paid opens.
+              </span>
+            ) : (
+              <span className="text-sm text-white/70">
+                <span className="text-[#FFC107] font-bold">Free plan</span> — showing 1 of {allPicks.length} picks today.
+                <Link href="/subscribe" className="ml-1 text-[#FFC107] hover:underline font-medium">Upgrade to MVP</Link> to unlock all picks.
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -269,7 +282,7 @@ export function Dashboard() {
           </div>
           {/* Upgrade CTA after locked cards */}
           {!isMvp && allPicks.length > 1 && (
-            <UpgradeBanner pickCount={allPicks.length} />
+            <UpgradeBanner pickCount={allPicks.length} betaMode={betaMode} />
           )}
         </div>
       ) : liveCandidates.length > 0 ? (

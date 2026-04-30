@@ -9,6 +9,7 @@ import {
 import { parseGameMatchup, getTeamLogoUrl } from "@/lib/teamLogos";
 import { formatOdds } from "@/lib/utils";
 import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
+import { useLaunchConfig } from "@/hooks/useLaunchConfig";
 
 const STAT_WINDOW = 47;
 const SERIF = "'Playfair Display', serif";
@@ -37,6 +38,7 @@ function useLandingPerf() {
 
 /* ---------------- NAV ---------------- */
 function LandingNav() {
+  const { betaMode } = useLaunchConfig();
   return (
     <nav className="sticky top-0 z-40 border-b border-[#FFC107]/20 bg-[#060D1F]/90 backdrop-blur-md">
       <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
@@ -53,18 +55,29 @@ function LandingNav() {
         <div className="hidden md:flex items-center gap-8">
           <a href="#methodology" className="text-sm font-medium text-white/70 hover:text-[#FFC107] transition-colors">Methodology</a>
           <a href="#track-record" className="text-sm font-medium text-white/70 hover:text-[#FFC107] transition-colors">Track Record</a>
-          <a href="#membership" className="text-sm font-medium text-white/70 hover:text-[#FFC107] transition-colors">Membership</a>
+          <a href="#membership" className="text-sm font-medium text-white/70 hover:text-[#FFC107] transition-colors">
+            {betaMode ? "Waitlist" : "Membership"}
+          </a>
         </div>
         <div className="flex items-center gap-4">
           <Link href="/sign-in" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
             Sign In
           </Link>
-          <Link
-            href="/sign-up"
-            className="text-sm font-bold bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F] px-5 py-2.5 rounded-sm transition-colors uppercase tracking-wider"
-          >
-            Become a Member
-          </Link>
+          {betaMode ? (
+            <Link
+              href="/subscribe"
+              className="text-sm font-bold bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F] px-5 py-2.5 rounded-sm transition-colors uppercase tracking-wider"
+            >
+              Join the Waitlist
+            </Link>
+          ) : (
+            <Link
+              href="/sign-up"
+              className="text-sm font-bold bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F] px-5 py-2.5 rounded-sm transition-colors uppercase tracking-wider"
+            >
+              Become a Member
+            </Link>
+          )}
         </div>
       </div>
     </nav>
@@ -73,6 +86,7 @@ function LandingNav() {
 
 /* ---------------- HERO ---------------- */
 function HeroSection() {
+  const { betaMode } = useLaunchConfig();
   const pillars = [
     {
       icon: Shield,
@@ -139,7 +153,7 @@ function HeroSection() {
               href="/subscribe"
               className="w-full sm:w-auto px-8 py-4 border border-[#FFC107]/40 hover:bg-[#FFC107]/10 text-white font-bold uppercase tracking-widest text-sm transition-colors rounded-sm text-center flex items-center justify-center gap-2"
             >
-              Become a Member · $19.99/mo
+              {betaMode ? "Join the Waitlist" : "Become a Member · $19.99/mo"}
             </Link>
           </div>
 
@@ -195,6 +209,7 @@ function HeroSection() {
 
 /* ---------------- ACCESS SUMMARY (Free vs Members) ---------------- */
 function AccessSummarySection() {
+  const { betaMode } = useLaunchConfig();
   return (
     <section className="py-16 bg-[#060D1F] border-y border-[#FFC107]/10">
       <div className="max-w-6xl mx-auto px-6">
@@ -231,8 +246,12 @@ function AccessSummarySection() {
 
           <div className="bg-gradient-to-b from-[#112454] to-[#0D1B3E] p-7 border-l-2 border-[#FFC107]">
             <div className="flex items-center justify-between mb-4">
-              <div className="text-[#FFC107] font-bold text-lg">Members · $19.99/mo</div>
-              <div className="text-white/40 text-xs font-mono uppercase tracking-widest">Cancel any time</div>
+              <div className="text-[#FFC107] font-bold text-lg">
+                {betaMode ? "Members · Coming Soon" : "Members · $19.99/mo"}
+              </div>
+              <div className="text-white/40 text-xs font-mono uppercase tracking-widest">
+                {betaMode ? "Open Beta" : "Cancel any time"}
+              </div>
             </div>
             <ul className="space-y-2.5 text-sm text-white/85">
               <li className="flex items-start gap-2.5">
@@ -653,12 +672,60 @@ function TrackRecordSection() {
 
 /* ---------------- MEMBERSHIP ---------------- */
 function MembershipSection() {
+  const { betaMode, promotionTrigger } = useLaunchConfig();
+
+  const membersTier = betaMode
+    ? {
+        name: "Members",
+        tagline:
+          "Open Beta is live. Paid Membership opens when the model earns it — not before.",
+        billingNote: "Open Beta — paid not yet available",
+        price: "Coming Soon",
+        priceUnit: undefined as string | undefined,
+        priceMeta: promotionTrigger,
+        cta: "Join the Waitlist",
+        ctaHref: "/subscribe",
+        ctaStyle: "bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F]",
+        features: [
+          { ok: true, text: "Every pick the model surfaces — Official + Model Watch — every day" },
+          { ok: true, text: "Edge, EV, and CLV on every pick — the same data the model uses to rank it" },
+          { ok: true, text: "Best-line shopping across 8+ sportsbooks, refreshed every 10 minutes" },
+          { ok: true, text: "Parlay Builder + Bet Tracker with Kelly sizing" },
+          { ok: true, text: "Public grading the next morning — your record is our record" },
+        ],
+        highlight: true,
+        badge: "Coming Soon",
+      }
+    : {
+        name: "Members",
+        tagline:
+          "See every pick the model surfaces, with the edge and CLV that justify it — graded publicly the next morning.",
+        billingNote: "Billed as MVP",
+        price: "$19.99",
+        priceUnit: "/ mo" as string | undefined,
+        priceMeta: "Or $149 billed annually · save 38%",
+        cta: "Become a Member",
+        ctaHref: "/subscribe",
+        ctaStyle: "bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F]",
+        features: [
+          { ok: true, text: "Every pick the model surfaces — Official + Model Watch — every day" },
+          { ok: true, text: "Edge, EV, and CLV on every pick — the same data the model uses to rank it" },
+          { ok: true, text: "Best-line shopping across 8+ sportsbooks, refreshed every 10 minutes" },
+          { ok: true, text: "Parlay Builder + Bet Tracker with Kelly sizing" },
+          { ok: true, text: "Public grading the next morning — your record is our record" },
+        ],
+        highlight: true,
+        badge: "Most Popular",
+      };
+
   const tiers = [
     {
       name: "Guest Pass",
       tagline: "Verify the model before you commit.",
       price: "Free",
+      priceUnit: undefined as string | undefined,
       priceMeta: "No card required",
+      billingNote: undefined as string | undefined,
       cta: "Start Free",
       ctaHref: "/sign-up",
       ctaStyle: "border border-white/20 hover:bg-white/5 text-white",
@@ -669,28 +736,9 @@ function MembershipSection() {
         { ok: false, text: "No full slate or history" },
       ],
       highlight: false,
-      badge: null,
+      badge: null as string | null,
     },
-    {
-      name: "Members",
-      tagline: "See every pick the model surfaces, with the edge and CLV that justify it — graded publicly the next morning.",
-      billingNote: "Billed as MVP",
-      price: "$19.99",
-      priceUnit: "/ mo",
-      priceMeta: "Or $149 billed annually · save 38%",
-      cta: "Become a Member",
-      ctaHref: "/subscribe",
-      ctaStyle: "bg-[#FFC107] hover:bg-[#FFD54F] text-[#060D1F]",
-      features: [
-        { ok: true, text: "Every pick the model surfaces — Official + Model Watch — every day" },
-        { ok: true, text: "Edge, EV, and CLV on every pick — the same data the model uses to rank it" },
-        { ok: true, text: "Best-line shopping across 8+ sportsbooks, refreshed every 10 minutes" },
-        { ok: true, text: "Parlay Builder + Bet Tracker with Kelly sizing" },
-        { ok: true, text: "Public grading the next morning — your record is our record" },
-      ],
-      highlight: true,
-      badge: "Most Popular",
-    },
+    membersTier,
   ];
 
   return (
@@ -701,11 +749,12 @@ function MembershipSection() {
             Access Tiers
           </div>
           <h2 className="text-4xl md:text-5xl font-bold mb-6 text-white" style={{ fontFamily: SERIF }}>
-            Choose your level of access.
+            {betaMode ? "We're in Open Beta." : "Choose your level of access."}
           </h2>
           <p className="text-white/60 font-light text-lg">
-            Start free. Upgrade when the picks prove themselves. Cancel any time —
-            no contracts, no pressure.
+            {betaMode
+              ? "Free Guest Pass is live now. Paid Membership opens when the model earns it — not before."
+              : "Start free. Upgrade when the picks prove themselves. Cancel any time — no contracts, no pressure."}
           </p>
         </div>
 

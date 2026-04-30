@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useAuth } from "@clerk/react";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
+import { useLaunchConfig } from "@/hooks/useLaunchConfig";
 import { Crown, Star, Shield, ChevronDown, LogOut, Settings, Lock } from "lucide-react";
 
 const SERIF = "'Playfair Display', serif";
@@ -19,6 +20,7 @@ export function Navigation() {
   const [location] = useLocation();
   const { isSignedIn, isLoaded, signOut } = useAuth();
   const { tier } = useCurrentUser();
+  const { betaMode } = useLaunchConfig();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -88,7 +90,7 @@ export function Navigation() {
                   className="hidden md:flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-[#060D1F] bg-[#FFC107] hover:bg-[#FFD54F] transition-colors rounded-sm px-3 py-1.5"
                 >
                   <Crown size={12} />
-                  Upgrade
+                  {betaMode ? "Join Waitlist" : "Upgrade"}
                 </Link>
               )}
 
@@ -132,7 +134,7 @@ export function Navigation() {
                         className="flex items-center gap-2 px-3 py-2 text-xs text-[#FFC107] hover:bg-[#FFC107]/10 transition-colors font-bold"
                       >
                         <Crown size={12} />
-                        Upgrade to MVP
+                        {betaMode ? "Join the Waitlist" : "Upgrade to MVP"}
                       </Link>
                     )}
                     <div className="border-t border-[#1A3066] mt-1 pt-1">

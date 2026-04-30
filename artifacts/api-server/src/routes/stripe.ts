@@ -3,6 +3,7 @@ import { getAuth } from '@clerk/express';
 import { storage } from '../storage';
 import { stripeService } from '../stripeService';
 import { getUncachableStripeClient } from '../stripeClient';
+import { getBlockedTiersForNewCheckout } from '../config/launchConfig';
 
 const router = Router();
 
@@ -10,10 +11,14 @@ const router = Router();
  * Tiers that may not be acquired by new checkouts. Backend continues to
  * recognize these tiers on existing subscriptions (account display, webhook
  * sync, etc.) but they are removed from the public price list and rejected
- * by the checkout endpoint. As of the launch-polish pass, mvp_pro ($39.99
- * "Inner Circle") is the only blocked tier — sales of it are retired.
+ * by the checkout endpoint.
+ *
+ * The static block is `mvp_pro` (retired "Inner Circle"). When BETA_MODE
+ * is on (June 1 open beta), `mvp` is also added so no new paid checkouts
+ * can be created during beta. The set is computed per-request via
+ * `getBlockedTiersForNewCheckout()` so flipping BETA_MODE flips the gate
+ * without a process restart.
  */
-const BLOCKED_TIERS_FOR_NEW_CHECKOUT = new Set(['mvp_pro']);
 
 function getBaseUrl(req: any): string {
   const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
@@ -32,8 +37,9 @@ router.get('/stripe/prices', async (_req, res) => {
 
     // Only include SportsMVP products (they have a tier metadata field)
     // and exclude any tier retired from new acquisition.
+    const blockedTiers = getBlockedTiersForNewCheckout();
     const sportProducts = productsRes.data.filter(
-      p => p.metadata?.tier && !BLOCKED_TIERS_FOR_NEW_CHECKOUT.has(p.metadata.tier)
+      p => p.metadata?.tier && !blockedTiers.has(p.metadata.tier)
     );
 
     const productMap = new Map<string, any>();
@@ -88,8 +94,11 @@ router.post('/stripe/checkout', async (req, res) => {
       ? price.product
       : null;
     const tier = product?.metadata?.tier;
-    if (tier && BLOCKED_TIERS_FOR_NEW_CHECKOUT.has(tier)) {
-      return res.status(410).json({ error: 'This plan is no longer available for new subscriptions.' });
+    if (tier && getBlockedTiersForNewCheckout().has(tier)) {
+      return res.status(410).json({
+        error: 'This plan is no longer available for new subscriptions.',
+        code: 'blocked_tier',
+      });
     }
 
     const user = await storage.getUser(userId);

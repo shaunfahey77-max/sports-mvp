@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '@workspace/db';
-import { users } from '@workspace/db';
+import { users, waitlistSignups } from '@workspace/db';
 
 export class Storage {
   async getUser(clerkUserId: string) {
@@ -50,6 +50,39 @@ export class Storage {
       .where(eq(users.email, email))
       .returning();
     return user ?? null;
+  }
+
+  /**
+   * Idempotent waitlist insert. Email is normalized to lowercase before
+   * upsert and de-duped against the unique index. Repeated signups update
+   * the optional attribution fields (clerkUserId, source) so we keep the
+   * most-recent context, but never create duplicate rows. Returns the
+   * persisted row regardless of insert vs update.
+   */
+  async addWaitlistSignup(input: {
+    email: string;
+    clerkUserId?: string | null;
+    source?: string | null;
+  }) {
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const [row] = await db
+      .insert(waitlistSignups)
+      .values({
+        email: normalizedEmail,
+        clerkUserId: input.clerkUserId ?? null,
+        source: input.source ?? null,
+      })
+      .onConflictDoUpdate({
+        target: waitlistSignups.email,
+        set: {
+          // Refresh attribution if we have a stronger signal this time
+          // (e.g. an anonymous signup later happens while signed in).
+          clerkUserId: sql`COALESCE(${waitlistSignups.clerkUserId}, EXCLUDED.clerk_user_id)`,
+          source: sql`COALESCE(EXCLUDED.source, ${waitlistSignups.source})`,
+        },
+      })
+      .returning();
+    return row;
   }
 }
 
