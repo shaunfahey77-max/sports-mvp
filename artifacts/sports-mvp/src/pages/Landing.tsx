@@ -132,7 +132,9 @@ function HeroSection() {
             style={{ fontFamily: SERIF }}
           >
             Sportsbook-grade math.{" "}
-            <span className="italic text-[#FFC107]">Member-only picks.</span>{" "}
+            <span className="italic text-[#FFC107]">
+              {betaMode ? "Open Beta — free for everyone." : "Member-only picks."}
+            </span>{" "}
             Public grading.
           </h1>
 
@@ -798,7 +800,9 @@ function MembershipSection() {
                 <div className="inline-flex items-center self-start gap-1.5 mb-6 px-2.5 py-1 rounded-full border border-white/20 bg-white/5">
                   <Check size={11} className="text-[#388E3C]" />
                   <span className="text-[11px] text-white/70 font-mono uppercase tracking-wide">
-                    Cancel any time · no contracts
+                    {betaMode
+                      ? "Free during Open Beta · join the waitlist"
+                      : "Cancel any time · no contracts"}
                   </span>
                 </div>
               )}
