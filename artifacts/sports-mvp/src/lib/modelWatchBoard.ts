@@ -28,16 +28,41 @@ export const MODEL_WATCH_BOARD_DISCLAIMER =
   "These are ranked leans, not Official picks. They do not count toward performance, CLV reporting, or History.";
 
 /**
+ * Allowed `selectionReason` values for any candidate that may surface on
+ * the Member Model Watch board OR the Free single-card fallback. Both
+ * surfaces frame themselves as "markets we're actively evaluating", so
+ * disabled-market PASS rows (selection_reason='market_disabled') and
+ * other PASS reasons (insufficient_edge, negative_ev, …) must never
+ * leak in even when their rankScore happens to be the strongest of the
+ * day. Encoded as a Set so the rule lives in one place and is impossible
+ * to bypass from any call site.
+ */
+export const MEMBER_BOARD_ALLOWED_SELECTION_REASONS: ReadonlySet<string> =
+  new Set(["model_watch_only"]);
+
+/**
  * Minimal shape of a candidate the selector cares about. Kept structural
  * (not tied to the generated CandidateBet) so the test can construct
  * lightweight fixtures without dragging in the whole API client.
  *
  * `rankScore` and `ev` may arrive as strings from the wire; the selector
  * coerces with Number() to match the rest of the dashboard.
+ *
+ * `selectionReason` mirrors the optional/nullable field on the wire
+ * `CandidateBet` schema; the selector requires it to be
+ * `'model_watch_only'` for any row that is allowed onto the board.
  */
 export interface RankableCandidate {
   rankScore: number | string;
   ev: number | string;
+  selectionReason?: string | null;
+}
+
+function isAllowedSelectionReason(c: RankableCandidate): boolean {
+  return (
+    typeof c.selectionReason === "string" &&
+    MEMBER_BOARD_ALLOWED_SELECTION_REASONS.has(c.selectionReason)
+  );
 }
 
 function toNum(v: number | string): number {
@@ -57,7 +82,17 @@ export function selectModelWatchBoardCandidates<T extends RankableCandidate>(
 ): T[] {
   if (passCandidates.length === 0) return [];
 
-  const sorted = [...passCandidates].sort(
+  // Filter against the allowed-selectionReason invariant BEFORE sorting
+  // and slicing. The PASS tier is a union of multiple reasons, and rows
+  // like nba_moneyline (selectionReason='market_disabled') can have the
+  // strongest rankScore of the day — without this filter they would win
+  // a board slot and render with the disabled-market copy. Centralising
+  // the filter here means every call site (Dashboard, fallback section,
+  // future surfaces) inherits the rule for free.
+  const eligible = passCandidates.filter(isAllowedSelectionReason);
+  if (eligible.length === 0) return [];
+
+  const sorted = [...eligible].sort(
     (a, b) => toNum(b.rankScore) - toNum(a.rankScore)
   );
 
@@ -132,23 +167,41 @@ export function selectFallbackSection<T extends RankableCandidate>(args: {
 }): DashboardFallbackSection<T> {
   const { passCandidates, isMvp } = args;
 
-  if (passCandidates.length === 0) {
+  // Apply the allowed-selectionReason invariant up-front so BOTH the
+  // Free single-card surface and the Member board agree on what's
+  // eligible. Without this, a high-rankScore disabled-market PASS row
+  // would leak into the Free fallback card just as easily as the Member
+  // board (one disabled card with a strong rankScore => identical
+  // exposure on the Public surface).
+  const eligible = passCandidates.filter(isAllowedSelectionReason);
+
+  if (eligible.length === 0) {
     return { kind: "no-action" };
   }
 
   if (!isMvp) {
-    // Free / signed-out: single highest-ranked PASS card. Mirrors the
-    // existing reduce() in Dashboard.tsx exactly so behavior is unchanged
-    // for the Public surface.
-    const candidate = passCandidates.reduce((best, c) =>
+    // Free / signed-out: single highest-ranked eligible PASS card.
+    // Mirrors the existing reduce() in Dashboard.tsx but operates on
+    // the post-filter list so disabled-market rows can never appear.
+    const candidate = eligible.reduce((best, c) =>
       toNum(c.rankScore) > toNum(best.rankScore) ? c : best
     );
     return { kind: "free-fallback", candidate };
   }
 
+  const cards = selectModelWatchBoardCandidates(eligible);
+  // Defensive: if the board selector somehow returns nothing (e.g.
+  // future quality-gate work shrinks the eligible pool to zero), fall
+  // through to no-action rather than rendering an empty Member board
+  // shell. selectModelWatchBoardCandidates already filters for the
+  // allowed reasons, so this also covers the all-disabled case.
+  if (cards.length === 0) {
+    return { kind: "no-action" };
+  }
+
   return {
     kind: "member-board",
-    cards: selectModelWatchBoardCandidates(passCandidates),
+    cards,
     title: MODEL_WATCH_BOARD_TITLE,
     disclaimer: MODEL_WATCH_BOARD_DISCLAIMER,
   };

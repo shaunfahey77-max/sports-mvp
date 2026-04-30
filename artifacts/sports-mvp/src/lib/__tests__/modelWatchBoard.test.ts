@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   selectModelWatchBoardCandidates,
   selectFallbackSection,
+  MEMBER_BOARD_ALLOWED_SELECTION_REASONS,
   MODEL_WATCH_BOARD_TITLE,
   MODEL_WATCH_BOARD_DISCLAIMER,
   MODEL_WATCH_BOARD_DEFAULT_TARGET,
@@ -10,15 +11,31 @@ import {
   MODEL_WATCH_BOARD_QUALITY_RATIO,
 } from "../modelWatchBoard";
 
-// Each fixture carries the two fields the selector reads + an `id` so the
+// Each fixture carries the three fields the selector reads + an `id` so the
 // returned ordering is easy to assert against. Real PASS rows have many
 // more fields; we keep this minimal to make intent obvious.
-type Fixture = { id: string; rankScore: number; ev: number };
+//
+// `selectionReason` defaults to 'model_watch_only' (the only reason the
+// post-task-#38 selector accepts onto the board / Free fallback). Tests
+// that exercise the disabled-market filter pass an explicit non-allowed
+// reason via the optional 4th argument.
+type Fixture = {
+  id: string;
+  rankScore: number;
+  ev: number;
+  selectionReason: string;
+};
 
-const c = (id: string, rankScore: number, ev: number): Fixture => ({
+const c = (
+  id: string,
+  rankScore: number,
+  ev: number,
+  selectionReason: string = "model_watch_only",
+): Fixture => ({
   id,
   rankScore,
   ev,
+  selectionReason,
 });
 
 test("selector: empty input → empty board (no Action Today path stays untouched)", () => {
@@ -101,8 +118,18 @@ test("selector: input order is irrelevant — selector always sorts by rankScore
 
 test("selector: rankScore arriving as string is coerced (matches CandidateBet wire shape)", () => {
   const board = selectModelWatchBoardCandidates([
-    { id: "x", rankScore: "0.95", ev: "0.05" },
-    { id: "y", rankScore: "0.90", ev: "0.04" },
+    {
+      id: "x",
+      rankScore: "0.95",
+      ev: "0.05",
+      selectionReason: "model_watch_only",
+    },
+    {
+      id: "y",
+      rankScore: "0.90",
+      ev: "0.04",
+      selectionReason: "model_watch_only",
+    },
   ]);
   assert.deepEqual(board.map((x) => (x as { id: string }).id), ["x", "y"]);
 });
@@ -294,4 +321,198 @@ test("dashboard (a) extra: Free user with 5 strong PASS candidates STILL gets ex
   if (section.kind !== "free-fallback") return;
   // Only the highest-ranked candidate is exposed.
   assert.equal(section.candidate.id, "f1");
+});
+
+// ---------------------------------------------------------------------------
+// Task #38: disabled-market / non-eligible PASS reasons MUST NOT leak onto
+// the Member Model Watch board OR the Free single-card fallback.
+//
+// Background: PASS-tier today is a union of multiple selectionReasons.
+// Markets like nba_moneyline produce high-rankScore PASS candidates with
+// selectionReason='market_disabled'. Without an explicit filter the
+// previous selector would slot the strongest PASS row of the day onto
+// the board and render the giveaway "Market disabled in current model
+// config." copy on a board framed as "markets we're actively evaluating".
+// These tests pin the new invariant so any future regression fails loudly.
+// ---------------------------------------------------------------------------
+
+const ALL_NON_ELIGIBLE_PASS_REASONS = [
+  "insufficient_edge",
+  "negative_ev",
+  "market_quality_too_low",
+  "odds_out_of_range",
+  "rank_score_below_threshold",
+  "market_disabled",
+] as const;
+
+test("invariant: allowed reasons set is exactly { 'model_watch_only' } (single source of truth)", () => {
+  // The exported Set is what the selector consults; assert the contents
+  // explicitly so a future widening (e.g. accidentally adding
+  // 'rank_score_below_threshold') is caught immediately by this test.
+  assert.equal(MEMBER_BOARD_ALLOWED_SELECTION_REASONS.size, 1);
+  assert.ok(MEMBER_BOARD_ALLOWED_SELECTION_REASONS.has("model_watch_only"));
+  for (const r of ALL_NON_ELIGIBLE_PASS_REASONS) {
+    assert.ok(
+      !MEMBER_BOARD_ALLOWED_SELECTION_REASONS.has(r),
+      `reason '${r}' must NOT be allowed on the board`,
+    );
+  }
+});
+
+test("task #38 (a): high-rankScore market_disabled row is excluded; lower-ranked model_watch_only rows still surface in rankScore order", () => {
+  // The disabled row has the strongest rankScore of the day — pre-fix
+  // this would have won the #1 board slot and rendered the disabled-
+  // market copy. Post-fix it must be filtered before sort/slice.
+  const board = selectModelWatchBoardCandidates([
+    c("disabled-strong", 1.0, 0.20, "market_disabled"),
+    c("watch-mid", 0.85, 0.05),
+    c("watch-low", 0.70, 0.03),
+  ]);
+  assert.deepEqual(board.map((x) => x.id), ["watch-mid", "watch-low"]);
+  for (const row of board) {
+    assert.equal(row.selectionReason, "model_watch_only");
+  }
+});
+
+test("task #38 (b): mixed PASS pool spanning every selectionReason → only the model_watch_only entries appear, in rankScore order", () => {
+  const board = selectModelWatchBoardCandidates([
+    c("ie", 0.99, 0.10, "insufficient_edge"),
+    c("nev", 0.98, 0.10, "negative_ev"),
+    c("mql", 0.97, 0.10, "market_quality_too_low"),
+    c("oor", 0.96, 0.10, "odds_out_of_range"),
+    c("rsbt", 0.95, 0.10, "rank_score_below_threshold"),
+    c("md", 0.94, 0.10, "market_disabled"),
+    c("watch-3", 0.60, 0.05),
+    c("watch-1", 0.90, 0.10),
+    c("watch-2", 0.80, 0.05),
+  ]);
+  assert.deepEqual(board.map((x) => x.id), ["watch-1", "watch-2", "watch-3"]);
+  for (const row of board) {
+    assert.equal(row.selectionReason, "model_watch_only");
+  }
+});
+
+test("task #38 (c): PASS pool is entirely market_disabled → selector returns [] AND member fallback is 'no-action'", () => {
+  const onlyDisabled = [
+    c("md1", 1.0, 0.20, "market_disabled"),
+    c("md2", 0.95, 0.18, "market_disabled"),
+    c("md3", 0.90, 0.16, "market_disabled"),
+  ];
+  assert.deepEqual(selectModelWatchBoardCandidates(onlyDisabled), []);
+
+  const memberSection = selectFallbackSection({
+    passCandidates: onlyDisabled,
+    isMvp: true,
+  });
+  // Critical: member view falls through to the existing empty state,
+  // NOT an empty member-board shell carrying the title/disclaimer.
+  assert.equal(memberSection.kind, "no-action");
+});
+
+test("task #38 (d): all-disabled PASS pool with isMvp=false → 'no-action' (NEVER a free-fallback card showing a disabled market)", () => {
+  // The original Free single-card fallback had the identical exposure
+  // as the Member board: one disabled card with a strong rankScore
+  // would have leaked through. Lock it down explicitly.
+  const onlyDisabled = [
+    c("md1", 1.0, 0.20, "market_disabled"),
+    c("md2", 0.95, 0.18, "market_disabled"),
+  ];
+  const section = selectFallbackSection({
+    passCandidates: onlyDisabled,
+    isMvp: false,
+  });
+  assert.equal(section.kind, "no-action");
+});
+
+test("task #38 (e): property-style — for any input, every returned card has selectionReason === 'model_watch_only'", () => {
+  // Build a deterministic but varied set of inputs that mixes every
+  // known selectionReason at every rank position, in different orders
+  // and lengths. This isn't a true randomized property test but it's a
+  // small finite cover of the cases the selector can encounter in
+  // production, and the invariant being asserted is universal.
+  const reasonsPool: (string | null | undefined)[] = [
+    "model_watch_only",
+    "insufficient_edge",
+    "negative_ev",
+    "market_quality_too_low",
+    "odds_out_of_range",
+    "rank_score_below_threshold",
+    "market_disabled",
+    null,
+    undefined,
+  ];
+  const cases: Fixture[][] = [];
+  // Several pseudo-random pools: rotate the reason list across positions
+  // so the disabled / non-eligible reasons fall at the top in some
+  // pools and at the bottom in others.
+  for (let shift = 0; shift < reasonsPool.length; shift++) {
+    const pool: Fixture[] = [];
+    for (let i = 0; i < reasonsPool.length; i++) {
+      const reason = reasonsPool[(i + shift) % reasonsPool.length];
+      pool.push({
+        id: `s${shift}-i${i}`,
+        rankScore: 1.0 - i * 0.05,
+        ev: 0.05 - i * 0.005,
+        selectionReason: reason ?? null,
+      } as Fixture);
+    }
+    cases.push(pool);
+  }
+
+  for (const pool of cases) {
+    const board = selectModelWatchBoardCandidates(pool);
+    for (const card of board) {
+      assert.equal(
+        card.selectionReason,
+        "model_watch_only",
+        `pool produced disallowed card ${JSON.stringify(card)}`,
+      );
+    }
+
+    const memberSection = selectFallbackSection({
+      passCandidates: pool,
+      isMvp: true,
+    });
+    if (memberSection.kind === "member-board") {
+      for (const card of memberSection.cards) {
+        assert.equal(card.selectionReason, "model_watch_only");
+      }
+    }
+
+    const freeSection = selectFallbackSection({
+      passCandidates: pool,
+      isMvp: false,
+    });
+    if (freeSection.kind === "free-fallback") {
+      assert.equal(freeSection.candidate.selectionReason, "model_watch_only");
+    }
+  }
+});
+
+test("task #38: Free fallback with mixed pool picks the highest-ranked model_watch_only row (skipping a stronger disabled one)", () => {
+  const section = selectFallbackSection({
+    passCandidates: [
+      c("disabled-strong", 1.0, 0.20, "market_disabled"),
+      c("watch-best", 0.85, 0.05),
+      c("watch-other", 0.80, 0.04),
+    ],
+    isMvp: false,
+  });
+  assert.equal(section.kind, "free-fallback");
+  if (section.kind !== "free-fallback") return;
+  assert.equal(section.candidate.id, "watch-best");
+  assert.equal(section.candidate.selectionReason, "model_watch_only");
+});
+
+test("task #38: missing/null selectionReason is treated as ineligible (defensive default)", () => {
+  // Wire schema marks selectionReason as optional/nullable. Belt-and-
+  // braces: if a row arrives without one, the selector must NOT promote
+  // it onto the board (we'd rather show fewer cards than show a row
+  // whose disposition we can't confirm).
+  const board = selectModelWatchBoardCandidates([
+    { id: "no-reason", rankScore: 1.0, ev: 0.10 },
+    { id: "null-reason", rankScore: 0.95, ev: 0.10, selectionReason: null },
+    c("watch-only", 0.80, 0.05),
+  ]);
+  assert.deepEqual(board.map((x) => (x as { id: string }).id), ["watch-only"]);
 });

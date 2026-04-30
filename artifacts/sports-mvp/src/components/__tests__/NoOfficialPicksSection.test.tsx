@@ -42,7 +42,10 @@ const passBet = (id: string, rankScore: string): CandidateBet =>
     modelProbCalibrated: "0.5512",
     marketProbFair: "0.5091",
     tier: "PASS",
-    selectionReason: "rank_score_below_threshold",
+    // Member board / Free fallback may only ever surface model_watch_only
+    // PASS rows after task #38; setting the eligible reason here keeps the
+    // pre-existing render assertions valid under the new invariant.
+    selectionReason: "model_watch_only",
     gameKey: `2026-04-29-NFL-${id}`,
     eventCommenceTime: "2026-04-29T18:00:00Z",
     bookmaker: "draftkings",
