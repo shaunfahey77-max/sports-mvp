@@ -398,6 +398,16 @@ function DistributionPanel({
 // Official record. Sourced from the brand-new /performance/model-watch
 // endpoint — never from scored_picks / validation_metrics.
 
+// Sample-size threshold below which Watch win-rate readings are flagged
+// inline as "sample still small". Matches the n>=20 floor we use for the
+// Official CLV hit-rate display so the two surfaces stay consistent.
+const WATCH_SMALL_SAMPLE_FLOOR = 20;
+
+// Static breakeven baseline for standard −110 juice. Kept as an
+// approximation on purpose — a per-market dynamic figure is out of scope
+// for this presentation reshape (see Task #35 "Out of scope").
+const BREAKEVEN_AT_MINUS_110 = "breakeven \u2248 52.4% at \u2212110";
+
 export function ModelWatchStrip({
   data,
   isLoading,
@@ -408,10 +418,12 @@ export function ModelWatchStrip({
   windowDays: number;
 }) {
   const isEmpty = !!data && data.leansGraded === 0;
+  const isSmallSample =
+    !!data && data.leansGraded > 0 && data.leansGraded < WATCH_SMALL_SAMPLE_FLOOR;
 
   return (
     <section data-testid="model-watch-strip">
-      <div className="flex items-center gap-2 mb-5 text-[11px] font-bold uppercase tracking-[0.2em] text-white/40">
+      <div className="flex items-center gap-2 mb-4 text-[11px] font-bold uppercase tracking-[0.2em] text-white/40">
         <span className="text-white/40"><FlaskConical size={12} /></span>
         Model Watch — Live Evaluation Lane
         <span className="ml-1 px-1.5 py-0.5 rounded-sm bg-white/10 text-white/70 text-[9px] tracking-[0.15em]">
@@ -420,109 +432,96 @@ export function ModelWatchStrip({
         <span className="flex-1 h-px bg-white/10 ml-2" />
       </div>
 
-      <div className="rounded-sm border border-dashed border-white/15 bg-[#0A1530]/60 p-6">
-        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-5">
-          <div className="max-w-2xl">
-            <p className="text-sm text-white/65 leading-relaxed">
-              A separate evaluation lane for markets that aren't yet trusted enough for the Official record.
-              These leans are graded the same way but live in their own scoreboard.
-            </p>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-white/45 mt-3">
-              Does not count toward Official performance or history.
-            </p>
-          </div>
-          <div className="text-[10px] uppercase tracking-widest text-white/35 md:text-right">
-            Last {windowDays} days
-          </div>
+      <div className="rounded-sm border border-dashed border-white/15 bg-[#0A1530]/40 px-5 py-4">
+        {/* Lead copy — replaces the old hero framing. The "Not a track
+            record" line absorbs the prior "does not count toward Official"
+            disclaimer so we don't double-up on the same warning. */}
+        <p className="text-sm text-white/65 leading-relaxed max-w-2xl">
+          Evaluation cohort — markets being measured for possible promotion to Official.
+        </p>
+        <p className="text-[11px] text-white/45 mt-1.5">
+          Not a track record. Does not affect Official numbers.
+        </p>
+
+        {/* Scope chips — window / leans graded / active markets render
+            here as small low-weight context, not as hero tiles. */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-4">
+          <ScopeChip>{windowDays}d window</ScopeChip>
+          <ScopeChip>
+            {data ? `${data.leansGraded} leans graded` : "\u2014 leans graded"}
+          </ScopeChip>
+          <ScopeChip>
+            {data
+              ? `${data.activeMarkets} / ${data.totalRegistryMarkets} markets active`
+              : "\u2014 / \u2014 markets active"}
+          </ScopeChip>
         </div>
 
-        {isLoading ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => (
-              <Skeleton key={i} className="h-24 rounded-sm bg-white/5" />
-            ))}
-          </div>
-        ) : !data ? (
-          <div className="text-white/45 text-sm py-2">
-            Model Watch summary is temporarily unavailable.
-          </div>
-        ) : isEmpty ? (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <WatchStat label="Leans Graded" value="—" />
-              <WatchStat label="Win Rate" value="—" />
-              <WatchStat label="Mean CLV" value="—" />
-              <WatchStat
-                label="Active Markets"
-                value={`${data.activeMarkets} / ${data.totalRegistryMarkets}`}
-                subLabel="active evaluation markets"
-              />
+        {/* Metrics readout — two-line compact form. Mean CLV is the
+            primary signal; Win rate is reported with breakeven context so
+            it cannot be read as a standalone scoreboard headline. */}
+        <div className="mt-4 min-h-[3.5rem]">
+          {isLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-72 max-w-full rounded-sm bg-white/5" />
+              <Skeleton className="h-4 w-96 max-w-full rounded-sm bg-white/5" />
             </div>
-            <p className="text-white/45 text-sm mt-5">
+          ) : !data ? (
+            <p className="text-white/45 text-sm">
+              Model Watch summary is temporarily unavailable.
+            </p>
+          ) : isEmpty ? (
+            <p className="text-white/45 text-sm">
               No graded Model Watch picks in this window yet.
             </p>
-          </>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <WatchStat
-              label="Leans Graded"
-              value={data.leansGraded.toString()}
-              tooltip="Resolved Model Watch picks in the selected window (wins + losses + pushes). Pending picks are excluded."
-            />
-            <WatchStat
-              label="Win Rate"
-              value={formatPercentage(data.winRate)}
-              tooltip="wins / (wins + losses) on Model Watch picks. Pushes excluded — same convention as Official."
-            />
-            <WatchStat
-              label="Mean CLV"
-              value={
-                data.clvSampleSize > 0
-                  ? `${data.meanClv >= 0 ? "+" : ""}${formatPercentage(data.meanClv)}`
-                  : "—"
-              }
-              subLabel={data.clvSampleSize > 0 ? `n=${data.clvSampleSize}` : "no closing line data"}
-              tooltip="Average closing-line value on Watch picks. Same |delta| ≤ 0.20 filter as Official."
-            />
-            <WatchStat
-              label="Active Markets"
-              value={`${data.activeMarkets} / ${data.totalRegistryMarkets}`}
-              subLabel="active evaluation markets"
-              tooltip="Markets in the Model Watch registry that have at least one graded pick in the selected window, over the total Watch registry size."
-            />
-          </div>
-        )}
+          ) : (
+            <div className="space-y-1.5">
+              <div className="text-sm text-white/85 flex items-center flex-wrap">
+                <span className="text-white/50 mr-1.5">Mean CLV:</span>
+                <span className="font-medium text-white/90">
+                  {data.clvSampleSize > 0
+                    ? `${data.meanClv >= 0 ? "+" : ""}${formatPercentage(data.meanClv)}`
+                    : "\u2014"}
+                </span>
+                <span className="text-white/45 ml-1.5">
+                  {data.clvSampleSize > 0
+                    ? `(n=${data.clvSampleSize})`
+                    : "(no closing line data)"}
+                </span>
+                <InfoTooltip content="Average closing-line value on Watch picks. Same |delta| ≤ 0.20 filter as Official. Primary evaluation signal." />
+              </div>
+              <div className="text-sm text-white/65 flex items-center flex-wrap">
+                <span className="text-white/50 mr-1.5">Win rate:</span>
+                <span className="font-medium text-white/80">
+                  {formatPercentage(data.winRate)}
+                </span>
+                <span className="text-white/45 ml-1.5">
+                  ({BREAKEVEN_AT_MINUS_110})
+                </span>
+                {isSmallSample && (
+                  <span className="text-white/45 ml-1.5">
+                    {"\u2014 sample still small"}
+                  </span>
+                )}
+                <InfoTooltip content="wins / (wins + losses) on Model Watch picks. Pushes excluded — same convention as Official. Read as an evaluation reading, not a track record." />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Promotion criteria — qualitative only, no thresholds. */}
+        <p className="text-[11px] text-white/40 mt-4 italic">
+          Promotion requires sustained positive CLV and enough graded sample.
+        </p>
       </div>
     </section>
   );
 }
 
-function WatchStat({
-  label,
-  value,
-  subLabel,
-  tooltip,
-}: {
-  label: string;
-  value: string;
-  subLabel?: string;
-  tooltip?: string;
-}) {
+function ScopeChip({ children }: { children: React.ReactNode }) {
   return (
-    <div className="bg-[#0D1B3E]/60 border border-white/10 rounded-sm p-4">
-      <div className="text-[10px] uppercase tracking-widest text-white/40 mb-2 flex items-center">
-        {label}
-        {tooltip && <InfoTooltip content={tooltip} />}
-      </div>
-      <div
-        className="text-2xl font-bold leading-none text-white/90"
-        style={{ fontFamily: SERIF }}
-      >
-        {value}
-      </div>
-      {subLabel && (
-        <div className="text-[10px] text-white/40 mt-2">{subLabel}</div>
-      )}
-    </div>
+    <span className="inline-flex items-center px-2 py-0.5 rounded-sm bg-white/5 border border-white/10 text-[10px] uppercase tracking-widest text-white/55">
+      {children}
+    </span>
   );
 }
