@@ -80,6 +80,37 @@ test("isBetaMode: FALSE when value is empty string (treats blank as 'not opted i
 });
 
 // ─── getBlockedTiersForNewCheckout() ───────────────────────────────
+//
+// CONTRACT NOTE — read before editing these tests.
+//
+// The blocked-tier set is the union of TWO independent blocks, not a
+// single beta switch. Some task summaries describe this as
+// "BETA_MODE=true → block mvp; otherwise → empty list", which is a
+// simplification. The real, product-correct contract is:
+//
+//   STATIC block (always on, independent of BETA_MODE):
+//     - 'mvp_pro'  — the retired $39.99 "Inner Circle" tier. Stripe
+//                    has no live product for it; allowing a new
+//                    checkout would 500 the request and confuse users
+//                    holding stale bookmarks. This block must NEVER
+//                    be removed by flipping BETA_MODE off.
+//
+//   DYNAMIC block (added only when isBetaMode() === true):
+//     - 'mvp'      — paid acquisition is paused for the open beta.
+//                    When the beta ends and BETA_MODE is set to
+//                    'false', this entry drops and 'mvp' becomes
+//                    purchasable again.
+//
+// → BETA_MODE=true   → blocked = { 'mvp_pro', 'mvp' }   (size 2)
+// → BETA_MODE=false  → blocked = { 'mvp_pro' }          (size 1)
+// → BETA_MODE unset  → defaults to true (open-beta posture)
+//
+// See `launchConfig.ts` (STATIC_BLOCKED_TIERS) and `routes/stripe.ts`
+// (the docstring on the checkout handler) for the matching authority.
+// If product policy ever decides to retire the static mvp_pro block,
+// update STATIC_BLOCKED_TIERS first, then update these tests — do not
+// invert the order, because the runtime contract is what protects the
+// Stripe checkout route from 500ing on a retired-tier request.
 
 test("getBlockedTiersForNewCheckout: in beta mode, BOTH 'mvp' and 'mvp_pro' are blocked", () => {
   process.env.BETA_MODE = "true";
