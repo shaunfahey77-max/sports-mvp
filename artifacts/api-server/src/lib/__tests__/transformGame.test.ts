@@ -361,3 +361,75 @@ test("integration replay: injecting a directional ML/spread inconsistency into c
   const snap = transformGame(cloned, "nhl");
   assert.equal(snap, null, "ML home -300 + spread home +1.5 must trip rail");
 });
+
+// ===========================================================================
+// Plausible-commence-time guard in transformGame
+// ===========================================================================
+// Pinned by the NHL phantom-row bug: a `nhl_2026-05-01_phi_car` snapshot
+// with `commence_time = 2026-05-01 15:00:00+00` (= 11:00 AM ET) was
+// being surfaced on Today's Picks even though NHL never starts a game
+// at 11:00 AM ET. The fix rejects such snapshots at ingest so no new
+// phantom rows enter `game_snapshots` going forward. The matching SQL
+// filter on `/picks` and `/picks/candidates` hides any phantom rows
+// already in the DB.
+//
+// See `lib/__tests__/plausibleEventStart.test.ts` for the helper-level
+// boundary / DST / unregistered-league pins. These two integration
+// cases just confirm the guard is wired into `transformGame` and uses
+// the league argument correctly.
+// ===========================================================================
+
+test("plausible commence_time: REJECTS NHL snapshot at 11:00 AM ET (the documented phantom)", () => {
+  // Exact production phantom: commence_time 2026-05-01 15:00 UTC,
+  // which is 11:00 AM ET (May 1 is in EDT, UTC-4). All other inputs
+  // are valid — the only reason to drop this snapshot is the
+  // implausible commence-time guard.
+  const game = mkGame({
+    homeTeam: "Carolina Hurricanes",
+    awayTeam: "Philadelphia Flyers",
+    commenceTime: "2026-05-01T15:00:00Z",
+    bookmakers: [
+      mkBook("book-a", [
+        { key: "h2h", last_update: "", outcomes: [
+          { name: "Carolina Hurricanes", price: -150 },
+          { name: "Philadelphia Flyers", price: 130 },
+        ]},
+        { key: "spreads", last_update: "", outcomes: [
+          { name: "Carolina Hurricanes", price: -110, point: -1.5 },
+          { name: "Philadelphia Flyers", price: -110, point: 1.5 },
+        ]},
+      ]),
+    ],
+  });
+
+  const snap = transformGame(game, "nhl");
+  assert.equal(snap, null);
+});
+
+test("plausible commence_time: ALLOWS NHL snapshot at 7:00 PM ET (real evening start)", () => {
+  // Sanity / non-regression: a real BUF @ BOS-style 23:00 UTC start
+  // (= 7:00 PM ET on May 1) must continue to produce a snapshot. If
+  // this case ever starts returning null, the per-league window has
+  // been over-tightened and is silently dropping legitimate games.
+  const game = mkGame({
+    homeTeam: "Boston Bruins",
+    awayTeam: "Buffalo Sabres",
+    commenceTime: "2026-05-01T23:00:00Z",
+    bookmakers: [
+      mkBook("book-a", [
+        { key: "h2h", last_update: "", outcomes: [
+          { name: "Boston Bruins", price: -150 },
+          { name: "Buffalo Sabres", price: 130 },
+        ]},
+        { key: "spreads", last_update: "", outcomes: [
+          { name: "Boston Bruins", price: -110, point: -1.5 },
+          { name: "Buffalo Sabres", price: -110, point: 1.5 },
+        ]},
+      ]),
+    ],
+  });
+
+  const snap = transformGame(game, "nhl");
+  assert.ok(snap, "real NHL evening start must continue to produce a snapshot");
+  assert.equal(snap!.eventStart, "2026-05-01T23:00:00Z");
+});

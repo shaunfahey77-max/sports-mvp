@@ -1,5 +1,6 @@
 import { getTeamAbbrev } from "./teamAbbreviations";
 import { logger } from "./logger";
+import { isPlausibleEventStart } from "./plausibleEventStart";
 import { SPREAD_LINE_ABS_MAX, TOTAL_LINE_RANGE, MONEYLINE_RANGE } from "../config/scoringModelConfig";
 import { removeTwoSidedVig } from "../scoring/marketProb";
 
@@ -434,6 +435,27 @@ export function transformGame(game: OddsGame, league: string): TransformedSnapsh
         bookmakerCount: game.bookmakers.length,
       },
       "transformGame: no usable h2h pair after filters — snapshot dropped"
+    );
+    return null;
+  }
+
+  // Plausible-commence-time guard. See `lib/plausibleEventStart.ts` for the
+  // full rationale: stale upstream ingests have written snapshots whose
+  // `commence_time` is at an hour no real game in that league ever starts
+  // (the documented case is `nhl_2026-05-01_phi_car` at 11:00 AM ET).
+  // Reject at ingest so no new phantom rows enter `game_snapshots` going
+  // forward. Existing phantom rows already in the DB are hidden by the
+  // matching SQL filter on `/picks` and `/picks/candidates`. Leagues not
+  // in the registry default-allow, so this is strictly opt-in per league.
+  if (!isPlausibleEventStart(league, game.commence_time)) {
+    logger.warn(
+      {
+        league,
+        homeTeam: game.home_team,
+        awayTeam: game.away_team,
+        commenceTime: game.commence_time,
+      },
+      "transformGame: rejected snapshot — implausible commence_time for league"
     );
     return null;
   }

@@ -17,6 +17,7 @@ import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
+import { buildPlausibleEventStartCondition } from "../lib/plausibleEventStart";
 
 // Leagues surfaced by default to subscribers. NCAAM is experimental (hash-noise
 // pseudo-models) and must be requested explicitly via ?league=ncaam.
@@ -74,6 +75,17 @@ router.get("/picks", async (req, res): Promise<void> => {
   // is hidden from the public surface. Mirrors /performance so the History
   // page cannot show picks that the Performance page silently omits.
   conditions.push(isNull(scoredPicksTable.dataQuality));
+  // Plausible-commence-time guard. See `lib/plausibleEventStart.ts` for
+  // the bug history. Hides any scored pick whose `eventStart` projects
+  // to an ET hour outside its league's plausible window — defense in
+  // depth alongside the matching ingest-time guard in `transformGame`.
+  // NULL `eventStart` is admitted (legacy rows lack this column).
+  // Leagues not in the registry default-allow.
+  const plausibleScoredPicksCondition = buildPlausibleEventStartCondition(
+    scoredPicksTable.league,
+    scoredPicksTable.eventStart,
+  );
+  if (plausibleScoredPicksCondition) conditions.push(plausibleScoredPicksCondition);
 
   // Fetch ordered by rankScore DESC so the cap selects the best picks per league/game
   const raw =
@@ -152,6 +164,20 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
   // Surgical exclusion: any candidate carrying a non-null data_quality
   // label is hidden from the public surface. Mirrors /picks above.
   conditions.push(isNull(candidateBetsTable.dataQuality));
+  // Plausible-commence-time guard. See `lib/plausibleEventStart.ts`
+  // for the bug history. Hides any candidate whose `eventStart`
+  // projects to an ET hour outside its league's plausible window.
+  // This is the primary read-side defense for the documented NHL
+  // 11:00 AM ET phantom (`nhl_2026-05-01_phi_car`, snapshot id 35681)
+  // — without it, the row would continue to win the top board slot
+  // until a destructive backfill ran. With it, the existing phantom
+  // row stays in `candidate_bets` for audit but never surfaces on
+  // `/picks/candidates`.
+  const plausibleCandidatesCondition = buildPlausibleEventStartCondition(
+    candidateBetsTable.league,
+    candidateBetsTable.eventStart,
+  );
+  if (plausibleCandidatesCondition) conditions.push(plausibleCandidatesCondition);
 
   // Apply a hard cap so an unfiltered call (now always carrying the default
   // league filter) cannot return unbounded rows. Callers can pass ?limit to
