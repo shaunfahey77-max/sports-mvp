@@ -14,7 +14,8 @@
  * Default: ON. The flag intentionally defaults to ON because we are
  * launching INTO open beta. To restore the prior paid experience after
  * a market clears Official + 30 days, set `BETA_MODE=false` in the
- * deployment environment and redeploy. See `.local/beta-mode-runbook.md`
+ * deployment environment and redeploy. See `beta-mode-runbook.md` at the
+ * project root (mirror also at `.local/beta-mode-runbook.md`)
  * for the flip-off checklist.
  *
  * Existing legacy MVP / MVP Pro subscribers are deliberately untouched

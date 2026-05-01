@@ -4,7 +4,8 @@ import { pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-co
  * Open-beta waitlist captures. Populated by `POST /api/waitlist` from
  * the Subscribe / Landing waitlist surfaces while the platform is in
  * open beta. Drained into the Stripe checkout funnel on day 1 of paid
- * launch — see `.local/beta-mode-runbook.md`.
+ * launch — see `beta-mode-runbook.md` (project root, mirror at
+ * `.local/beta-mode-runbook.md`).
  *
  * Email is normalized to lowercase before insert and unique-indexed so
  * repeat submissions are idempotent. `clerkUserId` is captured when the
