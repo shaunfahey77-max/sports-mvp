@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useListPicks, useListCandidates, getListPicksQueryKey, getListCandidatesQueryKey } from "@workspace/api-client-react";
 import type { ScoredPick, CandidateBet } from "@workspace/api-client-react";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { PickCard } from "@/components/PickCard";
 import { CandidateCard } from "@/components/CandidateCard";
 import { NoOfficialPicksSection } from "@/components/NoOfficialPicksSection";
@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PageLayout } from "@/components/layout/PageLayout";
 import { ChevronDown, ChevronUp, Lock, Crown } from "lucide-react";
 import { addBet, LogPickData } from "@/lib/betTracker";
+import { getSlateDayET } from "@/lib/slateDay";
 import { parseGameMatchup } from "@/lib/teamLogos";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useLaunchConfig } from "@/hooks/useLaunchConfig";
@@ -170,7 +171,12 @@ function UpgradeBanner({ pickCount, betaMode }: { pickCount: number; betaMode: b
 }
 
 export function Dashboard() {
-  const todayStr = format(new Date(), "yyyy-MM-dd");
+  // Slate day is the ET calendar date — the same bucket the server
+  // stores games under. Using the browser's local-tz date here would
+  // silently roll over a day early for any user east of ET, causing
+  // tomorrow's slate to render as "Today's Picks". See
+  // `src/lib/slateDay.ts`.
+  const todayStr = getSlateDayET();
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelData, setPanelData] = useState<LogPickData | undefined>(undefined);
@@ -232,7 +238,7 @@ export function Dashboard() {
   return (
     <PageLayout
       title="Today's Picks"
-      subtitle={format(new Date(), "EEEE, MMMM do, yyyy")}
+      subtitle={format(parseISO(todayStr), "EEEE, MMMM do, yyyy")}
       tagline="TODAY'S ACTION"
     >
       <HowItWorks open={howItWorksOpen} onToggle={() => setHowItWorksOpen(v => !v)} />
