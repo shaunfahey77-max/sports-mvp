@@ -1,0 +1,61 @@
+#53 - Weekly Market Measurement Report
+What & Why
+Produce a read-only, production-data report covering the last 7 days for the markets we are actually betting, so we can decide whether NHL totals is genuinely the strongest current lane, whether NBA spreads is additive or weak, and whether anything should be tweaked. Measurement only — no code, no calibration, no promotion changes. The whole report must reflect the opportunities we could actually have bet (board-eligible), not every hidden internal row in the market.
+
+Done looks like
+A single report (delivered in chat, plus saved as a markdown file under the project's standard report location) containing:
+
+A table per market with: surfaced board-eligible count, "actually rendered in the top 3 / up to 5" count, settled sample size (restricted to the surfaced/board-eligible population), W-L-Push, ROI, mean CLV, average edge, average EV, and a top-rank vs lower-rank split.
+Markets covered:
+NHL totals — always included.
+NBA spreads — always included.
+MLB moneyline — included only if it actually surfaced on the watch board in the window; otherwise the report explicitly says "did not surface, skipped".
+A short written verdict (a few sentences, not a wall of text) answering the three questions:
+Is NHL totals genuinely the strongest current lane?
+Is NBA spreads additive or weak?
+Is anything worth tweaking yet, or is the sample still too small?
+Each verdict claim is anchored to the numbers in the table (no vibes-only conclusions).
+The report explicitly flags any market where the settled sample is too small to draw a real conclusion, instead of pretending the ROI is meaningful.
+The report explicitly states the eligibility definition used and confirms that the settled metrics were computed only on the board-eligible set, not on hidden internal rows.
+Out of scope
+Any code, schema, config, or calibration change (including changes to the board eligibility logic itself — reuse it as-is).
+Any promotion / demotion of a market from watch to official.
+Any change to the public site or to the watch board UI.
+Backfilling or "fixing" historical data.
+Forecasting / projecting future ROI.
+Reports for any other market (NFL, NCAAF, NHL spreads, etc.) — out of scope this week.
+Settled metrics on rows that were never board-eligible (those are explicitly excluded).
+Steps
+Define the window and the market filters — Use the last 7 calendar days of production data, read-only. NHL totals = league nhl + market total. NBA spreads = league nba + market spread. MLB moneyline = league mlb + market moneyline. Do not touch dev data.
+
+Reproduce the live board's eligibility logic exactly — Build the surfaced/board-eligible set per market per day in the window using the same rules the live Model Watch Board uses, not raw candidate_bets counts. Concretely:
+
+Apply the same selection_reason allowlist as MEMBER_BOARD_ALLOWED_SELECTION_REASONS (['model_watch_only']) — i.e. the same gate isAllowedSelectionReason enforces.
+Apply the same risk-control gates that produce model_watch_only in the first place (odds-range guardrail, edge / EV / market-quality minimums) — by construction these are already baked into selection_reason, so do not re-derive them.
+Apply the same read-side exclusions the /picks/candidates endpoint applies: pre-fix contaminated rows excluded, phantom / implausible event-start rows excluded.
+Apply the same dedupe behavior: one row per (gameKey, marketType, side) per day, keeping the highest-EV version (matches the API read-time dedupe).
+Reuse the existing functions / constants where practical instead of rewriting the logic; if any rule has to be re-expressed in SQL, mirror the existing logic faithfully and call that out in the report's "methodology" footnote.
+Distinguish board-eligible from actually rendered — For each market per day, also compute the "actually rendered" subset by applying selectModelWatchBoardCandidates's sizing rule: sort by rankScore desc, take the top 3, then optionally extend to #4 and #5 only if rankScore >= 80% of the #1 and ev >= 0. Report both counts in the table: "board-eligible" and "rendered (top 3 / up to 5)". This is the population the user could realistically have acted on.
+
+Determine MLB moneyline inclusion — If MLB moneyline's board-eligible count for the window is 0, mark it "did not surface, skipped" and exclude it from the rest of the report. Otherwise include it.
+
+Pull settled results, restricted to the surfaced population — For each included market, intersect the surfaced/board-eligible set from step 2 with settled outcomes. Settled = result in (win, loss, push). Use scored_picks for picks that were promoted to the official lane and model_watch_results for the watch-only lane; in both cases only count rows whose (date, gameKey, marketType, side) matches a board-eligible row from step 2. Do NOT include settled rows that were never board-eligible. Report the sample size as "settled, of board-eligible" so it's unambiguous. Note in a footnote how many rows were dropped for being non-eligible vs contaminated.
+
+Compute the per-market metrics on that restricted population — For each market: settled sample size, W-L-Push, ROI (1u flat at the actual publish_odds), mean CLV (use clv_implied_delta if present, otherwise clv_line_delta — say which one was used), average edge, average EV. Also produce a parallel "rendered-only" row for ROI / W-L-Push so we can see if the picks the user actually saw performed differently from the broader board-eligible set.
+
+Split top-ranked vs lower-ranked within the surfaced set — Within each market's settled-and-board-eligible set, split rows by rank_score into top half and bottom half (or top-N / rest if the sample is small) and report W-L-Push and ROI for each half. The point is to answer "did the wins come from the rows we were most confident in, or from the tail?" — surface that clearly in one line per market.
+
+Write the verdict — Three short paragraphs: NHL totals strength, NBA spreads additive-or-weak, and a "tweak or hold" call. Each claim must reference a concrete number from the table. If a market's settled-of-board-eligible sample is below a reasonable threshold (call out the threshold used, e.g. < 20 settled), say "sample too small to call" instead of giving a confident verdict. Do not propose any tweak — only flag whether one looks warranted.
+
+Deliver the report — Post the report in chat and also save it as a dated markdown file in the project's standard reports directory (use whatever convention already exists in the repo; if none exists, save it under .local/reports/ with a dated filename). Do not modify any other file.
+
+Relevant files
+artifacts/sports-mvp/src/lib/modelWatchBoard.ts
+artifacts/api-server/src/routes/picks.ts
+artifacts/api-server/src/scoring/rankBets.ts
+artifacts/api-server/src/scoring/assignTiers.ts
+artifacts/api-server/src/config/scoringModelConfig.ts
+lib/db/src/schema/scoredPicks.ts
+lib/db/src/schema/candidateBets.ts
+lib/db/src/schema/modelWatchResults.ts
+lib/db/migrations/0001_dedup_candidate_bets.sql
