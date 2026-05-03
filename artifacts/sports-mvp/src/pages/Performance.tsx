@@ -170,7 +170,13 @@ export function Performance() {
               <HeroStat
                 label="CLV Hit Rate"
                 value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.clvHitRate) : "—"}
-                subLabel={metrics.clvSampleSize > 0 ? `${metrics.clvSampleSize} picks with close data` : "No closing line data yet"}
+                subLabel={
+                  metrics.clvSampleSize >= 20
+                    ? `${metrics.clvSampleSize} picks with close data`
+                    : metrics.clvSampleSize > 0
+                      ? `Need ≥20 close lines (have ${metrics.clvSampleSize})`
+                      : "No closing line data yet"
+                }
                 tooltip="Percentage of picks that beat the closing line. Above 50% confirms genuine edge."
               />
             </div>
@@ -212,7 +218,13 @@ export function Performance() {
                 label="Avg CLV"
                 value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.avgClv) : "—"}
                 trend={metrics.clvSampleSize >= 20 ? (metrics.avgClv > 0 ? "positive" : "neutral") : undefined}
-                subLabel={metrics.clvSampleSize > 0 ? `n=${metrics.clvSampleSize} real close lines` : "Requires closing line data"}
+                subLabel={
+                  metrics.clvSampleSize >= 20
+                    ? `n=${metrics.clvSampleSize} real close lines`
+                    : metrics.clvSampleSize > 0
+                      ? `Need ≥20 close lines (have ${metrics.clvSampleSize})`
+                      : "Requires closing line data"
+                }
                 tooltip="Average closing line value. Positive = market confirms our side after publish."
               />
               <SecondaryStat
