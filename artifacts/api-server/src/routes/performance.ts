@@ -13,12 +13,62 @@ import { americanToDecimal } from "../scoring/marketProb";
 import {
   DATA_QUALITY_PRE_FIX,
   MARKET_MODEL_WATCH_ONLY,
+  PUBLIC_TRACK_RECORD_CUTOFFS,
 } from "../config/scoringModelConfig";
 import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
 import {
   summarizeModelWatchRows,
   type AggregatorRow,
 } from "../scoring/modelWatchAggregator";
+
+/**
+ * Compute the effective public-track-record floor for a window.
+ *
+ * The public read filter excludes any pick before its league's pre-fix
+ * cutoff (`PUBLIC_TRACK_RECORD_CUTOFFS`). When that cutoff is later than
+ * the requested `windowDays` cutoff, the actual measurable span is
+ * shorter than the requested window — which silently inflates or
+ * deflates per-day rates (notably `picksPerDay`). To keep rate metrics
+ * honest we surface both the start date and the day-count of the
+ * effective window so the same divisor can be used server-side and the
+ * UI can disclose the truncation.
+ *
+ * For multi-league responses we take the EARLIEST per-league effective
+ * start, because the dataset includes any league from its own floor
+ * onward — so the union starts whenever the earliest one starts.
+ */
+export function computeEffectiveWindow(
+  windowDays: number,
+  includedLeagues: readonly string[],
+  now: Date = new Date(),
+): { effectiveStartDate: string; effectiveDays: number } {
+  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const windowStart = new Date(todayUtc);
+  windowStart.setUTCDate(windowStart.getUTCDate() - windowDays);
+
+  const perLeagueStarts: Date[] = includedLeagues.map((l) => {
+    const cutoff = PUBLIC_TRACK_RECORD_CUTOFFS[l];
+    if (!cutoff) return windowStart;
+    const cutoffDate = new Date(`${cutoff}T00:00:00Z`);
+    return cutoffDate > windowStart ? cutoffDate : windowStart;
+  });
+
+  const effectiveStart = perLeagueStarts.length === 0
+    ? windowStart
+    : perLeagueStarts.reduce((a, b) => (a < b ? a : b));
+
+  const msPerDay = 86_400_000;
+  const rawDays = Math.round((todayUtc.getTime() - effectiveStart.getTime()) / msPerDay);
+  // Clamp to [1, windowDays]: never report 0 (would divide by zero
+  // downstream) and never report longer than the requested window
+  // (would lie about the measurable span in the other direction).
+  const effectiveDays = Math.max(1, Math.min(windowDays, rawDays));
+
+  return {
+    effectiveStartDate: effectiveStart.toISOString().split("T")[0]!,
+    effectiveDays,
+  };
+}
 
 // Production leagues surfaced in performance metrics by default.
 // NCAAM is experimental (hash-noise models) and must be opted into explicitly.
@@ -117,10 +167,23 @@ router.get("/performance", async (req, res): Promise<void> => {
     tier: p.tier,
   }));
 
-  const metrics = computeValidationMetrics(picksForValidation, window);
+  // Determine the effective public-track-record window. The pre-fix
+  // cutoff can be stricter than the requested `window` cutoff, in which
+  // case the actual measurable span is shorter and `picksPerDay` must
+  // use that shorter span as its divisor — otherwise the rate silently
+  // changes between windows that admit the exact same pick set.
+  const includedLeagues = league ? [league] : [...DEFAULT_PRODUCTION_LEAGUES];
+  const { effectiveStartDate, effectiveDays } = computeEffectiveWindow(
+    window,
+    includedLeagues,
+  );
+
+  const metrics = computeValidationMetrics(picksForValidation, effectiveDays);
 
   res.json({
     windowDays: window,
+    effectiveStartDate,
+    effectiveDays,
     league: league ?? null,
     market: market ?? null,
     ...metrics,

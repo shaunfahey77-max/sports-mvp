@@ -31,6 +31,8 @@ const EXPECTED_PERFORMANCE_KEYS = [
   "brierScore",
   "clvHitRate",
   "clvSampleSize",
+  "effectiveDays",
+  "effectiveStartDate",
   "league",
   "leagueBreakdown",
   "logLoss",
@@ -68,6 +70,8 @@ const EXPECTED_HISTORY_ITEM_KEYS = [
 test("/performance contract: known-good payload parses through the generated Zod response schema", () => {
   const payload = {
     windowDays: 30,
+    effectiveStartDate: "2026-04-12",
+    effectiveDays: 21,
     league: null,
     market: null,
     totalPicks: 12,
@@ -101,6 +105,8 @@ test("/performance contract: payload key set is exactly the documented field lis
   // the whole point of the wall between Official and Watch from eroding.
   const payload = {
     windowDays: 30,
+    effectiveStartDate: "2026-04-12",
+    effectiveDays: 21,
     league: null,
     market: null,
     totalPicks: 0,

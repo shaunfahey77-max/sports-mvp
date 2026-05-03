@@ -23,6 +23,16 @@ type PerformanceWindow = 14 | 30 | 45;
 
 const SERIF = "'Playfair Display', serif";
 
+// Render a YYYY-MM-DD effectiveStartDate as a short, locale-stable
+// human label (e.g. "Apr 12") for the public-track-record disclosure.
+// Parsed as UTC to match the server's calendar-day intent.
+function formatPublicDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map((s) => parseInt(s, 10));
+  if (!y || !m || !d) return iso;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
 const TIER_COLORS: Record<string, string> = {
   A: "#FFC107", B: "#4488FF", C: "#7E57C2", PASS: "#1A3066",
 };
@@ -136,6 +146,20 @@ export function Performance() {
       </div>
 
       <MethodologyDisclosure open={howItWorksOpen} onToggle={() => setHowItWorksOpen(v => !v)} />
+
+      {/* Effective-window disclosure. The selected window (e.g. 30d, 45d)
+          can be bounded below by the public track record start date — for
+          windows that reach further back than the public record began,
+          the actually-measurable span is shorter than the label. We
+          disclose this so members understand why a longer window can
+          show the same numbers as a shorter one. */}
+      {metrics && metrics.effectiveDays < window && (
+        <div className="mb-6 -mt-4 text-[11px] uppercase tracking-[0.18em] text-white/40">
+          Public track record covers {metrics.effectiveDays} days
+          {" "}(since {formatPublicDate(metrics.effectiveStartDate)}).
+          {" "}Earlier picks are excluded from this surface.
+        </div>
+      )}
 
       {isLoading ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

@@ -276,6 +276,16 @@ export const GetPerformanceQueryParams = zod.object({
 
 export const GetPerformanceResponse = zod.object({
   windowDays: zod.number(),
+  effectiveStartDate: zod.coerce
+    .date()
+    .describe(
+      "Earliest publishable date currently included in this window\nafter applying both the `windowDays` cutoff and the per-league\npublic-track-record cutoffs (`PUBLIC_TRACK_RECORD_CUTOFFS`).\nFor multi-league responses this is the earliest date for which\nANY included league is publishable. Used by the UI to disclose\nwhen the effective public track record is shorter than the\nrequested window.\n",
+    ),
+  effectiveDays: zod
+    .number()
+    .describe(
+      "Number of calendar days from `effectiveStartDate` (inclusive)\nup to today. Always <= `windowDays`. This is the divisor used\nto compute `picksPerDay` so the rate reflects the actually\nmeasurable span instead of the requested window length.\n",
+    ),
   league: zod.string().nullish(),
   market: zod.string().nullish(),
   totalPicks: zod.number(),

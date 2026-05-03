@@ -11,6 +11,21 @@ import type { PerformanceMetricsTierBreakdown } from "./performanceMetricsTierBr
 
 export interface PerformanceMetrics {
   windowDays: number;
+  /** Earliest publishable date currently included in this window
+after applying both the `windowDays` cutoff and the per-league
+public-track-record cutoffs (`PUBLIC_TRACK_RECORD_CUTOFFS`).
+For multi-league responses this is the earliest date for which
+ANY included league is publishable. Used by the UI to disclose
+when the effective public track record is shorter than the
+requested window.
+ */
+  effectiveStartDate: Date;
+  /** Number of calendar days from `effectiveStartDate` (inclusive)
+up to today. Always <= `windowDays`. This is the divisor used
+to compute `picksPerDay` so the rate reflects the actually
+measurable span instead of the requested window length.
+ */
+  effectiveDays: number;
   league?: string | null;
   market?: string | null;
   totalPicks: number;

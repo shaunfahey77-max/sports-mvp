@@ -629,6 +629,24 @@ components:
       properties:
         windowDays:
           type: integer
+        effectiveStartDate:
+          type: string
+          format: date
+          description: |
+            Earliest publishable date currently included in this window
+            after applying both the `windowDays` cutoff and the per-league
+            public-track-record cutoffs (`PUBLIC_TRACK_RECORD_CUTOFFS`).
+            For multi-league responses this is the earliest date for which
+            ANY included league is publishable. Used by the UI to disclose
+            when the effective public track record is shorter than the
+            requested window.
+        effectiveDays:
+          type: integer
+          description: |
+            Number of calendar days from `effectiveStartDate` (inclusive)
+            up to today. Always <= `windowDays`. This is the divisor used
+            to compute `picksPerDay` so the rate reflects the actually
+            measurable span instead of the requested window length.
         league:
           type: string
           nullable: true
@@ -688,6 +706,8 @@ components:
             type: integer
       required:
         - windowDays
+        - effectiveStartDate
+        - effectiveDays
         - totalPicks
         - wins
         - losses
