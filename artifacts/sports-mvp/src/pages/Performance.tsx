@@ -169,127 +169,151 @@ export function Performance() {
         </div>
       ) : metrics ? (
         <div className="space-y-12 animate-in fade-in duration-500">
-          {/* HEADLINE STATS */}
-          <section>
-            <SectionLabel icon={<TrendingUp size={12} />} text="Headline" />
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[#1A3066] rounded-sm overflow-hidden border border-[#1A3066]">
-              <HeroStat
-                label="Win Rate"
-                value={formatPercentage(metrics.winRate)}
-                trend={metrics.winRate > 0.52 ? "positive" : "neutral"}
-                tooltip="Percentage of picks graded as wins, excluding pushes."
-              />
-              <HeroStat
-                label="ROI"
-                value={formatPercentage(metrics.roi)}
-                trend={metrics.roi > 0 ? "positive" : "negative"}
-                tooltip="Return on investment across all picks. (units won / total picks) × 100."
-              />
-              <HeroStat
-                label="Units Won"
-                value={`${metrics.unitsWon > 0 ? "+" : ""}${formatDecimal(metrics.unitsWon)}U`}
-                trend={metrics.unitsWon > 0 ? "positive" : "negative"}
-                tooltip="Net profit in units staked, assuming 1 unit per pick at posted odds."
-              />
-              <HeroStat
-                label="CLV Hit Rate"
-                value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.clvHitRate) : "—"}
-                subLabel={
-                  metrics.clvSampleSize >= 20
-                    ? `${metrics.clvSampleSize} picks with close data`
-                    : metrics.clvSampleSize > 0
-                      ? `Need ≥20 close lines (have ${metrics.clvSampleSize})`
-                      : "No closing line data yet"
-                }
-                tooltip="Percentage of picks that beat the closing line. Above 50% confirms genuine edge."
-              />
+          {metrics.totalPicks === 0 ? (
+            <div className="py-20 text-center border border-[#1A3066] rounded-sm bg-[#0D1B3E]/50">
+              <p className="text-white/70 text-lg font-semibold mb-3">
+                No Official picks in this window
+              </p>
+              <p className="text-white/45 text-sm max-w-md mx-auto leading-relaxed">
+                All current NBA and NHL markets are in the Live Evaluation Lane,
+                building evidence for potential promotion back to Official status.
+                See the evaluation summary below.
+              </p>
             </div>
-          </section>
+          ) : (
+            <>
+              <div className="text-[11px] tracking-[0.12em] text-white/35 -mt-4 mb-2 leading-relaxed">
+                This record includes picks from markets that were Official when published.
+                Some markets have since moved to the Live Evaluation Lane and no longer
+                produce Official picks. As these historical picks age out of the rolling
+                window, total picks will decrease.
+              </div>
 
-          {/* SECONDARY STATS */}
-          <section>
-            <SectionLabel icon={<Activity size={12} />} text="Secondary Metrics" />
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <SecondaryStat
-                label="Total Picks"
-                value={metrics.totalPicks.toString()}
-                tooltip={`Total picks graded over the last ${window} days. Larger sample = more reliable.`}
-              />
-              <SecondaryStat
-                label="Avg EV"
-                value={formatPercentage(metrics.avgEv)}
-                trend={metrics.avgEv > 0 ? "positive" : "negative"}
-                tooltip="Average realized expected value across graded picks. Above 0% means genuine +EV."
-              />
-              <SecondaryStat
-                label="Max Drawdown"
-                value={`${formatDecimal(metrics.maxDrawdown)}U`}
-                trend="negative"
-                tooltip="Largest peak-to-trough loss in units. Measures downside risk."
-              />
-              <SecondaryStat
-                label="Brier Score"
-                value={formatDecimal(metrics.brierScore, 3)}
-                tooltip="Calibration accuracy. Lower is better — 0 perfect, 0.25 random."
-              />
-              <SecondaryStat
-                label="Avg Edge"
-                value={formatPercentage(metrics.avgEdge)}
-                trend={metrics.avgEdge > 0 ? "positive" : "neutral"}
-                tooltip="Average raw probability advantage before odds conversion."
-              />
-              <SecondaryStat
-                label="Avg CLV"
-                value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.avgClv) : "—"}
-                trend={metrics.clvSampleSize >= 20 ? (metrics.avgClv > 0 ? "positive" : "neutral") : undefined}
-                subLabel={
-                  metrics.clvSampleSize >= 20
-                    ? `n=${metrics.clvSampleSize} real close lines`
-                    : metrics.clvSampleSize > 0
-                      ? `Need ≥20 close lines (have ${metrics.clvSampleSize})`
-                      : "Requires closing line data"
-                }
-                tooltip="Average closing line value. Positive = market confirms our side after publish."
-              />
-              <SecondaryStat
-                label="Pass Rate"
-                value={formatPercentage(metrics.passRate)}
-                tooltip="Percentage of candidates filtered out as PASS. Higher = stricter."
-              />
-              <SecondaryStat
-                label="Picks / Day"
-                value={formatDecimal(metrics.picksPerDay)}
-                tooltip="Average picks published per day. Selectivity is discipline."
-              />
-            </div>
-          </section>
+              {/* HEADLINE STATS */}
+              <section>
+                <SectionLabel icon={<TrendingUp size={12} />} text="Headline" />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-[#1A3066] rounded-sm overflow-hidden border border-[#1A3066]">
+                  <HeroStat
+                    label="Win Rate"
+                    value={formatPercentage(metrics.winRate)}
+                    trend={metrics.winRate > 0.52 ? "positive" : "neutral"}
+                    tooltip="Percentage of picks graded as wins, excluding pushes."
+                  />
+                  <HeroStat
+                    label="ROI"
+                    value={formatPercentage(metrics.roi)}
+                    trend={metrics.roi > 0 ? "positive" : "negative"}
+                    tooltip="Return on investment across all picks. (units won / total picks) × 100."
+                  />
+                  <HeroStat
+                    label="Units Won"
+                    value={`${metrics.unitsWon > 0 ? "+" : ""}${formatDecimal(metrics.unitsWon)}U`}
+                    trend={metrics.unitsWon > 0 ? "positive" : "negative"}
+                    tooltip="Net profit in units staked, assuming 1 unit per pick at posted odds."
+                  />
+                  <HeroStat
+                    label="CLV Hit Rate"
+                    value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.clvHitRate) : "—"}
+                    subLabel={
+                      metrics.clvSampleSize >= 20
+                        ? `${metrics.clvSampleSize} picks with close data`
+                        : metrics.clvSampleSize > 0
+                          ? `Need ≥20 close lines (have ${metrics.clvSampleSize})`
+                          : "No closing line data yet"
+                    }
+                    tooltip="Percentage of picks that beat the closing line. Above 50% confirms genuine edge."
+                  />
+                </div>
+              </section>
 
-          {/* DISTRIBUTION */}
-          <section>
-            <SectionLabel icon={<Target size={12} />} text="Distribution" />
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <DistributionPanel
-                title="By Tier"
-                breakdown={metrics.tierBreakdown}
-                colors={TIER_COLORS}
-                renderKey={(k) => `Tier ${k}`}
-              />
-              <DistributionPanel
-                title="By League"
-                breakdown={metrics.leagueBreakdown}
-                colors={LEAGUE_COLORS}
-                renderKey={(k) => k.toUpperCase()}
-              />
-              <DistributionPanel
-                title="By Market"
-                breakdown={metrics.marketBreakdown}
-                colors={MARKET_COLORS}
-                renderKey={(k) => k.charAt(0).toUpperCase() + k.slice(1)}
-              />
-            </div>
-          </section>
+              {/* SECONDARY STATS */}
+              <section>
+                <SectionLabel icon={<Activity size={12} />} text="Secondary Metrics" />
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <SecondaryStat
+                    label="Total Picks"
+                    value={metrics.totalPicks.toString()}
+                    tooltip={`Total picks graded over the last ${window} days. Larger sample = more reliable.`}
+                  />
+                  <SecondaryStat
+                    label="Avg EV"
+                    value={formatPercentage(metrics.avgEv)}
+                    trend={metrics.avgEv > 0 ? "positive" : "negative"}
+                    tooltip="Average realized expected value across graded picks. Above 0% means genuine +EV."
+                  />
+                  <SecondaryStat
+                    label="Max Drawdown"
+                    value={`${formatDecimal(metrics.maxDrawdown)}U`}
+                    trend="negative"
+                    tooltip="Largest peak-to-trough loss in units. Measures downside risk."
+                  />
+                  <SecondaryStat
+                    label="Brier Score"
+                    value={formatDecimal(metrics.brierScore, 3)}
+                    tooltip="Calibration accuracy. Lower is better — 0 perfect, 0.25 random."
+                  />
+                  <SecondaryStat
+                    label="Avg Edge"
+                    value={formatPercentage(metrics.avgEdge)}
+                    trend={metrics.avgEdge > 0 ? "positive" : "neutral"}
+                    tooltip="Average raw probability advantage before odds conversion."
+                  />
+                  <SecondaryStat
+                    label="Avg CLV"
+                    value={metrics.clvSampleSize >= 20 ? formatPercentage(metrics.avgClv) : "—"}
+                    trend={metrics.clvSampleSize >= 20 ? (metrics.avgClv > 0 ? "positive" : "neutral") : undefined}
+                    subLabel={
+                      metrics.clvSampleSize >= 20
+                        ? `n=${metrics.clvSampleSize} real close lines`
+                        : metrics.clvSampleSize > 0
+                          ? `Need ≥20 close lines (have ${metrics.clvSampleSize})`
+                          : "Requires closing line data"
+                    }
+                    tooltip="Average closing line value. Positive = market confirms our side after publish."
+                  />
+                  <SecondaryStat
+                    label="Pass Rate"
+                    value={formatPercentage(metrics.passRate)}
+                    tooltip="Percentage of candidates filtered out as PASS. Higher = stricter."
+                  />
+                  <SecondaryStat
+                    label="Picks / Day"
+                    value={formatDecimal(metrics.picksPerDay)}
+                    tooltip="Average picks published per day. Selectivity is discipline."
+                  />
+                </div>
+              </section>
 
-          {/* MODEL WATCH (BETA) — visually muted, separate lane */}
+              {/* DISTRIBUTION */}
+              <section>
+                <SectionLabel icon={<Target size={12} />} text="Distribution" />
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <DistributionPanel
+                    title="By Tier"
+                    breakdown={metrics.tierBreakdown}
+                    colors={TIER_COLORS}
+                    renderKey={(k) => `Tier ${k}`}
+                  />
+                  <DistributionPanel
+                    title="By League"
+                    breakdown={metrics.leagueBreakdown}
+                    colors={LEAGUE_COLORS}
+                    renderKey={(k) => k.toUpperCase()}
+                  />
+                  <DistributionPanel
+                    title="By Market"
+                    breakdown={metrics.marketBreakdown}
+                    colors={MARKET_COLORS}
+                    renderKey={(k) => k.charAt(0).toUpperCase() + k.slice(1)}
+                  />
+                </div>
+              </section>
+            </>
+          )}
+
+          {/* MODEL WATCH (BETA) — visually muted, separate lane.
+              Always rendered regardless of whether Official picks exist,
+              since this is the current system's active evaluation surface. */}
           <ModelWatchStrip
             data={watch}
             isLoading={watchLoading}
