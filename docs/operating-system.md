@@ -54,31 +54,59 @@ never shown to users.
 
 ### 1b. Board-Eligible
 
-A candidate that clears the risk controls (MIN_EDGE, MIN_EV, odds range,
-market quality floor, market not disabled, market not watch-only) and
-receives a tier of A, B, or C. Board-eligible candidates enter the
-`capAndSort` pool, where per-league (5/day) and per-game (2) caps select
-the day's Official slate.
+A candidate is board-eligible when it passes the selection gates for a
+user-facing surface.
 
-For watch-only markets, the analogous state is "watch-eligible": the
-candidate passes all risk controls except the watch-only gate, receives
-a tier, and enters the `selectModelWatchBoardCandidates` pool for the
-Model Watch board (3–5 cards, 80% quality ratio, non-negative EV).
+There are two distinct board-eligible states:
+
+**Official-eligible**
+
+A candidate that:
+- is not in a disabled market
+- is not in a watch-only market
+- clears the publish gates (MIN_EDGE, MIN_EV, odds range, market quality)
+- receives a tier of A, B, or C
+
+Official-eligible candidates enter the `capAndSort` pool and may be
+rendered as Official picks. Only these can become `scored_picks` rows
+for the current slate.
+
+**Watch-board-eligible**
+
+A candidate that:
+- belongs to a watch-only market
+- has `selection_reason` = `model_watch_only`
+- passes the read-side surface-integrity filters
+  (`MEMBER_BOARD_ALLOWED_SELECTION_REASONS`)
+- is allowed onto the Model Watch board under the current board-selection
+  policy
+
+Watch-board-eligible candidates do not count toward the Official record.
+They exist only for transparency and evaluation surfaces.
+
+**Important**: watch-board-eligible rows are not the same thing as
+Official-eligible rows. A watch-board-eligible row may still be PASS-tier
+and may still render on the Model Watch board if the current board policy
+allows it. That rendered watch card is not an Official pick.
 
 ### 1c. Rendered
 
-A board-eligible or watch-eligible candidate that survived capping and is
-actually displayed on a user surface. Three rendering surfaces exist:
+A candidate is rendered when it survives the final board-selection logic
+and is actually displayed on a user surface.
 
 | Surface | Who sees it | Source pool | Counts toward record? |
 |---|---|---|---|
-| Official pick card | All users | Board-eligible, after capAndSort | Yes |
-| Model Watch board | MVP members only | Watch-eligible, after selectModelWatchBoardCandidates | No |
-| Free fallback card | Free / signed-out users | Single highest-ranked watch-eligible candidate | No |
+| Official pick card | All users | Official-eligible rows after capAndSort | Yes |
+| Model Watch board | MVP members only | Watch-board-eligible rows after selectModelWatchBoardCandidates | No |
+| Free fallback card | Free / signed-out users | Single highest-ranked watch-board-eligible row | No |
 
-A candidate can be board-eligible but NOT rendered if it is capped out
-(e.g., the 6th pick for that league that day). A candidate that is
-rendered on the Model Watch board is NOT Official.
+A candidate can be board-eligible and still not render if:
+- it is capped out (e.g., the 6th pick for that league that day)
+- it loses the final ranking step
+- it fails the board sizing / quality expansion rule
+
+A rendered Model Watch card is explicitly not an Official pick,
+regardless of edge, EV, or rank.
 
 ### 1d. Official
 
@@ -182,13 +210,40 @@ The Today's Picks page must satisfy ALL of these invariants every day:
 
 ### Gate 3: Model Watch board truth
 
-- Board cards are watch-eligible candidates only (selection_reason =
-  'model_watch_only').
+- Board cards are watch-board-eligible candidates only
+  (`selection_reason` = `model_watch_only`).
 - Board disclaimer must always render: "These are ranked leans, not
   Official picks. They do not count toward performance, CLV reporting,
   or History."
 - Board sizing: 3 default, expand to 5 only if candidates 4/5 clear
   the 80% quality ratio AND non-negative EV gates.
+
+### 3d. Emergency Surface-Freeze Rule
+
+If any user-facing slate surface fails the surface-integrity gates for a
+given ET slate day, the system must prefer no output over wrong output.
+
+A surface-integrity failure includes, at minimum:
+- a rendered game that is not actually on that ET slate
+- a phantom row (card with no backing `candidate_bets` row)
+- a rendered card that cannot be reconciled to a production candidate row
+- a disabled-market leak onto any rendering surface
+- a stale or incorrect rendered board state that materially changes
+  the visible slate
+
+If any of these occur, the required operating response is:
+
+1. Suppress the affected Today's Picks board for that slate.
+2. Render a trust-preserving fallback / unavailable message.
+3. Open an incident / investigation.
+4. Do not continue rendering a partially wrong board while debugging.
+
+**Restoration condition**: the board may only be restored once the
+rendered cards reconcile to the correct ET-slate production rows and
+all surface-integrity gates pass again.
+
+This rule exists to operationalize the core doctrine: no output is
+better than wrong output.
 
 ---
 
@@ -473,23 +528,23 @@ every (league, market) pair:
 
 ## Appendix A: Current Market Status
 
-*Last updated: 2026-05-05. Update this appendix whenever a market
-status changes. The doctrine sections above are independent of these
-values.*
+*Last updated: 2026-05-05. This appendix is an evidence snapshot only.
+It does not set policy by itself. Update whenever a market status changes.
+The doctrine sections above are independent of these values.*
 
-| League | Market | Status | Evidence Summary |
-|---|---|---|---|
-| NBA | moneyline | Disabled | 22% wr, −47% ROI on 9 resolved post-fix |
-| NBA | spread | Watch-Only | R2 recovery: 56% wr, +0.24% CLV on 25 candidates (replay) |
-| NBA | total | Disabled | Max edge 6.8% on 214 candidates — below 10% floor |
-| NHL | moneyline | Disabled | 0/6 resolved post-fix (−100% ROI) |
-| NHL | spread | Watch-Only | 72%+ wr demonstrated; tier calibration pending |
-| NHL | total | Watch-Only | R1 recovery: 57.3% wr, +2.07% CLV on 82 decided (replay) |
-| MLB | moneyline | Watch-Only | Phase 0.75D foundation; early watch period |
-| MLB | spread | Disabled | No model exists |
-| MLB | total | Disabled | No model exists |
-| NFL | all | Disabled | Phase 0.75E foundation; no models built |
-| NCAAF | all | Disabled | Phase 0.75F foundation; no models built |
+| League | Market | Status | Evidence summary | Reason for current status |
+|---|---|---|---|---|
+| NBA | moneyline | Disabled | 9 resolved post-fix; 22% win rate; −47% ROI | Disabled due to catastrophic post-fix underperformance |
+| NBA | spread | Watch-Only | R2 replay: 25 candidates; 56.0% decided win rate; +0.24% mean CLV | Watch-Only pending larger live sample and promotion-threshold review |
+| NBA | total | Disabled | 214-candidate replay; max edge 6.8%, below 10% market floor | Disabled because candidate edge ceiling does not clear current market threshold |
+| NHL | moneyline | Disabled | 6 resolved post-fix; 0 wins; −100% ROI | Disabled due to catastrophic post-fix underperformance |
+| NHL | spread | Watch-Only | Watch evidence exists; calibration / tier behavior still under review | Watch-Only pending further live evidence and calibration confidence |
+| NHL | total | Watch-Only | R1 replay: 132 candidates; 82 decided; 57.3% win rate; +2.07% mean CLV | Watch-Only pending sufficient post-cutoff live evidence for promotion review |
+| MLB | moneyline | Watch-Only | Early watch period; live evidence still accumulating | Watch-Only because promotion evidence threshold has not yet been met |
+| MLB | spread | Disabled | No model available | Disabled because no production model exists |
+| MLB | total | Disabled | No model available | Disabled because no production model exists |
+| NFL | all | Disabled | No production models available | Disabled because no production models exist yet |
+| NCAAF | all | Disabled | No production models available | Disabled because no production models exist yet |
 
 ## Appendix B: Current Calibration Parameters
 
