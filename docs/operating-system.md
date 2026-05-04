@@ -1,360 +1,469 @@
-# How SportsMVP Learns and Improves Over Time
+# SportsMVP Internal Doctrine
 
-Operating plan for the recommendation engine. Effective 2026-05-05 through 2026-08-01.
+How the recommendation engine learns and improves over time.
+
+This document is the durable operating policy for the system. It defines
+terminology, data flows, review cadences, decision rules, and evidence
+standards. Appendices at the end capture time-sensitive snapshots of
+current state and are updated independently of the doctrine itself.
 
 ---
 
-## 1. Data Collected After Every Surfaced Pick
+## 0. Core Principle: No Output Is Better Than Wrong Output
 
-Every candidate the scoring pipeline evaluates is persisted in `candidate_bets`.
-Candidates that clear the tier gates (A/B/C) are promoted into `scored_picks`.
-After game settlement, the nightly validation cron writes results and CLV back
-into `scored_picks` and `validation_metrics`.
+The system exists to surface trustworthy sports picks. A day with zero
+Official picks and a clearly disclosed empty state is a better product
+outcome than a day with picks the model cannot support.
 
-### Per-candidate (candidate_bets — written at scoring time)
+This principle governs every decision in this document:
+
+- Markets that have not earned Official status produce zero Official picks,
+  regardless of how much candidate-level activity the pipeline generates.
+- When evidence triggers a demotion, the market is silenced BEFORE a root
+  cause is identified — not after.
+- Empty-state copy on every user surface must be truthful and must never
+  imply that picks exist when they do not.
+- No threshold, calibration parameter, or market-status change may be
+  justified solely by "we need to show users something."
+
+---
+
+## 1. Lifecycle of a Pick: Five Distinct States
+
+Every prediction the system generates passes through a defined lifecycle.
+These five terms are canonical — all code, UI copy, and operating
+decisions must use them consistently.
+
+```
+CANDIDATE ──► BOARD-ELIGIBLE ──► RENDERED ──► OFFICIAL ──► SETTLED
+    │              │                  │            │            │
+    │              │                  │            │            └─ result, CLV
+    │              │                  │            └─ scored_picks row
+    │              │                  └─ visible on a user surface
+    │              └─ passed quality / selection gates for a surface
+    └─ model scored; candidate_bets row written
+```
+
+### 1a. Candidate
+
+The model scores every (game, league, market, side) tuple. A row is
+written to `candidate_bets` for EVERY evaluation — including those that
+are immediately force-PASSED by market-disabled, model-watch-only, or
+risk controls. Candidates are the raw exhaust of the pipeline. They are
+never shown to users.
+
+### 1b. Board-Eligible
+
+A candidate that clears the risk controls (MIN_EDGE, MIN_EV, odds range,
+market quality floor, market not disabled, market not watch-only) and
+receives a tier of A, B, or C. Board-eligible candidates enter the
+`capAndSort` pool, where per-league (5/day) and per-game (2) caps select
+the day's Official slate.
+
+For watch-only markets, the analogous state is "watch-eligible": the
+candidate passes all risk controls except the watch-only gate, receives
+a tier, and enters the `selectModelWatchBoardCandidates` pool for the
+Model Watch board (3–5 cards, 80% quality ratio, non-negative EV).
+
+### 1c. Rendered
+
+A board-eligible or watch-eligible candidate that survived capping and is
+actually displayed on a user surface. Three rendering surfaces exist:
+
+| Surface | Who sees it | Source pool | Counts toward record? |
+|---|---|---|---|
+| Official pick card | All users | Board-eligible, after capAndSort | Yes |
+| Model Watch board | MVP members only | Watch-eligible, after selectModelWatchBoardCandidates | No |
+| Free fallback card | Free / signed-out users | Single highest-ranked watch-eligible candidate | No |
+
+A candidate can be board-eligible but NOT rendered if it is capped out
+(e.g., the 6th pick for that league that day). A candidate that is
+rendered on the Model Watch board is NOT Official.
+
+### 1d. Official
+
+A rendered pick that was surfaced through the Official path (tier A/B/C,
+non-disabled, non-watch-only, survived capAndSort). Official picks are
+written to `scored_picks` and are the ONLY picks that count toward
+Performance, History, and the public track record.
+
+### 1e. Settled
+
+An Official pick whose game has finished and received a result (win,
+loss, push). Settlement triggers CLV writeback and validation_metrics
+persistence.
+
+---
+
+## 2. Data Collected at Each Lifecycle Stage
+
+### At scoring time (every candidate)
 
 | Field | Source |
 |---|---|
 | game_key | Odds API ingest (ET-bucketed) |
-| league | nba, nhl, mlb |
+| league | nba, nhl, mlb (future: nfl, ncaaf) |
 | market_type | moneyline, spread, total |
-| side | home/away/over/under |
+| side | home / away / over / under |
 | model_prob_raw | League model output |
 | model_prob_calibrated | After sigmoid or isotonic calibration |
+| calibration_method | sigmoid / isotonic / none |
+| calibration_version | v1–v4 (bumped on every calibration change) |
 | market_prob_fair | No-vig market consensus |
 | edge | model_prob_calibrated − market_prob_fair |
 | ev | Expected value at publish odds |
-| rank_score | Composite: 0.50×norm_ev + 0.25×norm_edge + 0.15×calib_conf + 0.10×mkt_quality |
+| rank_score | 0.50 × norm_ev + 0.25 × norm_edge + 0.15 × calib_conf + 0.10 × mkt_quality |
 | tier | A / B / C / PASS |
 | selection_reason | null (Official), model_watch_only, market_disabled, odds_out_of_range, insufficient_edge, negative_ev |
-| calibration_method | sigmoid / isotonic / none |
-| calibration_version | v1–v4 |
 | market_quality | Per-league-market confidence weight (0–1) |
 | publish_odds | American odds at time of scoring |
 | publish_line | Point spread or total line |
 | snapshot_date | ET calendar date of the scoring run |
 | event_start | Game commence time (UTC) |
 
-### Per-official-pick (scored_picks — written at scoring time, updated at settlement)
-
-All candidate_bets fields above, plus:
+### At settlement (Official and watch picks)
 
 | Field | Written when |
 |---|---|
-| result | Settlement: win / loss / push / pending |
+| result | win / loss / push / pending |
 | close_odds | CLV writeback (nightly validation cron) |
-| close_line | CLV writeback |
+| close_line | CLV writeback (spread/total only) |
 | clv_implied_delta | publish_implied − close_implied (positive = got a better price) |
-| clv_line_delta | close_line − publish_line (spread/total only; positive = line moved in our direction) |
+| clv_line_delta | close_line − publish_line (positive = line moved in our direction) |
 
-### Per-market-watch candidate (model_watch_results — written at scoring time)
+### Derived validation metrics (per settlement batch)
 
-Same shape as scored_picks but populated for MARKET_MODEL_WATCH_ONLY markets
-(currently: nhl_spread, nhl_total, nba_spread, mlb_moneyline). These rows feed
-the Model Watch admin scoreboard and the nightly promotion-alert check.
+win_rate, roi, units_won, max_drawdown, avg_ev, avg_edge, clv_hit_rate,
+avg_clv, clv_sample_size, brier_score, log_loss, pass_rate, picks_per_day,
+tier_breakdown, league_breakdown, market_breakdown.
 
-### Derived metrics (validation_metrics — written at settlement)
+### Data quality labels
 
-Per-pick settlement writes a row capturing the graded outcome plus all the
-fields needed for the Performance page aggregation. These rows carry a
-`data_quality` label when they fall before the public track-record cutoff
-(pre_fix_contaminated) or came from a bad ingest (contaminated_ingest).
-
-### What "rendered" means
-
-Three rendering surfaces exist, each with its own selection criteria:
-
-| Surface | Selection gate | Counts toward Official record? |
-|---|---|---|
-| Official pick card | Tier A/B/C, non-disabled, non-watch-only | Yes |
-| Model Watch board (MVP) | Top 3–5 PASS candidates with selection_reason = model_watch_only, 80% quality rule | No |
-| Free fallback card | Single highest model_watch_only candidate | No |
+Rows carry a `data_quality` label when they fall before the public
+track-record cutoff (`pre_fix_contaminated`) or were generated from a
+known-bad ingest (`contaminated_ingest`). Any non-null label excludes
+the row from public read surfaces. Raw rows are NEVER deleted.
 
 ---
 
-## 2. What Gets Reviewed Daily
+## 3. Surface Integrity Gates
 
-The nightly cron (`cronService.ts`) runs automatically and produces:
+### Gate 1: Today's Picks truth
 
-### Automated daily outputs
+The Today's Picks page must satisfy ALL of these invariants every day:
 
-1. **Score today's slate** — fetches Odds API snapshots for each production
-   league (nba, nhl) plus watch-only pairs (mlb_moneyline), runs models,
-   calibrates, ranks, tiers, writes candidate_bets and scored_picks.
+- **Slate-day alignment**: the frontend and backend agree on "today" via
+  the ET-bucket slate day (`getSlateDayET`). The page must ONLY show games
+  whose `snapshot_date` matches today's ET slate day. Games from
+  yesterday's or tomorrow's slate are a surface-integrity violation.
+- **No phantom rows**: every rendered card must correspond to a real
+  `candidate_bets` row whose `event_start` falls within today's ET
+  calendar date. Cards without backing data must not appear.
+- **Selection-reason fidelity**: Official cards must have null
+  `selection_reason`. Model Watch cards must have `model_watch_only`.
+  Cards with `market_disabled`, `insufficient_edge`, `negative_ev`, or
+  `odds_out_of_range` must NEVER render on any user surface.
+- **Disabled-market exclusion**: no candidate from a MARKET_DISABLED
+  league_market may appear on ANY rendering surface, including the
+  Model Watch board and free fallback card. The
+  `MEMBER_BOARD_ALLOWED_SELECTION_REASONS` set enforces this.
+- **Empty-state truth**: when zero Official picks and zero watch-eligible
+  candidates exist for today, the page must render the explicit empty
+  state ("No Official Picks Today") — never a stale card from a
+  prior day.
 
-2. **Settle yesterday's games** — matches scored_picks to final scores,
-   computes win/loss/push, writes validation_metrics rows.
+### Gate 2: Performance page truth
 
-3. **CLV writeback** — for every settled pick, pulls the closing snapshot,
-   computes close_odds, close_line, clv_implied_delta, clv_line_delta,
-   and writes them back to scored_picks.
+- Only `scored_picks` rows (Official path) feed Performance and History.
+- The effective-window disclosure must show the actual date range of data
+  displayed, not a fixed "last N days" label.
+- When the window contains zero scored picks, the empty state must render
+  with the legacy-results disclosure if any data exists outside the window.
 
-4. **Model Watch grading** — settles model_watch_results for watch-only
-   markets using the same grading logic.
+### Gate 3: Model Watch board truth
 
-5. **Model Watch alert check** — evaluates each watch-only (league, market)
-   bucket against the promotion thresholds. If ALL three gates clear, writes
-   an idempotent alert to `model_watch_alerts` and logs a promotion-ready
-   notification.
-
-### Manual daily review (operator)
-
-- **Check the Today's Picks page** — confirm the visible cards are plausible
-  games on today's ET slate, not phantom rows or tomorrow's games.
-- **Scan cron logs** — confirm no scoring or settlement errors.
-- **Glance at the Performance page** — confirm effective-window disclosure
-  renders correctly and metrics update after settlement.
+- Board cards are watch-eligible candidates only (selection_reason =
+  'model_watch_only').
+- Board disclaimer must always render: "These are ranked leans, not
+  Official picks. They do not count toward performance, CLV reporting,
+  or History."
+- Board sizing: 3 default, expand to 5 only if candidates 4/5 clear
+  the 80% quality ratio AND non-negative EV gates.
 
 ---
 
-## 3. What Gets Reviewed Weekly
+## 4. Review Cadences
 
-### Monday review (recommended)
+### Daily (automated)
 
-1. **Cohort analysis report** — run the internal calibration-review endpoint
-   (`/api/internal/calibration-review`) which produces:
+1. **Score today's slate** — fetch Odds API snapshots, run models,
+   calibrate, rank, tier, write candidate_bets and scored_picks.
+2. **Settle yesterday's games** — match scored_picks to final scores,
+   grade outcomes, write validation_metrics.
+3. **CLV writeback** — compute close_odds, close_line, clv_implied_delta,
+   clv_line_delta for every settled pick.
+4. **Model Watch grading** — settle model_watch_results for watch-only
+   markets.
+5. **Model Watch alert check** — evaluate promotion thresholds; write
+   idempotent alert if all gates clear.
+
+### Daily (operator)
+
+- Confirm Today's Picks renders today's ET-slate games only.
+- Confirm no disabled-market cards leaked onto any surface.
+- Scan cron logs for errors.
+- Confirm Performance page disclosure and empty state render correctly
+  after settlement.
+
+### Weekly (Monday recommended)
+
+1. **Cohort analysis** — run `/api/internal/calibration-review`:
    - PRE vs POST cohort splits by (league, market)
-   - Per-cohort: win rate, ROI, Brier score (model vs market), Brier skill
-   - Edge→winRate monotonicity report (equal-frequency bucketed)
-   - CLV summary per cohort
+   - Per-cohort: win rate, ROI, Brier score, Brier skill
+   - Edge→winRate monotonicity (equal-frequency bucketed)
+   - CLV summary
+2. **Model Watch scoreboard** — review per-market resolved, win rate,
+   ROI, avg CLV, per-tier breakdown.
+3. **Board composition audit** — confirm correct card types, correct
+   copy, correct empty states.
+4. **Pass rate trend** — rising pass rate toward 100% = model losing
+   confidence (calibration drift or market efficiency shift).
 
-2. **Model Watch scoreboard** — review `/admin/model-watch/performance`:
-   - Per-market total resolved, win rate, ROI, avg CLV
-   - Per-tier breakdown within each market
-   - Recent picks list with individual CLV deltas
+### Monthly (1st of each month)
 
-3. **Board composition audit** — confirm the Today's Picks fallback board
-   shows the correct cards and that no market_disabled rows leak through.
-
-4. **Pass rate trend** — check Performance page pass rate. If it's climbing
-   toward 100% for a market, the model is losing confidence across the board
-   (calibration drift or market efficiency shift).
-
-### Monthly review (1st of each month)
-
-5. **Full parameter review** — compare current calibration params, edge
-   thresholds, and tier overrides against the trailing evidence. Document
-   any discrepancies between the config and the latest cohort data.
-
-6. **Market status review** — for each market, confirm its current status
-   (Official, Watch-Only, Disabled) still matches the evidence.
+5. **Full parameter review** — compare calibration params, edge thresholds,
+   tier overrides against trailing cohort evidence. Document discrepancies.
+6. **Market status review** — confirm each market's status (Official /
+   Watch-Only / Disabled) still matches the evidence.
 
 ---
 
-## 4. Thresholds That Trigger Action
+## 5. Thresholds That Trigger Action
 
-### 4a. Recalibration review trigger
+### 5a. Recalibration review
 
-A recalibration review is warranted when ANY of these hold for a POST-cohort
-clean bucket with ≥50 resolved picks:
+Triggered when ANY of these hold for a POST-cohort clean bucket with
+≥50 resolved picks:
 
-| Signal | Threshold | What it means |
+| Signal | Threshold | Meaning |
 |---|---|---|
-| Brier skill score < 0 | model worse than market price as a forecaster | Calibrated probs are less accurate than just trusting the closing line |
-| Edge→winRate correlation < 0 | monotonicity inverted | Higher-edge picks win LESS often — the displayed edge is misleading |
-| Win rate < 45% on spread/total | sustained underperformance | Model is not beating the vig |
-| Win rate < 40% on moneyline | sustained underperformance | Model is not beating the vig on the wider-vig market |
-| Avg CLV < −2% | systematically getting worse prices than close | Either the model is slow or calibration is pulling prices the wrong way |
+| Brier skill score < 0 | Model worse than market | Calibrated probs less accurate than the closing line |
+| Edge→winRate correlation < 0 | Monotonicity inverted | Higher-edge picks win LESS often |
+| Win rate < 45% (spread/total) | Sustained underperformance | Not beating the vig |
+| Win rate < 40% (moneyline) | Sustained underperformance | Not beating wider-vig market |
+| Avg CLV < −2% | Systematically worse prices | Model is slow or calibration pulls the wrong way |
 
-**Action**: do NOT auto-recalibrate. Open a calibration investigation with the
-full cohort report. Adjust sigmoid parameters or isotonic buckets only after
-the investigation identifies the root cause and the fix is validated on a
-holdout or replay.
+**Action**: open a calibration investigation. Do NOT auto-recalibrate.
+Adjust parameters only after root cause is identified and validated on
+a holdout or replay. Log the decision (Section 7).
 
-### 4b. Market promotion review trigger (Watch-Only → Official)
+### 5b. Market promotion (Watch-Only → Official)
 
-The nightly alert system fires when a watch-only bucket clears ALL THREE:
+Nightly alert fires when a watch-only bucket clears ALL THREE:
 
-| Gate | Current threshold |
+| Gate | Threshold |
 |---|---|
-| Resolved sample ≥ | 50 picks |
-| Mean ROI ≥ | +4% per pick |
-| Mean CLV (implied delta) ≥ | +0.5% |
+| Resolved sample | ≥ 50 picks |
+| Mean ROI | ≥ +4% per pick |
+| Mean CLV (implied delta) | ≥ +0.5% |
 
 **Additional requirements before promoting**:
-- The resolved sample must be entirely from the POST-cutoff window
-  (date ≥ PUBLIC_TRACK_RECORD_CUTOFFS[league]).
+- Resolved sample must be entirely POST-cutoff.
 - Edge→winRate monotonicity must not be inverted (correlation ≥ 0).
-- Brier skill score must be non-negative (model ≥ market as forecaster).
-- Operator must review the cohort report and explicitly approve.
+- Brier skill score must be non-negative.
+- Operator reviews cohort report and explicitly approves.
+- Decision logged (Section 7).
 
-**Action**: if all gates and requirements pass, move the market from
-MARKET_MODEL_WATCH_ONLY to Official by removing its entry. This is a
-config change, not a model change.
+### 5c. Market demotion / disable (Official → Watch-Only or Disabled)
 
-### 4c. Market demotion / disable trigger (Official → Watch-Only or Disabled)
-
-| Signal | Threshold | Action |
+| Signal | Threshold (POST-clean) | Action |
 |---|---|---|
-| ROI < −15% on ≥30 resolved POST-clean picks | Sustained loss | Demote to Watch-Only |
-| Win rate < 40% on ≥30 resolved POST-clean picks | Model broken for this market | Demote to Watch-Only |
-| Edge→winRate monotonicity inverted AND Brier skill < 0 | Calibration fundamentally wrong | Demote to Watch-Only and open recalibration |
-| Win rate < 30% on ≥20 resolved picks | Catastrophic failure | Disable immediately |
-| CLV avg < −5% on ≥20 resolved picks | Systematically getting crushed on price | Disable immediately |
+| ROI < −15% on ≥30 resolved | Sustained loss | Demote to Watch-Only |
+| Win rate < 40% on ≥30 resolved | Model broken | Demote to Watch-Only |
+| Monotonicity inverted AND Brier skill < 0 | Calibration wrong | Demote + open recalibration |
+| Win rate < 30% on ≥20 resolved | Catastrophic | Disable immediately |
+| Avg CLV < −5% on ≥20 resolved | Getting crushed on price | Disable immediately |
 
-**Demotion** means moving from Official to MARKET_MODEL_WATCH_ONLY.
-The market continues to generate candidates and accumulate watch data,
-but no Official picks are produced.
+**Demotion** = move to MARKET_MODEL_WATCH_ONLY. Market continues to
+generate candidates and accumulate watch data; no Official picks produced.
 
-**Disable** means moving to MARKET_DISABLED. No candidates are generated
-for public surfaces. Use only when the model is actively harmful.
+**Disable** = move to MARKET_DISABLED. No candidates surface. Use only
+when the model is actively harmful.
 
-### 4d. Ranking-policy review trigger
+Catastrophic triggers are the ONE exception to the "never change
+reactively" rule: the action is to STOP surfacing, not to change the
+model. Decision logged same-day (Section 7).
 
-The rank_score formula (weights, normalization caps) should be reviewed when:
+### 5d. Ranking-policy review
 
 | Signal | Threshold |
 |---|---|
 | Tier A saturation | >70% of surfaced picks in a league land in Tier A |
-| Tier distribution collapse | <3 distinct tiers represented in a 7-day window |
+| Tier distribution collapse | <3 distinct tiers in a 7-day window |
 | Cross-league rank inflation | One league's mean rank_score is >2× another's |
 
-**Action**: adjust TIER_A_THRESHOLD_OVERRIDE for the affected league/market,
-or adjust LEAGUE_MARKET_QUALITY weights. Do NOT change RANK_WEIGHTS or
-MAX_EV_CAP / MAX_EDGE_CAP without a full replay analysis.
+**Action**: adjust TIER_A_THRESHOLD_OVERRIDE or LEAGUE_MARKET_QUALITY.
+Do NOT change RANK_WEIGHTS or MAX_EV_CAP / MAX_EDGE_CAP without a full
+replay. Decision logged (Section 7).
 
 ---
 
-## 5. What Should NEVER Be Changed Reactively
+## 6. What Must Never Be Changed Reactively
 
-The following must NOT be changed in response to a single hot or cold streak
-(defined as ≤14 days or ≤20 resolved picks):
+The following must NOT be changed in response to a single streak
+(≤14 days or ≤20 resolved picks):
 
 | Parameter | Why |
 |---|---|
-| RANK_WEIGHTS (ev, edge, calib_conf, mkt_quality proportions) | These are structural. A bad week doesn't mean the weighting is wrong. |
-| MAX_EV_CAP / MAX_EDGE_CAP (normalization ceilings) | Changing these rescales every rank_score in the system retroactively. |
-| HOME_ADVANTAGE constants | These are long-run population parameters, not tunable knobs. |
-| Calibration sigmoid A/B parameters | Calibration changes propagate to every candidate. Requires cohort analysis + replay. |
-| Isotonic bucket definitions | Same as above — structural calibration, not a tuning knob. |
-| TIER_THRESHOLDS (global B=0.50, C=0.35) | These define the product vocabulary. Changing them changes what "Tier A" means to subscribers. |
-| PUBLIC_TRACK_RECORD_CUTOFFS | These are historical facts about when contamination ended. They never move forward. |
-| MIN_MARKET_QUALITY (0.3 global floor) | This is a data-hygiene gate, not a performance lever. |
-
-**The one exception**: MARKET_DISABLED and MARKET_MODEL_WATCH_ONLY can be
-changed quickly (within a day) if a catastrophic demotion trigger fires,
-because the action is to STOP surfacing, not to change the model.
+| RANK_WEIGHTS (ev, edge, calib_conf, mkt_quality) | Structural. A bad week does not invalidate the weighting. |
+| MAX_EV_CAP / MAX_EDGE_CAP | Changing these rescales every rank_score retroactively. |
+| HOME_ADVANTAGE constants | Long-run population parameters, not tunable knobs. |
+| Calibration sigmoid A/B | Propagates to every candidate. Requires cohort + replay. |
+| Isotonic bucket definitions | Same — structural calibration. |
+| TIER_THRESHOLDS (global A=0.65, B=0.50, C=0.35) | Defines the product vocabulary. Changing what "Tier A" means is a product decision. |
+| PUBLIC_TRACK_RECORD_CUTOFFS | Historical facts. They never move forward. |
+| MIN_MARKET_QUALITY (0.3 global floor) | Data-hygiene gate, not a performance lever. |
 
 ---
 
-## 6. Evidence Standard Required Before Changing Each Parameter Class
+## 7. Decision Log Requirement
 
-### 6a. Thresholds (MIN_EDGE, MIN_EV, TIER_A_THRESHOLD_OVERRIDE, MARKET_MIN_EDGE)
+Every change to calibration, thresholds, market status, or ranking policy
+must be recorded in a decision log before the code change is committed.
+The log captures the reasoning chain so future operators can understand
+WHY the system is in its current state.
+
+### Required fields per entry
+
+| Field | Content |
+|---|---|
+| Date | YYYY-MM-DD of the decision |
+| Parameter changed | Exact config key (e.g., MARKET_MODEL_WATCH_ONLY.nba_spread) |
+| Previous value | What it was |
+| New value | What it is now |
+| Direction | e.g., Disabled → Watch-Only, sigmoid A 0.85 → 0.92 |
+| Evidence summary | Resolved sample size, win rate, ROI, CLV, Brier skill, monotonicity correlation — whichever are relevant |
+| Cohort window | Date range of the evidence (e.g., 2026-04-12 → 2026-05-01, POST-clean only) |
+| Root cause (if recalibration) | Diagnosed explanation, not just "win rate was low" |
+| Replay result (if threshold/calibration) | Before-and-after metrics on the same candidate set |
+| Operator | Who approved |
+
+### Where to log
+
+Append entries to `docs/decision-log.md`. Each entry is a dated section
+with the fields above. The log is append-only — entries are never edited
+or deleted after the fact. If a decision is later reversed, the reversal
+gets its own entry referencing the original.
+
+### Existing decisions that predate this requirement
+
+The code comments in `scoringModelConfig.ts` already contain the
+reasoning for every market-status change to date (R1, R2, Phase 0.75B/C
+evidence). These are grandfathered. All future changes use the log.
+
+---
+
+## 8. Evidence Standards for Changes
+
+### 8a. Thresholds (MIN_EDGE, MIN_EV, TIER_A_THRESHOLD_OVERRIDE, MARKET_MIN_EDGE)
 
 | Requirement | Detail |
 |---|---|
-| Sample size | ≥50 resolved POST-clean picks in the affected (league, market) |
-| Cohort report | Full cohort analysis showing the current threshold is too loose or too tight |
-| Monotonicity check | Edge→winRate correlation must be computed; if inverted, the threshold change alone won't fix it |
-| Replay validation | Run the proposed threshold on the trailing 45-day candidate_bets set and confirm the surfaced subset improves on ROI, CLV, or Brier vs the current threshold |
-| Approval | Explicit operator sign-off with the replay results documented |
+| Sample size | ≥50 resolved POST-clean picks in affected (league, market) |
+| Cohort report | Full analysis showing current threshold is too loose or tight |
+| Monotonicity | Edge→winRate correlation computed; if inverted, threshold alone won't fix it |
+| Replay | Proposed threshold on trailing 45-day candidate_bets; confirm improvement on ROI, CLV, or Brier |
+| Decision log | Entry per Section 7 |
 
-### 6b. Calibration (sigmoid A/B, isotonic buckets, calibration_version)
+### 8b. Calibration (sigmoid A/B, isotonic buckets, calibration_version)
 
 | Requirement | Detail |
 |---|---|
-| Sample size | ≥75 resolved POST-clean picks in the affected (league, market) |
-| Root cause | A diagnosed explanation for WHY calibration is off (not just "win rate is low") |
-| Brier analysis | Before-and-after Brier score and Brier skill score on the same holdout set |
-| Monotonicity | Before-and-after edge→winRate monotonicity report |
-| Version bump | New calibration_version string (v5, v6, …) so old and new candidates are distinguishable |
-| No retroactive rewrite | Old candidates keep their original calibration. New calibration applies forward only. |
+| Sample size | ≥75 resolved POST-clean picks in affected (league, market) |
+| Root cause | Diagnosed explanation for WHY calibration is off |
+| Brier analysis | Before-and-after Brier score + Brier skill on same holdout |
+| Monotonicity | Before-and-after edge→winRate report |
+| Version bump | New calibration_version (v5, v6, …) so candidates are distinguishable |
+| No retroactive rewrite | Old candidates keep original calibration. New applies forward only. |
+| Decision log | Entry per Section 7 |
 
-### 6c. Market status (MARKET_DISABLED ↔ MARKET_MODEL_WATCH_ONLY ↔ Official)
+### 8c. Market status
 
 | Direction | Evidence required |
 |---|---|
-| Disable → Watch-Only | 45-day read-only replay (validateGateChange.ts) showing ≥5 surfaced candidates AND mean CLV ≥ −2%. Both existing recoveries (R1 nhl_total, R2 nba_spread) cleared this bar. |
-| Watch-Only → Official | Promotion alert fires (≥50 resolved, ROI ≥4%, CLV ≥0.5%) AND Brier skill ≥ 0 AND monotonicity not inverted AND operator approval. All evidence must be POST-cutoff only. |
-| Official → Watch-Only | Demotion trigger fires (Section 4c). Requires ≥30 resolved POST-clean picks showing the signal. |
-| Official → Disabled | Catastrophic trigger fires (Section 4c). Requires ≥20 resolved picks. Can be acted on same-day. |
-| Watch-Only → Disabled | Same catastrophic triggers. Should be rare — watch-only markets don't affect subscribers. |
+| Disabled → Watch-Only | 45-day read-only replay showing ≥5 surfaced candidates AND mean CLV ≥ −2% |
+| Watch-Only → Official | Promotion alert fires (≥50 resolved, ROI ≥4%, CLV ≥0.5%) AND Brier skill ≥ 0 AND monotonicity not inverted AND operator approval |
+| Official → Watch-Only | Demotion trigger (Section 5c): ≥30 resolved POST-clean picks |
+| Official → Disabled | Catastrophic trigger (Section 5c): ≥20 resolved picks. Same-day action. |
+| Watch-Only → Disabled | Same catastrophic triggers |
 
-### 6d. Board ranking (selectModelWatchBoardCandidates sizing, 80% quality rule, capAndSort caps)
+All evidence for promotion must be POST-cutoff only. Decision log
+entry required for every direction.
+
+### 8d. Board ranking policy
 
 | Requirement | Detail |
 |---|---|
-| User-facing impact | Any change to MODEL_WATCH_BOARD_DEFAULT_TARGET, MODEL_WATCH_BOARD_MAX, MODEL_WATCH_BOARD_QUALITY_RATIO, MAX_PICKS_PER_LEAGUE_PER_DAY, or MAX_PICKS_PER_GAME changes what subscribers see daily |
-| Evidence | ≥14 days of board composition data showing the current policy is producing visibly wrong results (e.g., #4/#5 cards are consistently stronger than #1–#3, or one league monopolizes the board) |
-| Approval | Explicit operator sign-off. These are product decisions, not model decisions. |
+| User impact | Any change to board targets, quality ratio, per-league caps, or per-game caps changes the subscriber experience |
+| Evidence | ≥14 days of board composition showing the policy produces visibly wrong results |
+| Decision log | Entry per Section 7. These are product decisions, not model decisions. |
 
 ---
 
-## 7. Recommended Operating Cadence Through August 1
+## 9. Operating Cadence: Current Planning Horizon
 
-### Phase 1: NBA/NHL Playoff Runout (May 5 – June 6)
+This section is intentionally less prescriptive than the rest of the
+doctrine. The phases below describe the current environment and likely
+decision points — not commitments. If evidence arrives faster or slower
+than expected, the cadence adjusts; the evidence standards in Sections
+5–8 do not.
 
-**Context**: All NBA and NHL markets are currently Watch-Only or Disabled.
-Zero Official picks are being produced. The 14-day Performance window goes
-blank May 6; the 30-day window goes blank May 22; the 45-day window goes
-blank June 6. MLB moneyline is Watch-Only.
+### Phase 1: NBA/NHL Runout (now through end of NBA/NHL postseason)
 
-**Weekly actions**:
-- Run the cohort analysis report every Monday.
-- Review Model Watch scoreboard for nhl_spread, nhl_total, nba_spread,
-  mlb_moneyline — are any approaching the promotion alert thresholds?
-- Monitor the empty-state and legacy-disclosure copy on the Performance
-  page — confirm it renders correctly as windows go blank.
+**Context**: zero Official picks are being produced. All active
+NBA/NHL markets are Watch-Only or Disabled. MLB moneyline is Watch-Only.
+Performance page windows go progressively blank as the last Official
+pick ages out.
 
-**Do NOT**:
-- Promote any market back to Official during this phase. There is
-  not enough post-cutoff evidence yet.
-- Revive nba_moneyline or nhl_moneyline — both had catastrophic
-  results and need a model rebuild, not a threshold tweak.
+**Focus**:
+- Weekly cohort reports. Monitor nhl_spread, nhl_total, nba_spread,
+  mlb_moneyline watch accumulation.
+- Confirm empty-state and legacy-disclosure copy render correctly as
+  Performance windows go blank.
+- Do NOT promote any market without clearing the full evidence standard.
+- Do NOT revive nba_moneyline or nhl_moneyline — both need model
+  rebuilds, not threshold tweaks.
 
-**Milestones**:
-- By May 19: nhl_spread should have ~35 resolved watch picks.
-  Review monotonicity and CLV. If both are positive, it's on track
-  for promotion in Phase 2.
-- By June 1: mlb_moneyline should have ~25–30 resolved watch picks.
-  First meaningful cohort snapshot.
+### Phase 2: MLB-Only Window (after NBA/NHL seasons end)
 
-### Phase 2: MLB Regular Season + Watch Accumulation (June 7 – July 15)
+**Context**: MLB moneyline is the only active candidate pipeline.
+Performance page shows the empty state for all windows.
 
-**Context**: NBA and NHL regular seasons are over. MLB is the only active
-league with candidates being generated. The Performance page shows the
-empty state for all windows.
+**Focus**:
+- Continue weekly cohort reports.
+- mlb_moneyline is the most likely first market to reach the promotion
+  threshold. If the alert fires, run the full promotion checklist
+  (Section 8c).
+- Monthly parameter review on the 1st. Decide whether NBA/NHL markets
+  have enough accumulated watch evidence for off-season recalibration
+  work.
+- Do NOT enable NFL or NCAAF markets — no models exist.
+- Do NOT change NBA/NHL calibration while those leagues are out of
+  season. There are no new picks to validate against.
 
-**Weekly actions**:
-- Continue Monday cohort reports.
-- Watch for mlb_moneyline promotion alert. If it fires:
-  - Verify all evidence is from POST-cutoff dates.
-  - Run the full promotion checklist (Section 6c).
-  - If approved: promote mlb_moneyline to Official. This restores
-    live Official picks to the product and re-populates the
-    Performance page.
+### Phase 3: Pre-Season Prep (approximately 3 weeks before NFL Week 1)
 
-**Monthly action (July 1)**:
-- Full parameter review per Section 3.
-- Decide whether nba_spread and nhl_spread have accumulated
-  enough watch evidence for a recalibration attempt before
-  their next seasons begin.
+**Focus**:
+- If mlb_moneyline was promoted, review its first 30–45 days of Official
+  results.
+- If NBA/NHL recalibration was performed, run replays against the full
+  POST-cutoff dataset, document results, stage for next-season deployment.
+- If an NFL spread model is ready: wire through the pipeline, backtest,
+  add to MARKET_MODEL_WATCH_ONLY. It must accumulate ≥50 resolved watch
+  picks before Official promotion is considered.
 
-**Do NOT**:
-- Enable nfl_spread, nfl_moneyline, nfl_total, or any ncaaf market.
-  These have no models built. Phase 0.75E/F are foundation stubs.
-- Change calibration parameters for NBA/NHL markets while those
-  leagues are out of season — there are no new picks to validate
-  changes against.
-
-### Phase 3: Pre-Season Prep (July 16 – August 1)
-
-**Context**: NFL preseason begins August 7. If an NFL spread model is
-being built, this is the window to finalize and backtest it.
-
-**Actions**:
-- If mlb_moneyline was promoted to Official in Phase 2, review its
-  first 30–45 days of Official results. Confirm ROI, CLV, and
-  monotonicity are tracking.
-- For any NBA/NHL recalibration work: finalize parameter changes,
-  run replays against the full POST-cutoff dataset, document
-  results, and stage the config change for the start of next season.
-- If NFL spread model is ready: wire it through the scoring pipeline,
-  run a historical backtest, and add it to MARKET_MODEL_WATCH_ONLY
-  (not Official) for at least 50 resolved picks of watch evidence.
-
-**Deliverable by August 1**: a written status report for each
-(league, market) pair documenting:
+**Deliverable at the end of this phase**: a written status report for
+every (league, market) pair:
 - Current status (Disabled / Watch-Only / Official)
 - Evidence summary (resolved count, win rate, ROI, CLV, Brier skill)
 - Recommended action for the upcoming season
@@ -362,23 +471,29 @@ being built, this is the window to finalize and backtest it.
 
 ---
 
-## Appendix: Current Market Status (as of 2026-05-05)
+## Appendix A: Current Market Status
 
-| League | Market | Status | Selection Reason | Evidence Summary |
-|---|---|---|---|---|
-| NBA | moneyline | **Disabled** | market_disabled | 22% wr, −47% ROI on 9 resolved post-fix |
-| NBA | spread | **Watch-Only** | model_watch_only | R2 recovery: 56% wr, +0.24% CLV on 25 candidates (replay) |
-| NBA | total | **Disabled** | market_disabled | Max edge 6.8% on 214 candidates — below 10% floor |
-| NHL | moneyline | **Disabled** | market_disabled | 0/6 resolved post-fix (−100% ROI) |
-| NHL | spread | **Watch-Only** | model_watch_only | 72%+ wr demonstrated; edge inflation fixed but tier calibration needed |
-| NHL | total | **Watch-Only** | model_watch_only | R1 recovery: 57.3% wr, +2.07% CLV on 82 decided (replay) |
-| MLB | moneyline | **Watch-Only** | model_watch_only | Phase 0.75D foundation; early watch period |
-| MLB | spread | **Disabled** | market_disabled | No model exists |
-| MLB | total | **Disabled** | market_disabled | No model exists |
-| NFL | all | **Disabled** | market_disabled | Phase 0.75E foundation; no models built |
-| NCAAF | all | **Disabled** | market_disabled | Phase 0.75F foundation; no models built |
+*Last updated: 2026-05-05. Update this appendix whenever a market
+status changes. The doctrine sections above are independent of these
+values.*
 
-## Appendix: Current Calibration Parameters
+| League | Market | Status | Evidence Summary |
+|---|---|---|---|
+| NBA | moneyline | Disabled | 22% wr, −47% ROI on 9 resolved post-fix |
+| NBA | spread | Watch-Only | R2 recovery: 56% wr, +0.24% CLV on 25 candidates (replay) |
+| NBA | total | Disabled | Max edge 6.8% on 214 candidates — below 10% floor |
+| NHL | moneyline | Disabled | 0/6 resolved post-fix (−100% ROI) |
+| NHL | spread | Watch-Only | 72%+ wr demonstrated; tier calibration pending |
+| NHL | total | Watch-Only | R1 recovery: 57.3% wr, +2.07% CLV on 82 decided (replay) |
+| MLB | moneyline | Watch-Only | Phase 0.75D foundation; early watch period |
+| MLB | spread | Disabled | No model exists |
+| MLB | total | Disabled | No model exists |
+| NFL | all | Disabled | Phase 0.75E foundation; no models built |
+| NCAAF | all | Disabled | Phase 0.75F foundation; no models built |
+
+## Appendix B: Current Calibration Parameters
+
+*Last updated: 2026-05-05.*
 
 | League | Market | Method | Version | Sigmoid A | Sigmoid B |
 |---|---|---|---|---|---|
@@ -390,7 +505,9 @@ being built, this is the window to finalize and backtest it.
 | NHL | total | isotonic | v2 | — | — |
 | MLB | moneyline | sigmoid | v1 | 1.00 | 0.0 |
 
-## Appendix: Current Scoring Thresholds
+## Appendix C: Current Scoring Thresholds
+
+*Last updated: 2026-05-05.*
 
 | Parameter | Value |
 |---|---|
@@ -410,3 +527,8 @@ being built, this is the window to finalize and backtest it.
 | Promotion alert: minResolved | 50 |
 | Promotion alert: minRoi | 4% |
 | Promotion alert: minAvgClv | 0.5% |
+
+## Appendix D: Decision Log
+
+*See `docs/decision-log.md` for the append-only record of all
+calibration, threshold, market-status, and ranking-policy changes.*

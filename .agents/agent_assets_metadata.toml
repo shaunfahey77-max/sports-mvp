@@ -154,4 +154,10 @@ title = "Blank-page screenshot (post-gate, +8s wait)"
 id = "nDiDjo9P07NsGorxgzRov"
 uri = "file://docs/operating-system.md"
 type = "text"
-title = "How SportsMVP Learns and Improves Over Time — Operating Plan"
+title = "SportsMVP Internal Doctrine v2"
+
+[[outputs]]
+id = "Yiy_90Xcw8AjtxA1ULQiu"
+uri = "file://docs/decision-log.md"
+type = "text"
+title = "Decision Log (append-only)"
