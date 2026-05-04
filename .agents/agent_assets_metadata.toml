@@ -149,3 +149,9 @@ id = "gEMCE4mp8Menm2-IriWk1"
 uri = "file://.local/scratch/blank-landing.jpeg"
 type = "image"
 title = "Blank-page screenshot (post-gate, +8s wait)"
+
+[[outputs]]
+id = "nDiDjo9P07NsGorxgzRov"
+uri = "file://docs/operating-system.md"
+type = "text"
+title = "How SportsMVP Learns and Improves Over Time — Operating Plan"
