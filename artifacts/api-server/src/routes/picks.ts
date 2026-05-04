@@ -121,6 +121,13 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
   if (date) conditions.push(eq(candidateBetsTable.snapshotDate, date));
   if (gameDate) {
     conditions.push(sql`${candidateBetsTable.gameKey} LIKE ${'%_' + gameDate + '_%'}`);
+    // Stale-game-key guard: a candidate may only render on a slate if it was
+    // re-evaluated by THAT slate's scoring run. Without this, stale game_keys
+    // from earlier ingests (e.g. nhl_2026-05-04_min_col, last scored on
+    // 2026-05-01, for a game the schedule later moved/dropped) continue to
+    // surface on today's board even though today's ingest no longer believes
+    // in them. Today's ingest is the source of truth for today's slate.
+    conditions.push(eq(candidateBetsTable.snapshotDate, gameDate));
   }
   if (league) {
     conditions.push(eq(candidateBetsTable.league, league));
