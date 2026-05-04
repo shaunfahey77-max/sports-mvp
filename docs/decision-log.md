@@ -37,3 +37,34 @@ here for completeness but are not rewritten into the new format.
 ---
 
 *New entries below this line follow the Section 7 format.*
+
+## 2026-05-04 — Candidates endpoint: fresh-snapshot dedup + renderable-only cap
+
+**Category:** ranking-policy / bug-fix  
+**Change:** Two fixes in `/picks/candidates` (picks.ts):
+1. Dedup now prefers the latest `snapshotDate` per (gameKey, marketType, side),
+   breaking ties with highest EV. Previously kept highest EV across all scoring
+   runs, allowing 3–4 day old stale candidates (with inflated rank scores from
+   outdated odds) to dominate the Model Watch board.
+2. Non-renderable `selectionReason` values (`market_disabled`, `insufficient_edge`,
+   `negative_ev`, `odds_out_of_range`) are filtered out before `capAndSort`. Previously
+   these dead-weight candidates consumed per-game (MAX_PICKS_PER_GAME=2) and
+   per-league (5/day) cap slots, blocking `model_watch_only` candidates from
+   reaching the dashboard.
+
+**Evidence (pre-fix board, 2026-05-04):**
+- Board showed 3 NHL total cards: phi_car under (rank 0.94, snap 2026-05-01),
+  min_col under (rank 0.84, snap 2026-05-01), ana_vgk over (rank 0.76, snap 2026-05-02).
+  All from 3–4 day old scoring runs with stale odds.
+- NBA spread and NHL spread candidates were blocked by disabled moneyline/total
+  candidates eating per-game cap slots.
+- Expansion locked at 3 because stale top rank (0.94) created an 80% threshold
+  (0.75) unreachable by any fresh candidate.
+
+**Post-fix board (same data):** NHL total under (phi_car, fresh snap), NHL total
+under (min_col, only snap), MLB moneyline home (lad_hou, fresh snap). NBA spread
+now reaches the eligible pool (rank 0.246) but falls below the quality threshold.
+Board remains 3 cards by the expansion rule, not by bugs.
+
+**Risk:** Low. Only affects the `/picks/candidates` public read path. No change
+to scoring, `scored_picks`, or `/performance`.

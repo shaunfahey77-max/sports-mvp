@@ -53,6 +53,10 @@ The frontend is a React + Vite application.
 - **`simulation_runs`**: Results of simulation runs.
 - **Data Quality Filter**: A `data_quality` column on `candidate_bets` and `scored_picks` allows for surgical exclusion of contaminated rows from public surfaces.
 
+**Candidates Endpoint (`/picks/candidates`):**
+- Dedup prefers latest `snapshotDate` per (gameKey, marketType, side), not highest EV.
+- Non-renderable `selectionReason` values (market_disabled, insufficient_edge, etc.) are filtered out before `capAndSort` so they don't consume per-game/per-league cap slots.
+
 **API Routes:**
 - **Snapshots**: `/api/snapshots`, `/api/snapshots/generate`, `/api/snapshots/finalize`.
 - **Picks**: `/api/picks`, `/api/picks/candidates`, `/api/picks/score`, `/api/picks/validate`.

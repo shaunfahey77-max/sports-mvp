@@ -190,21 +190,31 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
     .orderBy(desc(candidateBetsTable.rankScore))
     .limit(candidateLimit);
 
-  // Deduplicate: keep only the highest-EV candidate per (gameKey, marketType, side)
+  // Deduplicate: keep only the freshest candidate per (gameKey, marketType, side).
+  // Multiple scoring runs (snapshot dates) produce rows for the same game;
+  // prefer the latest snapshot so the board reflects current odds/edges.
+  // Within the same snapshot date, break ties with highest EV.
   const seen = new Map<string, typeof raw[0]>();
   for (const c of raw) {
     const key = `${c.gameKey}|${c.marketType}|${c.side}`;
     const existing = seen.get(key);
-    if (!existing || parseFloat(c.ev) > parseFloat(existing.ev)) {
+    if (
+      !existing ||
+      c.snapshotDate > existing.snapshotDate ||
+      (c.snapshotDate === existing.snapshotDate &&
+        parseFloat(c.ev) > parseFloat(existing.ev))
+    ) {
       seen.set(key, c);
     }
   }
-  // Apply per-league cap then sort chronologically (best pick first within same game time)
-  const candidates = capAndSort(
-    Array.from(seen.values()).sort(
-      (a, b) => parseFloat(b.rankScore) - parseFloat(a.rankScore)
-    ).map(c => ({ ...c, eventStart: c.eventStart ?? new Date() }))
-  );
+
+  const RENDERABLE_REASONS = new Set<string | null>([null, "model_watch_only"]);
+  const deduped = Array.from(seen.values())
+    .filter((c) => RENDERABLE_REASONS.has(c.selectionReason))
+    .sort((a, b) => parseFloat(b.rankScore) - parseFloat(a.rankScore))
+    .map((c) => ({ ...c, eventStart: c.eventStart ?? new Date() }));
+
+  const candidates = capAndSort(deduped);
 
   res.json(candidates);
 });
