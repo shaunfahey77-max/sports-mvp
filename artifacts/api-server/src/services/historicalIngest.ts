@@ -19,7 +19,11 @@ import {
   transformGame,
   SPORT_KEYS,
 } from "../lib/oddsApi";
-import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
+import {
+  isOfficialCandidate,
+  scorePicks,
+  type GameMarketInput,
+} from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import {
   settleOfficialEvaluationResult,
@@ -291,7 +295,7 @@ async function processDate(date: string, leagues: League[], delayMs: number): Pr
         MARKETS,
         "v1"
       );
-      const picks = candidates.filter((c) => c.tier !== "PASS");
+      const picks = candidates.filter((c) => isOfficialCandidate(c));
 
       // 5. Grade each pick and insert into scored_picks
       for (const pick of picks) {

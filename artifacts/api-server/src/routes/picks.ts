@@ -10,7 +10,11 @@ import {
   ScoreDateBody,
   ValidatePicksBody,
 } from "@workspace/api-zod";
-import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
+import {
+  isOfficialCandidate,
+  scorePicks,
+  type GameMarketInput,
+} from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { computeClvWritebackValues } from "../scoring/clvWriteback";
 import {
@@ -346,7 +350,7 @@ router.post("/picks/score", async (req, res): Promise<void> => {
       });
   }
 
-  const picks = candidates.filter((c) => c.tier !== "PASS");
+  const picks = candidates.filter((c) => isOfficialCandidate(c));
 
   if (picks.length > 0) {
     for (const c of picks) {

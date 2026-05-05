@@ -81,6 +81,7 @@ export interface CandidateOutput {
   calibrationVersion: string;
   marketQuality: number;
   selectionReason: string | null;
+  surfaceStatus?: ResolvedSurfaceStatus;
   snapshotDate: string;
   modelVersion: string;
 }
@@ -367,6 +368,40 @@ export interface ScorePicksOptions {
   surfaceStatusByMarketKey?: Partial<Record<string, ResolvedSurfaceStatus>>;
 }
 
+function getFallbackSurfaceStatus(
+  marketKey: string,
+): ResolvedSurfaceStatus | undefined {
+  if (MARKET_DISABLED[marketKey]) return "suppressed";
+  if (MARKET_MODEL_WATCH_ONLY[marketKey]) return "model_watch";
+  return undefined;
+}
+
+export function getCandidateSurfaceStatus(
+  candidate: Pick<CandidateOutput, "league" | "marketType" | "surfaceStatus">,
+  surfaceStatusByMarketKey?: Partial<Record<string, ResolvedSurfaceStatus>>,
+): ResolvedSurfaceStatus | undefined {
+  if (candidate.surfaceStatus != null) return candidate.surfaceStatus;
+  const marketKey = `${candidate.league}_${candidate.marketType}`;
+  return surfaceStatusByMarketKey?.[marketKey] ?? getFallbackSurfaceStatus(marketKey);
+}
+
+export function isOfficialCandidate(
+  candidate: Pick<
+    CandidateOutput,
+    "league" | "marketType" | "tier" | "surfaceStatus"
+  >,
+  surfaceStatusByMarketKey?: Partial<Record<string, ResolvedSurfaceStatus>>,
+): boolean {
+  const resolvedSurfaceStatus = getCandidateSurfaceStatus(
+    candidate,
+    surfaceStatusByMarketKey,
+  );
+  if (resolvedSurfaceStatus === "suppressed" || resolvedSurfaceStatus === "model_watch") {
+    return false;
+  }
+  return candidate.tier !== "PASS";
+}
+
 export async function scorePicks(
   games: GameMarketInput[],
   markets: MarketType[],
@@ -439,12 +474,7 @@ export function applyTieringToCandidates(
     const rankScore = rankScores[i];
     const marketKey = `${c.league}_${c.marketType}`;
     const resolvedSurfaceStatus =
-      surfaceStatusByMarketKey?.[marketKey] ??
-      (MARKET_DISABLED[marketKey]
-        ? "suppressed"
-        : MARKET_MODEL_WATCH_ONLY[marketKey]
-        ? "model_watch"
-        : undefined);
+      surfaceStatusByMarketKey?.[marketKey] ?? getFallbackSurfaceStatus(marketKey);
     const enableOddsRangeGuardrail =
       guardrailLeagues != null && guardrailLeagues.includes(c.league);
     const { tier, selectionReason } = assignTier({
@@ -479,12 +509,19 @@ export function applyTieringToCandidates(
         return {
           ...c,
           rankScore,
+          surfaceStatus: resolvedSurfaceStatus,
           tier: "PASS" as const,
           selectionReason: "model_watch_only",
         };
       }
     }
 
-    return { ...c, rankScore, tier, selectionReason };
+    return {
+      ...c,
+      rankScore,
+      surfaceStatus: resolvedSurfaceStatus,
+      tier,
+      selectionReason,
+    };
   });
 }

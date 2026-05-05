@@ -6,7 +6,12 @@ import {
   scoredPicksTable,
 } from "@workspace/db";
 import { eq, and, inArray, sql } from "drizzle-orm";
-import { scorePicks, type GameMarketInput, type CandidateOutput } from "../scoring/scorePicks";
+import {
+  isOfficialCandidate,
+  scorePicks,
+  type GameMarketInput,
+  type CandidateOutput,
+} from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import {
   deletePendingOfficialEvaluationResult,
@@ -164,7 +169,7 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
         // Sort by rankScore DESC before capping so the best picks per league/game are kept
         const picks = capAndSort(
           candidates
-            .filter((c) => c.tier !== "PASS")
+            .filter((c) => isOfficialCandidate(c))
             .sort((a, b) => b.rankScore - a.rankScore)
         );
         if (picks.length > 0) {

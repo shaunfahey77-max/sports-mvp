@@ -12,7 +12,11 @@ import {
   simulationRunsTable,
 } from "@workspace/db";
 import { eq, and, between, gte, lte } from "drizzle-orm";
-import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
+import {
+  isOfficialCandidate,
+  scorePicks,
+  type GameMarketInput,
+} from "../scoring/scorePicks";
 import { computeClvImpliedDelta } from "../scoring/expectedValue";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { logger } from "../lib/logger";
@@ -168,7 +172,7 @@ async function executeSimulation(params: {
 
     const picks: PickWithFullData[] = require("../lib/pickUtils").capAndSort(
       candidates
-        .filter((c) => c.tier !== "PASS")
+        .filter((c) => isOfficialCandidate(c))
         .sort((a, b) => b.rankScore - a.rankScore)
     ).map((c: Awaited<ReturnType<typeof scorePicks>>[number]) => {
         const snap = leagueFiltered.find((s) => s.gameKey === c.gameKey);

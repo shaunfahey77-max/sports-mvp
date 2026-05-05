@@ -25,7 +25,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyTieringToCandidates, type CandidateOutput } from "../scorePicks";
+import {
+  applyTieringToCandidates,
+  isOfficialCandidate,
+  type CandidateOutput,
+} from "../scorePicks";
 import {
   LEAGUE_MARKET_QUALITY,
   MARKET_DISABLED,
@@ -313,4 +317,43 @@ test("registry override: shadow can lift a legacy watch-only market back to assi
 
   assert.equal(tiered.tier, "A");
   assert.equal(tiered.selectionReason, "high_rank_score");
+});
+
+test("official-write filter: model_watch PASS candidate is not official", () => {
+  const c = makeCandidate({
+    league: "nhl",
+    marketType: "spread",
+    publishOdds: -110,
+    publishLine: -1.5,
+    edge: 0.08,
+    ev: 0.05,
+  });
+
+  const [tiered] = applyTieringToCandidates([c], [0.99], {
+    oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+  });
+
+  assert.equal(tiered.selectionReason, "model_watch_only");
+  assert.equal(isOfficialCandidate(tiered), false);
+});
+
+test("official-write filter: registry shadow preserves official eligibility", () => {
+  const c = makeCandidate({
+    league: "nhl",
+    marketType: "spread",
+    publishOdds: -110,
+    publishLine: -1.5,
+    edge: 0.08,
+    ev: 0.05,
+  });
+
+  const [tiered] = applyTieringToCandidates([c], [0.99], {
+    oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+    surfaceStatusByMarketKey: {
+      nhl_spread: "shadow",
+    },
+  });
+
+  assert.equal(tiered.tier, "A");
+  assert.equal(isOfficialCandidate(tiered), true);
 });

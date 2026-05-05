@@ -16,7 +16,11 @@ import { eq, and, lt, sql } from "drizzle-orm";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { logger } from "../lib/logger";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
-import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
+import {
+  isOfficialCandidate,
+  scorePicks,
+  type GameMarketInput,
+} from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { computeClvWritebackValues } from "../scoring/clvWriteback";
 import { gradeModelWatchForSnapshot } from "../scoring/modelWatchGrader";
@@ -166,7 +170,7 @@ async function runOddsIngest(): Promise<void> {
       // Sort by rankScore DESC before capping so the best picks per league/game are kept
       const picks = capAndSort(
         candidates
-          .filter((c) => c.tier !== "PASS")
+          .filter((c) => isOfficialCandidate(c))
           .sort((a, b) => b.rankScore - a.rankScore)
       );
       const date = snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0];

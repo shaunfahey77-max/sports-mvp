@@ -1,7 +1,7 @@
 import { db } from "@workspace/db";
 import { evaluationResultsTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
-import type { CandidateOutput } from "./scorePicks";
+import { isOfficialCandidate, type CandidateOutput } from "./scorePicks";
 
 type OfficialSurfaceStatus = "official" | "suppressed";
 
@@ -20,7 +20,7 @@ export interface OfficialEvaluationSettlementInput {
 function officialSurfaceStatusForCandidate(
   candidate: CandidateOutput,
 ): OfficialSurfaceStatus {
-  return candidate.tier === "PASS" ? "suppressed" : "official";
+  return isOfficialCandidate(candidate) ? "official" : "suppressed";
 }
 
 export async function upsertOfficialCandidateEvaluation(
