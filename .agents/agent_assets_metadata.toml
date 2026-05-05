@@ -161,3 +161,21 @@ id = "Yiy_90Xcw8AjtxA1ULQiu"
 uri = "file://docs/decision-log.md"
 type = "text"
 title = "Decision Log (append-only)"
+
+[[outputs]]
+id = "IPH8xWSSG_3y2C8QiM8wf"
+uri = "file://.local/research/recommendation_memo_2026-05-04.md"
+type = "text"
+title = "Recommendation memo (forced conclusion)"
+
+[[outputs]]
+id = "JN18KsijvYRTI9bTyl8lu"
+uri = "file://.local/research/benchmark_report_2026-05-04.md"
+type = "text"
+title = "Benchmark report by (league, market)"
+
+[[outputs]]
+id = "OaVUEO48VW_exyidFiDzR"
+uri = "file://.local/research/dataset_2026-05-04.csv"
+type = "table"
+title = "Re-graded candidate dataset"
