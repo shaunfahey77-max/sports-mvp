@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
-import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, getResultColorClass, cn } from "@/lib/utils";
+import { formatEventStartEt, formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, getResultColorClass, cn } from "@/lib/utils";
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
 const SERIF = "'Playfair Display', serif";
@@ -36,6 +36,7 @@ function TeamLogo({ src, abbrev, size = 28 }: { src: string | null; abbrev: stri
 }
 
 export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredPick; highlight?: boolean; onLogPick?: () => void }) {
+  const pickWithEventStart = pick as ScoredPick & { eventStart?: string | null };
   const matchup = parseGameMatchup(pick.gameKey, pick.league);
   const leagueLogo = getLeagueLogoUrl(pick.league);
 
@@ -44,6 +45,7 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
   const pickIsOver = pick.pick === 'over';
   const pickIsUnder = pick.pick === 'under';
   const isSidesPick = pickIsHome || pickIsAway;
+  const eventStartLabel = formatEventStartEt(pickWithEventStart.eventStart);
 
   return (
     <Card className={cn(
@@ -96,6 +98,15 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
           </div>
         )}
       </div>
+
+      {eventStartLabel && (
+        <div
+          data-testid="pick-event-start"
+          className="text-[11px] text-white/55 font-medium tracking-wide"
+        >
+          {eventStartLabel}
+        </div>
+      )}
 
       <div>
         <div className="text-xl font-bold font-display tracking-tight flex items-baseline gap-2">

@@ -1,5 +1,7 @@
 export * from "./gameSnapshots";
 export * from "./candidateBets";
+export * from "./evaluationResults";
+export * from "./marketRegistry";
 export * from "./scoredPicks";
 export * from "./validationMetrics";
 export * from "./simulationRuns";

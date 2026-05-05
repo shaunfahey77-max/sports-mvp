@@ -170,7 +170,7 @@ async function executeSimulation(params: {
       candidates
         .filter((c) => c.tier !== "PASS")
         .sort((a, b) => b.rankScore - a.rankScore)
-    ).map((c) => {
+    ).map((c: Awaited<ReturnType<typeof scorePicks>>[number]) => {
         const snap = leagueFiltered.find((s) => s.gameKey === c.gameKey);
         let result: "win" | "loss" | "push" | "pending" = "pending";
 

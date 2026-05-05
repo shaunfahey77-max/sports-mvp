@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
-import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, cn } from "@/lib/utils";
+import { formatEventStartEt, formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, getTierColorClass, cn } from "@/lib/utils";
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
 const SERIF = "'Playfair Display', serif";
@@ -44,6 +44,7 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
   const sideIsOver = bet.side === 'over';
   const sideIsUnder = bet.side === 'under';
   const isSidesPick = sideIsHome || sideIsAway;
+  const eventStartLabel = formatEventStartEt(bet.eventStart);
 
   return (
     <Card className={cn(
@@ -96,6 +97,15 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
           </div>
         )}
       </div>
+
+      {eventStartLabel && (
+        <div
+          data-testid="pick-event-start"
+          className="text-[11px] text-white/55 font-medium tracking-wide"
+        >
+          {eventStartLabel}
+        </div>
+      )}
 
       <div>
         <div className="text-xl font-bold font-display tracking-tight flex items-baseline gap-2">

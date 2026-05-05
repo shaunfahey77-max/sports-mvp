@@ -125,14 +125,14 @@ router.post("/snapshots/finalize", async (req, res): Promise<void> => {
     .from(gameSnapshotsTable)
     .where(eq(gameSnapshotsTable.snapshotDate, date));
 
-  const withClose = snapshots.filter((s) => s.homeCloseMl != null).length;
+  const withClose = snapshots.filter((s) => s.closeCapturedAt != null).length;
   const missingClose = snapshots.filter(
-    (s) => s.homeCloseMl == null && new Date(s.eventStart) <= new Date(),
+    (s) => s.closeCapturedAt == null && new Date(s.eventStart) <= new Date(),
   ).length;
 
   res.json({
     success: true,
-    message: `Snapshot route is read-only since 2026-04-26 CLV-integrity fix; close odds are written by the runClosingOddsCapture cron. Date ${date}: ${withClose} snapshots have close odds, ${missingClose} started games still missing close odds (use scripts/backfillCloseOdds45d.ts to backfill).`,
+    message: `Snapshot route is read-only since 2026-04-26 CLV-integrity fix; close odds are written by the runClosingOddsCapture cron. Date ${date}: ${withClose} snapshots have verified close captures, ${missingClose} started games still missing verified close capture (use scripts/backfillCloseOdds45d.ts to backfill).`,
     count: 0,
     snapshotsWithClose: withClose,
     snapshotsMissingClose: missingClose,

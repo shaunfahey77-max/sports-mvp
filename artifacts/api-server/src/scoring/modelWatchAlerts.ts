@@ -21,10 +21,11 @@
 
 import { db } from "@workspace/db";
 import {
-  modelWatchResultsTable,
+  evaluationResultsTable,
   modelWatchAlertsTable,
   type ModelWatchAlert,
 } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import {
   MARKET_MODEL_WATCH_ONLY,
   MODEL_WATCH_ALERT_THRESHOLDS,
@@ -35,6 +36,7 @@ import {
   type AggregatorRow,
   type MarketBucket,
 } from "./modelWatchAggregator";
+import { resolveMarketKeysForSurfaceStatus } from "./marketRegistryResolver";
 import { logger } from "../lib/logger";
 
 export interface AlertCandidate {
@@ -103,7 +105,10 @@ export interface ModelWatchAlertCheckResult {
 export async function runModelWatchAlertCheck(
   thresholds: ModelWatchAlertThresholds = MODEL_WATCH_ALERT_THRESHOLDS
 ): Promise<ModelWatchAlertCheckResult> {
-  const rows = await db.select().from(modelWatchResultsTable);
+  const rows = await db
+    .select()
+    .from(evaluationResultsTable)
+    .where(eq(evaluationResultsTable.surfaceStatus, "model_watch"));
 
   const aggRows: AggregatorRow[] = rows.map((r) => ({
     league: r.league,
@@ -116,11 +121,16 @@ export async function runModelWatchAlertCheck(
     clvImpliedDelta: r.clvImpliedDelta,
   }));
 
-  const registryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
+  const fallbackRegistryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
     .filter(([, enabled]) => enabled)
     .map(([k]) => k);
+  const registryResolution = await resolveMarketKeysForSurfaceStatus(
+    "model_watch",
+    fallbackRegistryKeys,
+    { requireRegistry: true },
+  );
 
-  const buckets = aggregateByLeagueMarket(aggRows, registryKeys);
+  const buckets = aggregateByLeagueMarket(aggRows, registryResolution.keys);
   const qualifying = evaluateModelWatchAlerts(buckets, thresholds);
 
   const newAlerts: ModelWatchAlert[] = [];
@@ -177,6 +187,7 @@ export async function runModelWatchAlertCheck(
       bucketsEvaluated: buckets.length,
       qualifying: qualifying.length,
       newAlerts: newAlerts.length,
+      registrySource: registryResolution.source,
     },
     "model-watch alert check complete"
   );

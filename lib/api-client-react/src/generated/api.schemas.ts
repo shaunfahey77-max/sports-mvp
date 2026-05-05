@@ -127,6 +127,7 @@ export interface ScoredPick {
   id: number;
   date: string;
   gameKey: string;
+  eventStart: string;
   league: League;
   market: MarketType;
   pick: string;

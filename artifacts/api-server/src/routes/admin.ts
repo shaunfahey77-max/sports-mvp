@@ -8,9 +8,9 @@ import {
   gameSnapshotsTable,
   candidateBetsTable,
   scoredPicksTable,
-  modelWatchResultsTable,
+  evaluationResultsTable,
 } from "@workspace/db";
-import { and, desc, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { backfillModelWatchResults } from "../scoring/modelWatchGrader";
 import {
   aggregateByLeagueMarket,
@@ -22,6 +22,10 @@ import {
   type CohortInputRow,
 } from "../scoring/cohortAnalysis";
 import { renderCohortReportMarkdown } from "../scoring/cohortReportMarkdown";
+import {
+  resolveMarketKeysForSurfaceStatus,
+  syncMarketRegistryFromLegacyConfig,
+} from "../scoring/marketRegistryResolver";
 import {
   MARKET_MODEL_WATCH_ONLY,
   PUBLIC_TRACK_RECORD_CUTOFFS,
@@ -44,7 +48,7 @@ router.post("/admin/run-validation", async (_req, res) => {
   }
 });
 
-router.post("/admin/backfill-settlement", async (req, res) => {
+router.post("/admin/backfill-settlement", async (req, res): Promise<void> => {
   try {
     const { startDate, endDate, leagues, secret } = req.body;
     const expected = process.env.SESSION_SECRET;
@@ -52,16 +56,19 @@ router.post("/admin/backfill-settlement", async (req, res) => {
     // and reject if they don't match. Prevents unintentional fail-open
     // when SESSION_SECRET is missing in misconfigured environments.
     if (!expected || !secret || secret !== expected) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
     }
     if (!startDate || !endDate) {
-      return res.status(400).json({ ok: false, error: "startDate and endDate required (YYYY-MM-DD)" });
+      res.status(400).json({ ok: false, error: "startDate and endDate required (YYYY-MM-DD)" });
+      return;
     }
     const validLeagues: Array<"nba" | "nhl"> = ["nba", "nhl"];
     let leaguesArg: Array<"nba" | "nhl"> | undefined;
     if (leagues !== undefined) {
       if (!Array.isArray(leagues) || !leagues.every((l) => validLeagues.includes(l))) {
-        return res.status(400).json({ ok: false, error: "leagues must be an array of 'nba'|'nhl'" });
+        res.status(400).json({ ok: false, error: "leagues must be an array of 'nba'|'nhl'" });
+        return;
       }
       leaguesArg = leagues;
     }
@@ -85,14 +92,37 @@ router.post("/admin/run-ingest", async (_req, res) => {
   }
 });
 
-router.post("/admin/set-tier", async (req, res) => {
+router.post("/admin/market-registry/sync", async (req, res): Promise<void> => {
+  try {
+    const { secret } = req.body ?? {};
+    const expected = process.env.SESSION_SECRET;
+    if (!expected || !secret || secret !== expected) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+
+    const result = await syncMarketRegistryFromLegacyConfig();
+    res.json({
+      ok: true,
+      source: "legacy_config_bootstrap",
+      result,
+    });
+  } catch (err) {
+    logger.error({ err }, "Admin market-registry sync failed");
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+router.post("/admin/set-tier", async (req, res): Promise<void> => {
   try {
     const { email, clerkUserId, tier, secret } = req.body;
     if (secret !== process.env.SESSION_SECRET) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
     }
     if ((!email && !clerkUserId) || !tier) {
-      return res.status(400).json({ ok: false, error: "email or clerkUserId, and tier required" });
+      res.status(400).json({ ok: false, error: "email or clerkUserId, and tier required" });
+      return;
     }
     let user;
     if (clerkUserId) {
@@ -101,7 +131,8 @@ router.post("/admin/set-tier", async (req, res) => {
       user = await storage.updateUserTierByEmail(email, tier);
     }
     if (!user) {
-      return res.status(404).json({ ok: false, error: "User not found" });
+      res.status(404).json({ ok: false, error: "User not found" });
+      return;
     }
     logger.info({ email, clerkUserId, tier }, "Admin set user tier");
     res.json({ ok: true, user });
@@ -114,14 +145,16 @@ router.post("/admin/set-tier", async (req, res) => {
 // ---------------------------------------------------------------------------
 // Purge bad game keys from all three tables (scored_picks, candidate_bets, game_snapshots)
 // ---------------------------------------------------------------------------
-router.post("/admin/purge-games", async (req, res) => {
+router.post("/admin/purge-games", async (req, res): Promise<void> => {
   try {
     const { secret, gameKeys } = req.body;
     if (secret !== process.env.SESSION_SECRET) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
     }
     if (!Array.isArray(gameKeys) || gameKeys.length === 0) {
-      return res.status(400).json({ ok: false, error: "gameKeys array required" });
+      res.status(400).json({ ok: false, error: "gameKeys array required" });
+      return;
     }
 
     const [sp, cb, gs] = await Promise.all([
@@ -142,29 +175,32 @@ router.post("/admin/purge-games", async (req, res) => {
 // Historical Ingest — pull 3 years of NBA/NHL odds+scores, grade, store
 // ---------------------------------------------------------------------------
 
-router.post("/admin/historical-ingest", (req, res) => {
+router.post("/admin/historical-ingest", (req, res): void => {
   try {
     const { startDate, endDate, leagues, secret, delayMs } = req.body;
 
     if (secret !== process.env.SESSION_SECRET) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
     }
 
     if (!startDate || !endDate) {
-      return res.status(400).json({
+      res.status(400).json({
         ok: false,
         error: "startDate and endDate required (YYYY-MM-DD)",
       });
+      return;
     }
 
     // Check no job already running
     const status = getHistoricalIngestStatus();
     if (status?.status === "running") {
-      return res.status(409).json({
+      res.status(409).json({
         ok: false,
         error: "A historical ingest is already running",
         progress: status,
       });
+      return;
     }
 
     startHistoricalIngest({
@@ -186,15 +222,17 @@ router.post("/admin/historical-ingest", (req, res) => {
   }
 });
 
-router.post("/admin/historical-ingest/status", (req, res) => {
+router.post("/admin/historical-ingest/status", (req, res): void => {
   const { secret } = req.body;
   if (secret !== process.env.SESSION_SECRET) {
-    return res.status(401).json({ ok: false, error: "Unauthorized" });
+    res.status(401).json({ ok: false, error: "Unauthorized" });
+    return;
   }
 
   const status = getHistoricalIngestStatus();
   if (!status) {
-    return res.json({ ok: true, status: "idle", message: "No ingest has been run yet" });
+    res.json({ ok: true, status: "idle", message: "No ingest has been run yet" });
+    return;
   }
 
   const pctDone =
@@ -215,8 +253,10 @@ router.post("/admin/historical-ingest/status", (req, res) => {
 // Reports W-L-Push, ROI, CLV, sample size for every market in
 // MARKET_MODEL_WATCH_ONLY (currently nhl_spread, mlb_moneyline) so we
 // can decide when to promote a market back to Official picks. The
-// underlying rows live in `model_watch_results`, which is NEVER read
-// from any public surface (/picks, /performance, /performance/history).
+// rebuild read path now comes from `evaluation_results` filtered to
+// surface_status='model_watch'. Legacy model_watch_results backfill remains
+// available during transition, but the admin scoreboard should validate the
+// new unified evaluation surface first.
 //
 // Auth: SESSION_SECRET in body, mirroring the other admin endpoints.
 //
@@ -308,19 +348,26 @@ router.post("/admin/model-watch/performance", async (req, res) => {
     // Order so the per-bucket "recent" slice is genuinely the most recent rows.
     // Stable across calls for identical data via the id tiebreaker.
     const orderBy = [
-      desc(modelWatchResultsTable.date),
-      desc(modelWatchResultsTable.eventStart),
-      desc(modelWatchResultsTable.id),
+      desc(evaluationResultsTable.date),
+      desc(evaluationResultsTable.updatedAt),
+      desc(evaluationResultsTable.gameKey),
+      desc(evaluationResultsTable.pick),
     ] as const;
     const rows = since
       ? await db
           .select()
-          .from(modelWatchResultsTable)
-          .where(sql`${modelWatchResultsTable.date} >= ${since}`)
+          .from(evaluationResultsTable)
+          .where(
+            and(
+              eq(evaluationResultsTable.surfaceStatus, "model_watch"),
+              sql`${evaluationResultsTable.date} >= ${since}`,
+            ),
+          )
           .orderBy(...orderBy)
       : await db
           .select()
-          .from(modelWatchResultsTable)
+          .from(evaluationResultsTable)
+          .where(eq(evaluationResultsTable.surfaceStatus, "model_watch"))
           .orderBy(...orderBy);
 
     const aggRows: AggregatorRow[] = rows.map((r) => ({
@@ -337,13 +384,17 @@ router.post("/admin/model-watch/performance", async (req, res) => {
       pick: r.pick,
     }));
 
-    const registryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
+    const fallbackRegistryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
       .filter(([, enabled]) => enabled)
       .map(([k]) => k);
+    const registryResolution = await resolveMarketKeysForSurfaceStatus(
+      "model_watch",
+      fallbackRegistryKeys,
+    );
 
     const buckets = aggregateByLeagueMarket(
       aggRows,
-      registryKeys,
+      registryResolution.keys,
       wantsRecent ? { recentLimit: recentLimitN } : {}
     );
 
@@ -354,8 +405,10 @@ router.post("/admin/model-watch/performance", async (req, res) => {
     return res.json({
       ok: true,
       generatedAt: new Date().toISOString(),
+      source: "evaluation_results:model_watch",
+      registrySource: registryResolution.source,
       since: since ?? null,
-      registry: registryKeys,
+      registry: registryResolution.keys,
       backfill: backfillResult,
       recentLimit: wantsRecent ? recentLimitN : null,
       buckets,
@@ -370,7 +423,9 @@ router.post("/admin/model-watch/performance", async (req, res) => {
 // Internal calibration-review tool
 // ---------------------------------------------------------------------------
 // Read-only analyst surface that BYPASSES the public PUBLIC_TRACK_RECORD_CUTOFFS
-// filter and the data_quality filter, so the analyst sees every scored pick:
+// filter and the data_quality filter, so the analyst sees every evaluation row:
+//   - official vs model_watch vs suppressed split per row, derived from
+//     evaluation_results.surface_status
 //   - PRE / POST cohort split per row, derived from PUBLIC_TRACK_RECORD_CUTOFFS
 //     (rows for leagues without a cutoff are all POST).
 //   - clean / flagged split per row, derived from `data_quality` (null = clean,
@@ -383,7 +438,7 @@ router.post("/admin/model-watch/performance", async (req, res) => {
 //
 // Auth: SESSION_SECRET in body, mirroring every other admin endpoint. This
 // endpoint NEVER feeds public read paths or pricing/product surfaces — it is
-// a pure read of `scored_picks` for internal calibration review.
+// a pure read of `evaluation_results` for internal calibration review.
 //
 // Body fields:
 //   - secret      (required) — must equal process.env.SESSION_SECRET.
@@ -455,19 +510,19 @@ router.post("/admin/calibration-review", async (req, res) => {
 
     const conditions = [] as ReturnType<typeof gte>[];
     if (sinceDate) {
-      conditions.push(gte(scoredPicksTable.date, sinceDate));
+      conditions.push(gte(evaluationResultsTable.date, sinceDate) as any);
     }
     if (Array.isArray(leagues) && leagues.length > 0) {
-      conditions.push(inArray(scoredPicksTable.league, leagues as string[]) as any);
+      conditions.push(inArray(evaluationResultsTable.league, leagues as string[]) as any);
     }
     if (Array.isArray(markets) && markets.length > 0) {
-      conditions.push(inArray(scoredPicksTable.market, markets as string[]) as any);
+      conditions.push(inArray(evaluationResultsTable.market, markets as string[]) as any);
     }
 
     // CRITICAL: NO isNull(dataQuality) filter here. NO PUBLIC_TRACK_RECORD_CUTOFFS
     // filter here. The whole point of this endpoint is to see EVERYTHING and
     // let the cohort analyzer label it. Public read paths are unaffected.
-    const baseQuery = db.select().from(scoredPicksTable);
+    const baseQuery = db.select().from(evaluationResultsTable);
     const rows = await (conditions.length > 0
       ? baseQuery.where(and(...conditions))
       : baseQuery);
@@ -477,6 +532,7 @@ router.post("/admin/calibration-review", async (req, res) => {
       market: r.market,
       tier: r.tier,
       date: r.date,
+      surfaceStatus: r.surfaceStatus,
       publishOdds: r.publishOdds,
       edge: r.edge,
       ev: r.ev,
@@ -484,7 +540,10 @@ router.post("/admin/calibration-review", async (req, res) => {
       clvImpliedDelta: r.clvImpliedDelta,
       modelProbCalibrated: r.modelProbCalibrated,
       marketProbFair: r.marketProbFair,
-      dataQuality: r.dataQuality,
+      // The rebuild table does not yet carry a persisted audit label. Treat
+      // current rebuild rows as clean and keep the PRE/POST split as the
+      // primary internal lens until data-quality provenance is added here.
+      dataQuality: null,
     }));
 
     const report = summarizeCohorts(cohortRows, {
@@ -500,6 +559,7 @@ router.post("/admin/calibration-review", async (req, res) => {
 
     return res.json({
       ok: true,
+      source: "evaluation_results",
       sinceDays: sinceDaysN,
       sinceDate,
       leaguesFilter: Array.isArray(leagues) ? leagues : null,
@@ -522,11 +582,11 @@ router.post("/admin/calibration-review", async (req, res) => {
 //                      home_close_ml. Below ~95% = the closing-odds cron is
 //                      missing games; check logs for clv_capture_failed.
 //
-//   writeback_rate   — % of settled scored_picks (result in {win, loss, push})
-//                      with non-null clv_implied_delta. Below ~95% = a
-//                      validation path is failing to call
-//                      computeClvWritebackValues — usually a market the
-//                      writeback helper doesn't yet handle.
+//   writeback_rate   — % of settled evaluation_results rows (result in
+//                      {win, loss, push}) with non-null clv_implied_delta.
+//                      Below ~95% = a settlement path is failing to call
+//                      computeClvWritebackValues or dual-write the rebuild
+//                      evaluation surface correctly.
 //
 //   publish_eq_close — % of settled picks where close_odds == publish_odds.
 //                      The smoking-gun signal for the pre-fix bug: if this
@@ -570,7 +630,7 @@ router.post("/admin/clv-health", async (req, res) => {
       .select({
         league: gameSnapshotsTable.league,
         total: sql<number>`count(*)::int`,
-        withClose: sql<number>`count(${gameSnapshotsTable.homeCloseMl})::int`,
+        withClose: sql<number>`count(${gameSnapshotsTable.closeCapturedAt})::int`,
       })
       .from(gameSnapshotsTable)
       .where(
@@ -581,9 +641,10 @@ router.post("/admin/clv-health", async (req, res) => {
       )
       .groupBy(gameSnapshotsTable.league);
 
-    // Writeback + publish-equals-close + CLV distribution: per (league, market).
-    // Only settled picks (win/loss/push); pending picks legitimately have null
-    // CLV until the validation cron runs.
+    // Writeback + publish-equals-close + CLV distribution from the rebuild's
+    // unified evaluation surface: per (league, market, surface_status). Only
+    // settled rows (win/loss/push); pending rows legitimately have null CLV
+    // until the validation cron runs.
     //
     // publishEqClose conditions on close_odds NOT NULL in BOTH the numerator
     // and the denominator (architect review fix). The earlier divisor of "all
@@ -595,27 +656,32 @@ router.post("/admin/clv-health", async (req, res) => {
     // writeback_rate).
     const wbRows = await db
       .select({
-        league: scoredPicksTable.league,
-        market: scoredPicksTable.market,
+        league: evaluationResultsTable.league,
+        market: evaluationResultsTable.market,
+        surfaceStatus: evaluationResultsTable.surfaceStatus,
         total: sql<number>`count(*)::int`,
-        withClv: sql<number>`count(${scoredPicksTable.clvImpliedDelta})::int`,
-        withClose: sql<number>`count(${scoredPicksTable.closeOdds})::int`,
-        publishEqCloseAmongCaptured: sql<number>`sum(case when ${scoredPicksTable.closeOdds} is not null and abs(${scoredPicksTable.publishOdds}::numeric - ${scoredPicksTable.closeOdds}::numeric) < 0.5 then 1 else 0 end)::int`,
-        clvCount: sql<number>`count(${scoredPicksTable.clvImpliedDelta})::int`,
-        clvMean: sql<number | null>`avg(${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
-        clvStd: sql<number | null>`stddev_pop(${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
-        clvP10: sql<number | null>`percentile_cont(0.10) within group (order by ${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
-        clvP50: sql<number | null>`percentile_cont(0.50) within group (order by ${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
-        clvP90: sql<number | null>`percentile_cont(0.90) within group (order by ${scoredPicksTable.clvImpliedDelta}::numeric)::float`,
+        withClv: sql<number>`count(${evaluationResultsTable.clvImpliedDelta})::int`,
+        withClose: sql<number>`count(${evaluationResultsTable.closeOdds})::int`,
+        publishEqCloseAmongCaptured: sql<number>`sum(case when ${evaluationResultsTable.closeOdds} is not null and abs(${evaluationResultsTable.publishOdds}::numeric - ${evaluationResultsTable.closeOdds}::numeric) < 0.5 then 1 else 0 end)::int`,
+        clvCount: sql<number>`count(${evaluationResultsTable.clvImpliedDelta})::int`,
+        clvMean: sql<number | null>`avg(${evaluationResultsTable.clvImpliedDelta}::numeric)::float`,
+        clvStd: sql<number | null>`stddev_pop(${evaluationResultsTable.clvImpliedDelta}::numeric)::float`,
+        clvP10: sql<number | null>`percentile_cont(0.10) within group (order by ${evaluationResultsTable.clvImpliedDelta}::numeric)::float`,
+        clvP50: sql<number | null>`percentile_cont(0.50) within group (order by ${evaluationResultsTable.clvImpliedDelta}::numeric)::float`,
+        clvP90: sql<number | null>`percentile_cont(0.90) within group (order by ${evaluationResultsTable.clvImpliedDelta}::numeric)::float`,
       })
-      .from(scoredPicksTable)
+      .from(evaluationResultsTable)
       .where(
         and(
-          gte(scoredPicksTable.date, sinceDate),
-          inArray(scoredPicksTable.result, ["win", "loss", "push"]),
+          gte(evaluationResultsTable.date, sinceDate),
+          inArray(evaluationResultsTable.result, ["win", "loss", "push"]),
         ),
       )
-      .groupBy(scoredPicksTable.league, scoredPicksTable.market);
+      .groupBy(
+        evaluationResultsTable.league,
+        evaluationResultsTable.market,
+        evaluationResultsTable.surfaceStatus,
+      );
 
     const captureByLeague = captureRows.map((r) => ({
       league: r.league,
@@ -627,6 +693,7 @@ router.post("/admin/clv-health", async (req, res) => {
     const writebackByLeagueMarket = wbRows.map((r) => ({
       league: r.league,
       market: r.market,
+      surfaceStatus: r.surfaceStatus,
       settledPicks: r.total,
       withClv: r.withClv,
       withClose: r.withClose,
@@ -652,6 +719,7 @@ router.post("/admin/clv-health", async (req, res) => {
 
     return res.json({
       ok: true,
+      source: "evaluation_results",
       sinceDays: sinceDaysN,
       sinceDate,
       captureByLeague,

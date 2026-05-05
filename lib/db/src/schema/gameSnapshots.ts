@@ -37,6 +37,12 @@ export const gameSnapshotsTable = pgTable(
     closeTotal: numeric("close_total"),
     closeOverLine: numeric("close_over_line"),
     closeUnderLine: numeric("close_under_line"),
+    // Audit fields for the canonical close snapshot. A row can have close_*
+    // fields populated historically without being a true close-capture row;
+    // these two fields distinguish "verified close taken near event start"
+    // from legacy / opportunistic population.
+    closeCapturedAt: timestamp("close_captured_at", { withTimezone: true }),
+    closeSource: text("close_source"),
     homeScore: integer("home_score"),
     awayScore: integer("away_score"),
     status: text("status").notNull().default("scheduled"),
@@ -65,6 +71,7 @@ export const gameSnapshotsTable = pgTable(
     index("game_snapshots_date_idx").on(t.snapshotDate),
     index("game_snapshots_league_idx").on(t.league),
     index("game_snapshots_status_idx").on(t.status),
+    index("game_snapshots_close_captured_at_idx").on(t.closeCapturedAt),
   ]
 );
 

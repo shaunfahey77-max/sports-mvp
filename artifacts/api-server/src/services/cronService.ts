@@ -20,6 +20,11 @@ import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { computeClvWritebackValues } from "../scoring/clvWriteback";
 import { gradeModelWatchForSnapshot } from "../scoring/modelWatchGrader";
+import {
+  deletePendingOfficialEvaluationResult,
+  settleOfficialEvaluationResult,
+  upsertOfficialCandidateEvaluation,
+} from "../scoring/officialEvaluationWriter";
 import { runModelWatchAlertCheck } from "../scoring/modelWatchAlerts";
 import { fetchOdds, fetchScores, transformGame, SPORT_KEYS } from "../lib/oddsApi";
 import type { League, MarketType } from "../config/scoringModelConfig";
@@ -36,6 +41,25 @@ const MARKETS: MarketType[] = ["moneyline", "spread", "total"];
 const MARKETS_BY_LEAGUE: Partial<Record<League, MarketType[]>> = {
   mlb: ["moneyline"],
 };
+
+function deriveCloseSource(bestBooks: {
+  moneylineHome?: string;
+  moneylineAway?: string;
+  spreadHome?: string;
+  spreadAway?: string;
+  totalOver?: string;
+  totalUnder?: string;
+} | null | undefined): string {
+  if (!bestBooks) return "unknown";
+  const unique = Array.from(
+    new Set(
+      Object.values(bestBooks)
+        .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+        .map((v) => v.trim()),
+    ),
+  ).sort();
+  return unique.length > 0 ? unique.join(",") : "unknown";
+}
 
 // ---------------------------------------------------------------------------
 // Job 1 — Every 10 minutes: ingest latest odds → refresh picks
@@ -201,6 +225,9 @@ async function runOddsIngest(): Promise<void> {
       // Use onConflictDoUpdate so odds changes and eventStart are always refreshed.
       // Never overwrite result/closeOdds — those are set by the validation job.
       if (picks.length > 0) {
+        for (const c of picks) {
+          await upsertOfficialCandidateEvaluation(c);
+        }
         await db
           .insert(scoredPicksTable)
           .values(
@@ -248,6 +275,12 @@ async function runOddsIngest(): Promise<void> {
       // are now PASS this run (e.g. odds-range guardrail flipped them).
       const staleKeys = computeStaleScoredPicksKeys(candidates);
       for (const k of staleKeys) {
+        await deletePendingOfficialEvaluationResult({
+          date,
+          gameKey: k.gameKey,
+          market: k.market,
+          pick: k.pick,
+        });
         await db
           .delete(scoredPicksTable)
           .where(
@@ -387,6 +420,8 @@ async function runClosingOddsCapture(): Promise<void> {
             closeTotal: fresh.publishTotal != null ? String(fresh.publishTotal) : undefined,
             closeOverLine: fresh.publishOverLine != null ? String(fresh.publishOverLine) : undefined,
             closeUnderLine: fresh.publishUnderLine != null ? String(fresh.publishUnderLine) : undefined,
+            closeCapturedAt: new Date(),
+            closeSource: deriveCloseSource(fresh.bestBooks),
             updatedAt: new Date(),
           })
           .where(
@@ -525,6 +560,18 @@ async function runNightlyValidation(): Promise<void> {
               updatedAt: new Date(),
             })
             .where(eq(scoredPicksTable.id, pick.id));
+
+          await settleOfficialEvaluationResult({
+            date: pick.date,
+            gameKey: pick.gameKey,
+            market: pick.market,
+            pick: pick.pick,
+            result,
+            closeOdds: clv.closeOdds,
+            closeLine: clv.closeLine,
+            clvImpliedDelta: clv.clvImpliedDelta,
+            clvLineDelta: clv.clvLineDelta,
+          });
 
           picksValidated++;
         }
@@ -831,6 +878,19 @@ export async function backfillSettlementEspn(
               )
               .returning({ id: scoredPicksTable.id });
             if (updated.length > 0) result.picksSettled++;
+            if (updated.length > 0) {
+              await settleOfficialEvaluationResult({
+                date: pick.date,
+                gameKey: pick.gameKey,
+                market: pick.market,
+                pick: pick.pick,
+                result: outcome,
+                closeOdds: clv.closeOdds,
+                closeLine: clv.closeLine,
+                clvImpliedDelta: clv.clvImpliedDelta,
+                clvLineDelta: clv.clvLineDelta,
+              });
+            }
           }
 
           // Internal Model-Watch grader (ESPN backstop path).

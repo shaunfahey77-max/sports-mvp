@@ -401,6 +401,9 @@ components:
           type: integer
         gameKey:
           type: string
+        eventStart:
+          type: string
+          format: date-time
         league:
           $ref: "#/components/schemas/League"
         eventStart:
@@ -449,6 +452,13 @@ components:
           nullable: true
         closeUnderLine:
           type: number
+          nullable: true
+        closeCapturedAt:
+          type: string
+          format: date-time
+          nullable: true
+        closeSource:
+          type: string
           nullable: true
         homeScore:
           type: integer
@@ -608,6 +618,7 @@ components:
         - id
         - date
         - gameKey
+        - eventStart
         - league
         - market
         - pick

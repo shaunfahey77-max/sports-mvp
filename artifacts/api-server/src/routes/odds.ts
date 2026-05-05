@@ -8,6 +8,11 @@ import {
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { scorePicks, type GameMarketInput, type CandidateOutput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
+import {
+  deletePendingOfficialEvaluationResult,
+  settleOfficialEvaluationResult,
+  upsertOfficialCandidateEvaluation,
+} from "../scoring/officialEvaluationWriter";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import {
@@ -163,6 +168,9 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
             .sort((a, b) => b.rankScore - a.rankScore)
         );
         if (picks.length > 0) {
+          for (const c of picks) {
+            await upsertOfficialCandidateEvaluation(c);
+          }
           await db.insert(scoredPicksTable).values(
             picks.map((c) => ({
               date: c.snapshotDate,
@@ -206,6 +214,12 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
         const staleKeys = computeStaleScoredPicksKeys(candidates);
         const reconcileDate = snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0];
         for (const k of staleKeys) {
+          await deletePendingOfficialEvaluationResult({
+            date: reconcileDate,
+            gameKey: k.gameKey,
+            market: k.market,
+            pick: k.pick,
+          });
           await db
             .delete(scoredPicksTable)
             .where(
@@ -316,6 +330,13 @@ router.post("/odds/validate-scores", async (req, res): Promise<void> => {
             .update(scoredPicksTable)
             .set({ result, updatedAt: new Date() })
             .where(eq(scoredPicksTable.id, pick.id));
+          await settleOfficialEvaluationResult({
+            date: pick.date,
+            gameKey: pick.gameKey,
+            market: pick.market,
+            pick: pick.pick,
+            result,
+          });
           picksValidated++;
         }
       }

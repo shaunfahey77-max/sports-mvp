@@ -1,14 +1,15 @@
 /**
  * Internal calibration-review aggregator.
  *
- * Given the raw set of `scored_picks` rows (with NO public-cutoff filter
- * and NO data_quality filter applied by the caller), produces a structured
- * report split by:
+ * Given the raw set of evaluation rows (with NO public-cutoff filter and NO
+ * data_quality filter applied by the caller), produces a structured report
+ * split by:
  *
  *   1. league_market   — same grouping the rest of the system uses
- *   2. cohort          — "PRE" (date < PUBLIC_TRACK_RECORD_CUTOFFS[league])
+ *   2. surface status  — official | model_watch | suppressed
+ *   3. cohort          — "PRE" (date < PUBLIC_TRACK_RECORD_CUTOFFS[league])
  *                        or "POST". Leagues without a cutoff are all POST.
- *   3. data quality    — "clean" (data_quality IS NULL) or "flagged"
+ *   4. data quality    — "clean" (data_quality IS NULL) or "flagged"
  *                        (any non-null label, e.g. "contaminated_ingest"
  *                        or "pre_fix_contaminated"). Per the diagnosis
  *                        requirement, flagged rows are SHOWN, not removed.
@@ -42,14 +43,16 @@ export type CohortKey = "PRE" | "POST";
 export type QualityKey = "clean" | "flagged";
 
 /**
- * Scored-pick row shape needed by the cohort analyzer. Mirrors the columns
- * read off `scoredPicksTable`. Numeric columns are accepted as either
- * string (the drizzle default for `numeric`) or number, matching every
- * other aggregator in this directory.
+ * Evaluation-row shape needed by the cohort analyzer. Mirrors the columns
+ * read off `evaluation_results` and related legacy sources during the rebuild.
+ * Numeric columns are accepted as either string (the drizzle default for
+ * `numeric`) or number, matching every other aggregator in this directory.
  */
 export interface CohortInputRow extends AggregatorRow {
   /** Pick date, YYYY-MM-DD. Used for PRE / POST classification. */
   date: string;
+  /** Surface lane the row belonged to at scoring time. */
+  surfaceStatus: string;
   /** Calibrated model probability for the picked side, in [0, 1]. */
   modelProbCalibrated: string | number;
   /** No-vig market probability for the picked side, in [0, 1]. */
@@ -61,6 +64,7 @@ export interface CohortInputRow extends AggregatorRow {
 export interface CohortBucketReport {
   league: string;
   market: string;
+  surfaceStatus: string;
   cohort: CohortKey;
   quality: QualityKey;
   /** The cutoff date used to derive cohort for this bucket; null when none. */
@@ -128,7 +132,7 @@ export function summarizeCohorts(
   const monoBuckets = opts.monotonicityBuckets ?? 4;
   const cutoffsUsed: Record<string, string> = {};
 
-  type GroupKey = string; // `${league}_${market}|${cohort}|${quality}`
+  type GroupKey = string; // `${league}_${market}|${surface}|${cohort}|${quality}`
   const groups = new Map<GroupKey, CohortInputRow[]>();
   let totalFlagged = 0;
 
@@ -138,7 +142,7 @@ export function summarizeCohorts(
     const cohort = classifyCohort(r.date, cutoff);
     const quality = classifyQuality(r.dataQuality);
     if (quality === "flagged") totalFlagged++;
-    const key: GroupKey = `${r.league}_${r.market}|${cohort}|${quality}`;
+    const key: GroupKey = `${r.league}_${r.market}|${r.surfaceStatus}|${cohort}|${quality}`;
     const list = groups.get(key) ?? [];
     list.push(r);
     groups.set(key, list);
@@ -146,7 +150,8 @@ export function summarizeCohorts(
 
   const buckets: CohortBucketReport[] = [];
   for (const [key, groupRows] of groups) {
-    const [marketKey, cohort, quality] = key.split("|") as [
+    const [marketKey, surfaceStatus, cohort, quality] = key.split("|") as [
+      string,
       string,
       CohortKey,
       QualityKey,
@@ -167,6 +172,7 @@ export function summarizeCohorts(
     buckets.push({
       league,
       market,
+      surfaceStatus,
       cohort,
       quality,
       cutoff,
@@ -178,12 +184,18 @@ export function summarizeCohorts(
     });
   }
 
-  // Stable order: league_market asc, POST before PRE (POST is the more
-  // important slice), clean before flagged.
+  // Stable order: league_market asc, official before model_watch before
+  // suppressed, POST before PRE (POST is the more important slice), clean
+  // before flagged.
   buckets.sort((a, b) => {
     const ka = `${a.league}_${a.market}`;
     const kb = `${b.league}_${b.market}`;
     if (ka !== kb) return ka < kb ? -1 : 1;
+    const surfaceOrder = (s: string): number =>
+      s === "official" ? 0 : s === "model_watch" ? 1 : s === "suppressed" ? 2 : 3;
+    if (a.surfaceStatus !== b.surfaceStatus) {
+      return surfaceOrder(a.surfaceStatus) - surfaceOrder(b.surfaceStatus);
+    }
     if (a.cohort !== b.cohort) return a.cohort === "POST" ? -1 : 1;
     if (a.quality !== b.quality) return a.quality === "clean" ? -1 : 1;
     return 0;

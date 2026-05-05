@@ -21,6 +21,10 @@ import {
 } from "../lib/oddsApi";
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
+import {
+  settleOfficialEvaluationResult,
+  upsertOfficialCandidateEvaluation,
+} from "../scoring/officialEvaluationWriter";
 import type { League, MarketType } from "../config/scoringModelConfig";
 
 const MARKETS: MarketType[] = ["moneyline", "spread", "total"];
@@ -291,6 +295,7 @@ async function processDate(date: string, leagues: League[], delayMs: number): Pr
 
       // 5. Grade each pick and insert into scored_picks
       for (const pick of picks) {
+        await upsertOfficialCandidateEvaluation(pick);
         const gameEntry = gameInputsWithScores.find((g) => g.input.gameKey === pick.gameKey);
         if (!gameEntry) continue;
 
@@ -328,6 +333,14 @@ async function processDate(date: string, leagues: League[], delayMs: number): Pr
             scoringVersion: "v1",
           })
           .onConflictDoNothing();
+
+        await settleOfficialEvaluationResult({
+          date: pick.snapshotDate,
+          gameKey: pick.gameKey,
+          market: pick.marketType,
+          pick: pick.side,
+          result: outcome,
+        });
 
         if (currentJob) currentJob.picksInserted++;
       }

@@ -46,17 +46,5 @@ Thumbs.db
 
 # Replit
 .cache/
-# The system-level /etc/.gitignore excludes the .local/ directory wholesale.
-# We want to keep that exclusion in spirit (agent scratch, session plans,
-# task notes should not be committed) but allow specific operational
-# deliverables that happen to live under .local/ to be tracked.
-#
-# Git rule: a file under an excluded directory cannot be re-included via
-# !pattern. So we (1) un-exclude the directory itself, (2) re-exclude its
-# contents with .local/*, then (3) un-exclude the specific files we want.
-!.local/
-.local/*
-# Track the beta-mode operational runbook (Task #46). It lives under
-# .local/ per the task spec but is a real launch-ops deliverable that
-# must be committed.
-!.local/beta-mode-runbook.md
+attached_assets/
+.local/

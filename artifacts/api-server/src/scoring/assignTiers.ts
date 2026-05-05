@@ -14,6 +14,7 @@ import {
   ODDS_RANGE_OVERRIDE,
 } from "../config/scoringModelConfig";
 import type { Tier, League, MarketType } from "../config/scoringModelConfig";
+import type { ResolvedSurfaceStatus } from "./marketRegistryResolver";
 
 export interface TierInput {
   rankScore: number;
@@ -29,6 +30,13 @@ export interface TierInput {
   publishOdds?: number;
   publishLine?: number | null;
   enableOddsRangeGuardrail?: boolean;
+  /**
+   * Transitional rebuild hook. When provided, scorer-level registry state is
+   * the source of truth for whether the market is suppressed. When omitted,
+   * applyRiskControls falls back to the legacy MARKET_DISABLED map so existing
+   * direct callers and unit tests remain stable during migration.
+   */
+  surfaceStatus?: ResolvedSurfaceStatus;
 }
 
 /**
@@ -62,7 +70,12 @@ export function applyRiskControls(input: TierInput): string | null {
   // those metrics. Re-evaluate gating in scoringModelConfig.MARKET_DISABLED.
   const disabledKey =
     input.league && input.marketType ? `${input.league}_${input.marketType}` : null;
-  if (disabledKey != null && MARKET_DISABLED[disabledKey]) {
+  const isSuppressedBySurfaceStatus = input.surfaceStatus === "suppressed";
+  const isSuppressedByLegacyConfig =
+    input.surfaceStatus == null &&
+    disabledKey != null &&
+    MARKET_DISABLED[disabledKey];
+  if (isSuppressedBySurfaceStatus || isSuppressedByLegacyConfig) {
     return "market_disabled";
   }
 

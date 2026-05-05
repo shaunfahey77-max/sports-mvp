@@ -12,6 +12,7 @@ function row(overrides: Partial<CohortInputRow>): CohortInputRow {
     market: "spread",
     tier: "A",
     date: "2026-04-15",
+    surfaceStatus: "model_watch",
     publishOdds: -110,
     edge: 0.05,
     ev: 0.04,
@@ -217,12 +218,12 @@ test("summarizeCohorts: bucket order is league_market asc, POST before PRE, clea
     cutoffs: { nhl: "2026-04-12", nba: "2026-04-12" },
   });
   const order = r.buckets.map(
-    (b) => `${b.league}_${b.market}|${b.cohort}|${b.quality}`,
+    (b) => `${b.league}_${b.market}|${b.surfaceStatus}|${b.cohort}|${b.quality}`,
   );
   assert.deepEqual(order, [
-    "nba_spread|POST|clean",
-    "nhl_spread|POST|clean",
-    "nhl_spread|POST|flagged",
-    "nhl_spread|PRE|clean",
+    "nba_spread|model_watch|POST|clean",
+    "nhl_spread|model_watch|POST|clean",
+    "nhl_spread|model_watch|POST|flagged",
+    "nhl_spread|model_watch|PRE|clean",
   ]);
 });

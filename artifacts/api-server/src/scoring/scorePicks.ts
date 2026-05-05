@@ -4,13 +4,13 @@
  */
 
 import type { League, MarketType } from "../config/scoringModelConfig";
-import { MAX_EV_CAP, MARKET_MODEL_WATCH_ONLY } from "../config/scoringModelConfig";
+import { MAX_EV_CAP, MARKET_DISABLED, MARKET_MODEL_WATCH_ONLY } from "../config/scoringModelConfig";
 import { computeMarketProbFair, computeMarketQuality } from "./marketProb";
 import { calibrateProb, getCalibrationParams, getCalibrationConfidence } from "./calibration";
 import { computeEdge, computeEV } from "./expectedValue";
 import { rankBets } from "./rankBets";
 import { assignTier } from "./assignTiers";
-import { computeAllFeatures } from "../prediction/featureEngine";
+import type { ResolvedSurfaceStatus } from "./marketRegistryResolver";
 
 export interface GameFeatures {
   homeTeamAbbrev: string;
@@ -359,6 +359,12 @@ export interface ScorePicksOptions {
    * this, so their behavior is bit-for-bit unchanged.
    */
   oddsRangeGuardrailLeagues?: readonly League[];
+  /**
+   * Transitional injection point for tests / replay code that want to control
+   * market surface status without touching the registry. When omitted, scorePicks
+   * resolves statuses from market_registry with safe legacy fallback.
+   */
+  surfaceStatusByMarketKey?: Partial<Record<string, ResolvedSurfaceStatus>>;
 }
 
 export async function scorePicks(
@@ -370,7 +376,7 @@ export async function scorePicks(
   const allCandidates: CandidateOutput[] = [];
 
   // Pre-compute features for all games (rest days, ATS records, etc.)
-  const featuresMap = await computeAllFeatures(games);
+  const featuresMap = await (await import("../prediction/featureEngine")).computeAllFeatures(games);
   const gamesWithFeatures = games.map((g) => ({
     ...g,
     features: featuresMap.get(g.gameKey) ?? g.features,
@@ -400,7 +406,18 @@ export async function scorePicks(
 
   const rankScores = rankBets(rankInputs);
 
-  return applyTieringToCandidates(allCandidates, rankScores, options);
+  const resolvedSurfaceStatuses =
+    options.surfaceStatusByMarketKey ??
+    (
+      await (await import("./marketRegistryResolver")).resolveSurfaceStatusesForMarketKeys(
+        Array.from(new Set(allCandidates.map((c) => `${c.league}_${c.marketType}`))),
+      )
+    ).byMarketKey;
+
+  return applyTieringToCandidates(allCandidates, rankScores, {
+    ...options,
+    surfaceStatusByMarketKey: resolvedSurfaceStatuses,
+  });
 }
 
 /**
@@ -416,9 +433,18 @@ export function applyTieringToCandidates(
   options: ScorePicksOptions = {}
 ): CandidateOutput[] {
   const guardrailLeagues = options.oddsRangeGuardrailLeagues;
+  const surfaceStatusByMarketKey = options.surfaceStatusByMarketKey;
 
   return allCandidates.map((c, i) => {
     const rankScore = rankScores[i];
+    const marketKey = `${c.league}_${c.marketType}`;
+    const resolvedSurfaceStatus =
+      surfaceStatusByMarketKey?.[marketKey] ??
+      (MARKET_DISABLED[marketKey]
+        ? "suppressed"
+        : MARKET_MODEL_WATCH_ONLY[marketKey]
+        ? "model_watch"
+        : undefined);
     const enableOddsRangeGuardrail =
       guardrailLeagues != null && guardrailLeagues.includes(c.league);
     const { tier, selectionReason } = assignTier({
@@ -431,29 +457,32 @@ export function applyTieringToCandidates(
       publishOdds: c.publishOdds,
       publishLine: c.publishLine,
       enableOddsRangeGuardrail,
+      surfaceStatus: resolvedSurfaceStatus,
     });
 
-    // Model-Watch-only registry. Runs AFTER the MARKET_DISABLED branch
-    // (handled inside assignTier) so disabled markets keep their
-    // 'market_disabled' reason. For markets in MARKET_MODEL_WATCH_ONLY we
-    // override the assignTier result to PASS / 'model_watch_only' so the
-    // candidate is preserved in candidate_bets (Model Watch surface) but
-    // never enters scored_picks (and therefore never enters Performance /
-    // History). Data-quality rejections (odds_out_of_range) are preserved
-    // so contaminated quotes don't surface as Model Watch picks. See
-    // MARKET_MODEL_WATCH_ONLY in scoringModelConfig.ts.
-    const marketKey = `${c.league}_${c.marketType}`;
-    if (
-      selectionReason !== "market_disabled" &&
-      selectionReason !== "odds_out_of_range" &&
-      MARKET_MODEL_WATCH_ONLY[marketKey]
-    ) {
-      return {
-        ...c,
-        rankScore,
-        tier: "PASS" as const,
-        selectionReason: "model_watch_only",
-      };
+    // Registry-aware surface-status override. Runs AFTER assignTier so data
+    // quality rejects (odds_out_of_range) always win.
+    //
+    // The rebuild contract is:
+    // - model_watch => preserve candidate row but force PASS / model_watch_only
+    // - suppressed  => force PASS / market_disabled
+    // - official/shadow => keep assignTier outcome
+    //
+    // This is the first scorer-core step away from hard-coded config maps
+    // toward registry-driven behavior, while still allowing sync tests to
+    // inject a surface-status map directly.
+    if (selectionReason !== "odds_out_of_range") {
+      if (
+        resolvedSurfaceStatus === "model_watch" &&
+        selectionReason !== "market_disabled"
+      ) {
+        return {
+          ...c,
+          rankScore,
+          tier: "PASS" as const,
+          selectionReason: "model_watch_only",
+        };
+      }
     }
 
     return { ...c, rankScore, tier, selectionReason };

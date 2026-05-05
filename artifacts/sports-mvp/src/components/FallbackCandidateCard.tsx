@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { WhyThisPickPopover } from "@/components/WhyThisPickPopover";
-import { formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, cn } from "@/lib/utils";
+import { formatEventStartEt, formatOdds, formatPercentage, getLeagueColor, getMarketColorClass, cn } from "@/lib/utils";
 import { parseGameMatchup, getLeagueLogoUrl } from "@/lib/teamLogos";
 
 const SERIF = "'Playfair Display', serif";
@@ -84,6 +84,7 @@ export function FallbackCandidateCard({
   const isSidesPick = sideIsHome || sideIsAway;
 
   const reason = friendlyReason(bet.selectionReason);
+  const eventStartLabel = formatEventStartEt(bet.eventStart);
 
   return (
     <Card
@@ -142,6 +143,15 @@ export function FallbackCandidateCard({
           </div>
         )}
       </div>
+
+      {eventStartLabel && (
+        <div
+          data-testid="pick-event-start"
+          className="text-[11px] text-white/55 font-medium tracking-wide"
+        >
+          {eventStartLabel}
+        </div>
+      )}
 
       <div>
         <div className="text-xl font-bold font-display tracking-tight flex items-baseline gap-2 opacity-90">

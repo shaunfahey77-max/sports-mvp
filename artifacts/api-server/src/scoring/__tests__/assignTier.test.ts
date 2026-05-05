@@ -32,23 +32,22 @@ test("assignTier: nba_moneyline override (0.88) — currently shadowed by MARKET
   assert.equal(assignTier({ ...base, rankScore: 0.88 }).selectionReason, "market_disabled");
 });
 
-test("assignTier: nhl_total override (0.94) shadowed by MARKET_DISABLED gate (Phase 0.75C)", () => {
-  // The TIER_A_THRESHOLD_OVERRIDE for nhl_total (0.94) is still wired up,
-  // but Phase 0.75C added MARKET_DISABLED["nhl_total"] = true which
-  // short-circuits to PASS for every rank score. When the gate is removed,
-  // restore the original rankScore=0.93 → "B" and 0.94 → "A" expectations.
+test("assignTier: nhl_total override (0.94) is active again after lift to watch-only", () => {
+  // nhl_total is no longer in MARKET_DISABLED; it now lives in
+  // MARKET_MODEL_WATCH_ONLY at the scorer level. assignTier should therefore
+  // tier it normally unless an explicit surfaceStatus says otherwise.
   const base = { ...CLEAN, league: "nhl" as const, marketType: "total" as const };
-  assert.equal(assignTier({ ...base, rankScore: 0.93 }).tier, "PASS");
-  assert.equal(assignTier({ ...base, rankScore: 0.94 }).selectionReason, "market_disabled");
+  assert.equal(assignTier({ ...base, rankScore: 0.93 }).tier, "B");
+  assert.equal(assignTier({ ...base, rankScore: 0.94 }).tier, "A");
 });
 
 test("assignTier: MARKET_DISABLED short-circuits to PASS regardless of rank score / edge / ev", () => {
-  // nhl_moneyline + nba_moneyline are gated in scoringModelConfig as of Phase 0.75B.
-  // nhl_total was added to the gate in Phase 0.75C.
+  // nhl_moneyline + nba_moneyline remain legacy-disabled in scoringModelConfig.
+  // Use mlb_total as a third disabled market that is still suppressed today.
   for (const [league, marketType] of [
     ["nhl", "moneyline"] as const,
     ["nba", "moneyline"] as const,
-    ["nhl", "total"] as const,
+    ["mlb", "total"] as const,
   ]) {
     const r = assignTier({
       ...CLEAN,
@@ -61,6 +60,36 @@ test("assignTier: MARKET_DISABLED short-circuits to PASS regardless of rank scor
     assert.equal(r.tier, "PASS", `${league}/${marketType} should be PASS`);
     assert.equal(r.selectionReason, "market_disabled", `${league}/${marketType} reason`);
   }
+});
+
+test("assignTier: explicit surfaceStatus='suppressed' short-circuits to PASS regardless of legacy config", () => {
+  const r = assignTier({
+    ...CLEAN,
+    league: "ncaam",
+    marketType: "spread",
+    rankScore: 0.99,
+    edge: 0.30,
+    ev: 0.10,
+    surfaceStatus: "suppressed",
+  });
+  assert.equal(r.tier, "PASS");
+  assert.equal(r.selectionReason, "market_disabled");
+});
+
+test("assignTier: explicit surfaceStatus='shadow' bypasses legacy MARKET_DISABLED fallback", () => {
+  // nba_moneyline is still in MARKET_DISABLED, so without surfaceStatus this
+  // market short-circuits to PASS. The registry-driven scorer path needs to be
+  // able to lift it back into normal tiering when the market registry says
+  // shadow/official instead.
+  const r = assignTier({
+    ...CLEAN,
+    league: "nba",
+    marketType: "moneyline",
+    rankScore: 0.90,
+    surfaceStatus: "shadow",
+  });
+  assert.equal(r.tier, "A");
+  assert.equal(r.selectionReason, "high_rank_score");
 });
 
 test("assignTier: non-disabled markets are unaffected by MARKET_DISABLED check", () => {
@@ -293,8 +322,8 @@ test("rerun reconciliation: a candidate that flips from A/B/C to PASS this run y
     }),
     // Clean NBA spread that should still surface (unchanged between runs).
     mkCandidate({
-      gameKey: "2026-04-16-NBA-LAL-BOS",
-      league: "nba",
+      gameKey: "2026-04-16-NCAAM-DUKE-UCLA",
+      league: "ncaam",
       marketType: "spread",
       side: "home",
       publishOdds: -110,
@@ -308,10 +337,10 @@ test("rerun reconciliation: a candidate that flips from A/B/C to PASS this run y
 
   // The NHL pick is now PASS, the NBA pick survives.
   const nhl = tiered.find((c) => c.gameKey === "2026-04-16-NHL-BOS-TOR")!;
-  const nba = tiered.find((c) => c.gameKey === "2026-04-16-NBA-LAL-BOS")!;
+  const ncaam = tiered.find((c) => c.gameKey === "2026-04-16-NCAAM-DUKE-UCLA")!;
   assert.equal(nhl.tier, "PASS");
   assert.equal(nhl.selectionReason, "odds_out_of_range");
-  assert.notEqual(nba.tier, "PASS");
+  assert.notEqual(ncaam.tier, "PASS");
 
   // Stale-key helper returns exactly the (gameKey, market, pick) tuples
   // that callers must delete from scored_picks for this date.

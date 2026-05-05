@@ -32,6 +32,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { computeOutcomeResult } from "./validatePicks";
 import { computeClvWritebackValues } from "./clvWriteback";
 import { assignTier } from "./assignTiers";
+import { upsertEvaluationResult } from "./evaluationResultsWriter";
+import { resolveMarketKeysForSurfaceStatus } from "./marketRegistryResolver";
 import {
   MARKET_MODEL_WATCH_ONLY,
   ODDS_RANGE_GUARDRAIL_LEAGUES,
@@ -63,6 +65,15 @@ export async function gradeModelWatchForSnapshot(
   const out: ModelWatchGradeResult = { graded: 0, skipped: 0 };
   if (snap.homeScore == null || snap.awayScore == null) return out;
 
+  const fallbackRegistryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
+    .filter(([, enabled]) => enabled)
+    .map(([k]) => k);
+  const registryResolution = await resolveMarketKeysForSurfaceStatus(
+    "model_watch",
+    fallbackRegistryKeys,
+  );
+  const modelWatchKeys = new Set(registryResolution.keys);
+
   const candidates = await db
     .select()
     .from(candidateBetsTable)
@@ -75,10 +86,10 @@ export async function gradeModelWatchForSnapshot(
 
   for (const c of candidates) {
     const marketKey = `${c.league}_${c.marketType}`;
-    // Defensive: only grade markets currently in the registry. Toggling a
-    // market off the registry should NOT cause new internal rows to be
-    // graded for it (existing rows are kept for historical comparison).
-    if (!MARKET_MODEL_WATCH_ONLY[marketKey]) {
+    // Defensive: only grade markets currently resolved as model_watch.
+    // During the rebuild this consults market_registry first and falls back
+    // to the legacy config map until the registry is populated.
+    if (!modelWatchKeys.has(marketKey)) {
       out.skipped++;
       continue;
     }
@@ -197,6 +208,33 @@ async function gradeOneCandidate(
         updatedAt: new Date(),
       },
     });
+
+  await upsertEvaluationResult({
+    date: c.snapshotDate,
+    gameKey: c.gameKey,
+    league: c.league,
+    market: c.marketType,
+    pick: c.side,
+    publishOdds: c.publishOdds,
+    publishLine: c.publishLine,
+    modelProbRaw: c.modelProbRaw,
+    modelProbCalibrated: c.modelProbCalibrated,
+    marketProbFair: c.marketProbFair,
+    edge: c.edge,
+    ev: c.ev,
+    rankScore: c.rankScore,
+    tier,
+    marketQuality: c.marketQuality,
+    result,
+    closeOdds: clv.closeOdds,
+    closeLine: clv.closeLine,
+    clvImpliedDelta: clv.clvImpliedDelta,
+    clvLineDelta: clv.clvLineDelta,
+    surfaceStatus: "model_watch",
+    modelVersion: c.modelVersion,
+    calibrationVersion: c.calibrationVersion,
+    scoringVersion: "v1",
+  });
 
   return true;
 }

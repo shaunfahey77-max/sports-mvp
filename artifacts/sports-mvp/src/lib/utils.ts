@@ -61,3 +61,19 @@ export function getResultColorClass(result?: string | null): string {
     default: return 'text-muted-foreground';
   }
 }
+
+const EVENT_START_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZone: "America/New_York",
+});
+
+export function formatEventStartEt(eventStart?: string | null): string | null {
+  if (!eventStart) return null;
+  const parsed = new Date(eventStart);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return `${EVENT_START_FORMATTER.format(parsed)} ET`;
+}

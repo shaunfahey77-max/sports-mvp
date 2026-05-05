@@ -251,3 +251,66 @@ test("scope: a market in NEITHER MARKET_MODEL_WATCH_ONLY nor MARKET_DISABLED (nc
   assert.equal(tiered.tier, "A");
   assert.equal(tiered.selectionReason, "high_rank_score");
 });
+
+test("registry override: model_watch can demote an otherwise-ungated market", () => {
+  const c = makeCandidate({
+    league: "ncaam",
+    marketType: "spread",
+    publishOdds: -110,
+    publishLine: -3.5,
+    edge: 0.08,
+    ev: 0.05,
+  });
+
+  const [tiered] = applyTieringToCandidates([c], [0.99], {
+    oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+    surfaceStatusByMarketKey: {
+      ncaam_spread: "model_watch",
+    },
+  });
+
+  assert.equal(tiered.tier, "PASS");
+  assert.equal(tiered.selectionReason, "model_watch_only");
+});
+
+test("registry override: suppressed can disable an otherwise-ungated market", () => {
+  const c = makeCandidate({
+    league: "ncaam",
+    marketType: "spread",
+    publishOdds: -110,
+    publishLine: -3.5,
+    edge: 0.08,
+    ev: 0.05,
+  });
+
+  const [tiered] = applyTieringToCandidates([c], [0.99], {
+    oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+    surfaceStatusByMarketKey: {
+      ncaam_spread: "suppressed",
+    },
+  });
+
+  assert.equal(tiered.tier, "PASS");
+  assert.equal(tiered.selectionReason, "market_disabled");
+});
+
+test("registry override: shadow can lift a legacy watch-only market back to assignTier behavior", () => {
+  const c = makeCandidate({
+    league: "nhl",
+    marketType: "spread",
+    publishOdds: -110,
+    publishLine: -1.5,
+    edge: 0.08,
+    ev: 0.05,
+  });
+
+  const [tiered] = applyTieringToCandidates([c], [0.99], {
+    oddsRangeGuardrailLeagues: ODDS_RANGE_GUARDRAIL_LEAGUES,
+    surfaceStatusByMarketKey: {
+      nhl_spread: "shadow",
+    },
+  });
+
+  assert.equal(tiered.tier, "A");
+  assert.equal(tiered.selectionReason, "high_rank_score");
+});

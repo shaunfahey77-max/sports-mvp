@@ -45,8 +45,8 @@ const fixtureBet = (overrides: Partial<CandidateBet> = {}): CandidateBet =>
     tier: "PASS",
     selectionReason: "rank_score_below_threshold",
     gameKey: "2026-04-29-NFL-SF@KC",
+    eventStart: "2026-04-29T18:00:00Z",
     // Wire-shape extras we don't read but the type expects:
-    eventCommenceTime: "2026-04-29T18:00:00Z",
     bookmaker: "draftkings",
     publishedAt: "2026-04-29T17:00:00Z",
     ...overrides,
@@ -83,6 +83,8 @@ test("member-board card renders the rank pip, Rank score value, and Edge / EV / 
   // MODEL WATCH badge is always present on the card to make it
   // unmistakable that this is not an Official pick.
   assert.match(html, /MODEL WATCH/);
+  assert.match(html, /data-testid="pick-event-start"/);
+  assert.match(html, /Wed, Apr 29, 2:00 PM ET/);
 
   // Negative assertion: Member-board cards are PASS-tier rows by
   // definition, so no TIER A/B/C Official-styled badge appears.

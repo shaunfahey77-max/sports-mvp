@@ -77,6 +77,7 @@ function bucket(
   return {
     league,
     market,
+    surfaceStatus: "model_watch",
     cohort,
     quality,
     cutoff: cohort === "PRE" ? "2026-04-12" : "2026-04-12",
@@ -166,9 +167,9 @@ test("renderCohortReportMarkdown: stats table includes one row per bucket and th
   // Header row must include the brier skill column we expose to reviewers.
   assert.ok(md.includes("| Brier skill | CLV+% |"));
   // Three data rows under the single nhl_spread section.
-  assert.ok(md.includes("| PRE | clean |"));
-  assert.ok(md.includes("| POST | clean |"));
-  assert.ok(md.includes("| POST | flagged |"));
+  assert.ok(md.includes("| model_watch | PRE | clean |"));
+  assert.ok(md.includes("| model_watch | POST | clean |"));
+  assert.ok(md.includes("| model_watch | POST | flagged |"));
   // Null brier skill renders as the em-dash placeholder.
   assert.ok(md.includes("| — | "), "null brierSkill must render as '—'");
 });

@@ -13,6 +13,11 @@ import {
 import { scorePicks, type GameMarketInput } from "../scoring/scorePicks";
 import { computeOutcomeResult } from "../scoring/validatePicks";
 import { computeClvWritebackValues } from "../scoring/clvWriteback";
+import {
+  deletePendingOfficialEvaluationResult,
+  settleOfficialEvaluationResult,
+  upsertOfficialCandidateEvaluation,
+} from "../scoring/officialEvaluationWriter";
 import type { League, MarketType } from "../config/scoringModelConfig";
 import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
@@ -344,6 +349,9 @@ router.post("/picks/score", async (req, res): Promise<void> => {
   const picks = candidates.filter((c) => c.tier !== "PASS");
 
   if (picks.length > 0) {
+    for (const c of picks) {
+      await upsertOfficialCandidateEvaluation(c);
+    }
     await db
       .insert(scoredPicksTable)
       .values(
@@ -400,6 +408,12 @@ router.post("/picks/score", async (req, res): Promise<void> => {
   const staleKeys = computeStaleScoredPicksKeys(candidates);
   if (staleKeys.length > 0) {
     for (const k of staleKeys) {
+      await deletePendingOfficialEvaluationResult({
+        date,
+        gameKey: k.gameKey,
+        market: k.market,
+        pick: k.pick,
+      });
       await db
         .delete(scoredPicksTable)
         .where(
@@ -507,6 +521,17 @@ router.post("/picks/validate", async (req, res): Promise<void> => {
           updatedAt: new Date(),
         })
         .where(eq(scoredPicksTable.id, pick.id));
+      await settleOfficialEvaluationResult({
+        date: pick.date,
+        gameKey: pick.gameKey,
+        market: pick.market,
+        pick: pick.pick,
+        result,
+        closeOdds: clv.closeOdds,
+        closeLine: clv.closeLine,
+        clvImpliedDelta: clv.clvImpliedDelta,
+        clvLineDelta: clv.clvLineDelta,
+      });
       count++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -45,13 +45,14 @@ function statsRowCells(s: BucketStats): string[] {
 function renderStatsTable(buckets: readonly CohortBucketReport[]): string[] {
   const lines: string[] = [];
   lines.push(
-    "| Cohort | Quality | Samples | W-L-P | Pending | Win% | ROI | Avg edge | Avg EV | Brier (model) | Brier (mkt) | Brier skill | CLV+% | Avg CLV (n) |",
+    "| Surface | Cohort | Quality | Samples | W-L-P | Pending | Win% | ROI | Avg edge | Avg EV | Brier (model) | Brier (mkt) | Brier skill | CLV+% | Avg CLV (n) |",
   );
   lines.push(
-    "| --- | --- | ---: | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| --- | --- | --- | ---: | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const b of buckets) {
     const cells = [
+      b.surfaceStatus,
       b.cohort,
       b.quality,
       ...statsRowCells(b.stats).slice(0, 6), // samples, W-L-P, pending, win%, roi, avgEdge
@@ -150,7 +151,7 @@ export function renderCohortReportMarkdown(report: CohortReport): string {
     // The JSON payload always carries the full per-bucket monotonicity;
     // the markdown mirrors that completeness for paste-friendly review.
     for (const b of buckets) {
-      const label = `${b.cohort} ${b.quality}`;
+      const label = `${b.surfaceStatus} / ${b.cohort} / ${b.quality}`;
       lines.push(...renderMonotonicityPanel(label, b.monotonicity));
       lines.push("");
     }

@@ -8,6 +8,15 @@ let credentialsCache: {
   cachedAt: number;
 } | null = null;
 
+interface StripeConnectorResponse {
+  items?: Array<{
+    settings?: {
+      publishable?: string;
+      secret?: string;
+    };
+  }>;
+}
+
 async function getCredentials() {
   if (credentialsCache && Date.now() - credentialsCache.cachedAt < CACHE_TTL_MS) {
     return credentialsCache;
@@ -40,16 +49,17 @@ async function getCredentials() {
     },
   });
 
-  const data = await response.json();
+  const data = (await response.json()) as StripeConnectorResponse;
   const connectionSettings = data.items?.[0];
+  const settings = connectionSettings?.settings;
 
-  if (!connectionSettings || (!connectionSettings.settings.publishable || !connectionSettings.settings.secret)) {
+  if (!settings?.publishable || !settings.secret) {
     throw new Error(`Stripe ${targetEnvironment} connection not found`);
   }
 
   credentialsCache = {
-    publishableKey: connectionSettings.settings.publishable,
-    secretKey: connectionSettings.settings.secret,
+    publishableKey: settings.publishable,
+    secretKey: settings.secret,
     cachedAt: Date.now(),
   };
 
