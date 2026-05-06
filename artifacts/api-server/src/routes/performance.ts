@@ -4,7 +4,7 @@ import {
   scoredPicksTable,
   validationMetricsTable,
   candidateBetsTable,
-  modelWatchResultsTable,
+  evaluationResultsTable,
 } from "@workspace/db";
 import { eq, and, gte, desc, ne, count, inArray, or, isNull } from "drizzle-orm";
 import { GetPerformanceModelWatchQueryParams } from "@workspace/api-zod";
@@ -15,6 +15,7 @@ import {
   MARKET_MODEL_WATCH_ONLY,
   PUBLIC_TRACK_RECORD_CUTOFFS,
 } from "../config/scoringModelConfig";
+import { resolveMarketKeysForSurfaceStatus } from "../scoring/marketRegistryResolver";
 import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
 import {
   summarizeModelWatchRows,
@@ -282,36 +283,49 @@ router.get("/performance/model-watch", async (req, res): Promise<void> => {
   // gameKey + modelProbCalibrated are required by summarizeModelWatchRows
   // to dedup the home/away pair down to the model-favored side per game.
   // Without them the public win-rate is structurally pinned at ~50%.
+  const fallbackRegistryKeys = Object.entries(MARKET_MODEL_WATCH_ONLY)
+    .filter(([, enabled]) => enabled)
+    .map(([key]) => key);
+  const registryResolution = await resolveMarketKeysForSurfaceStatus(
+    "model_watch",
+    fallbackRegistryKeys,
+  );
+  const modelWatchRegistry: Partial<Record<string, boolean>> = Object.fromEntries(
+    registryResolution.keys.map((key) => [key, true]),
+  );
+
   const rows = await db
     .select({
-      league: modelWatchResultsTable.league,
-      market: modelWatchResultsTable.market,
-      tier: modelWatchResultsTable.tier,
-      publishOdds: modelWatchResultsTable.publishOdds,
-      edge: modelWatchResultsTable.edge,
-      ev: modelWatchResultsTable.ev,
-      result: modelWatchResultsTable.result,
-      clvImpliedDelta: modelWatchResultsTable.clvImpliedDelta,
-      gameKey: modelWatchResultsTable.gameKey,
-      modelProbCalibrated: modelWatchResultsTable.modelProbCalibrated,
+      league: evaluationResultsTable.league,
+      market: evaluationResultsTable.market,
+      tier: evaluationResultsTable.tier,
+      publishOdds: evaluationResultsTable.publishOdds,
+      edge: evaluationResultsTable.edge,
+      ev: evaluationResultsTable.ev,
+      result: evaluationResultsTable.result,
+      clvImpliedDelta: evaluationResultsTable.clvImpliedDelta,
+      gameKey: evaluationResultsTable.gameKey,
+      pick: evaluationResultsTable.pick,
+      date: evaluationResultsTable.date,
+      modelProbCalibrated: evaluationResultsTable.modelProbCalibrated,
     })
-    .from(modelWatchResultsTable)
+    .from(evaluationResultsTable)
     .where(
       and(
-        gte(modelWatchResultsTable.date, cutoff),
-        inArray(modelWatchResultsTable.result, ["win", "loss", "push"]),
+        gte(evaluationResultsTable.date, cutoff),
+        eq(evaluationResultsTable.surfaceStatus, "model_watch"),
+        inArray(evaluationResultsTable.result, ["win", "loss", "push"]),
       ),
     )
     // Deterministic order so the favored-side dedup's tie-break (first
     // row wins on equal modelProbCalibrated) is stable across calls. id
     // is the primary key, guaranteeing total ordering.
     .orderBy(
-      desc(modelWatchResultsTable.date),
-      desc(modelWatchResultsTable.eventStart),
-      modelWatchResultsTable.gameKey,
-      modelWatchResultsTable.market,
-      modelWatchResultsTable.pick,
-      modelWatchResultsTable.id,
+      desc(evaluationResultsTable.date),
+      desc(evaluationResultsTable.updatedAt),
+      evaluationResultsTable.gameKey,
+      evaluationResultsTable.market,
+      evaluationResultsTable.pick,
     );
 
   const aggRows: AggregatorRow[] = rows.map((r) => ({
@@ -323,11 +337,13 @@ router.get("/performance/model-watch", async (req, res): Promise<void> => {
     ev: r.ev,
     result: r.result,
     clvImpliedDelta: r.clvImpliedDelta,
+    date: r.date,
     gameKey: r.gameKey,
+    pick: r.pick,
     modelProbCalibrated: r.modelProbCalibrated,
   }));
 
-  const summary = summarizeModelWatchRows(aggRows, MARKET_MODEL_WATCH_ONLY);
+  const summary = summarizeModelWatchRows(aggRows, modelWatchRegistry);
 
   res.json({
     windowDays: window,

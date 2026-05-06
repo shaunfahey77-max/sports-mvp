@@ -16,6 +16,7 @@ import { parseGameMatchup } from "@/lib/teamLogos";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useLaunchConfig } from "@/hooks/useLaunchConfig";
 import { selectFallbackSection } from "@/lib/modelWatchBoard";
+import { partitionCandidatesBySurfaceStatus } from "@/lib/candidateSurface";
 import { Link } from "wouter";
 
 function pickToLogData(pick: ScoredPick): LogPickData {
@@ -215,8 +216,8 @@ export function Dashboard() {
   //    therefore never enter /api/performance. They are shown ONLY when there are
   //    zero qualifying picks/candidates today, and ONLY as the single highest-ranked
   //    row, clearly labeled as Model Watch / Not an Official Pick.
-  const liveCandidates = candidates.filter(c => c.tier !== 'PASS');
-  const passCandidates = candidates.filter(c => c.tier === 'PASS');
+  const { liveCandidates, passCandidates } =
+    partitionCandidatesBySurfaceStatus(candidates);
   // Pure render-decision for the no-Official-day section. Returning a
   // discriminated union here keeps Dashboard.tsx free of the branching
   // logic and makes case (a)-(e) of the spec independently testable in
