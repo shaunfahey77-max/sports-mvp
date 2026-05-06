@@ -105,9 +105,9 @@ export function Performance() {
     { query: { queryKey: getGetPerformanceQueryKey({ window }) } }
   );
 
-  // Model Watch lane is a SEPARATE read against model_watch_results. It is
-  // never mixed into the metrics above and renders in its own visually
-  // muted section so it cannot be mistaken for the Official record.
+  // Model Watch is a separate public read and is never mixed into the
+  // Official metrics above. It renders in its own visually-muted section so
+  // it cannot be mistaken for the Official record.
   const { data: watch, isLoading: watchLoading } = useGetPerformanceModelWatch(
     { window },
     { query: { queryKey: getGetPerformanceModelWatchQueryKey({ window }) } }

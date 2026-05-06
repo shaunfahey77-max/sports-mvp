@@ -156,7 +156,7 @@ function UpgradeBanner({ pickCount, betaMode }: { pickCount: number; betaMode: b
           </div>
           <div className="text-white/55 text-xs mt-0.5">
             {betaMode
-              ? "Paid Membership opens when our first market reaches Official status with 30 days of clean public record. Join the waitlist and we'll email you the moment it does."
+              ? "Paid Membership opens when the first market sustains Official status with a clean public record. Join the waitlist and we’ll email you when that happens."
               : "MVP adds the full slate and the supporting edge, EV, and CLV context behind each pick."}
           </div>
         </div>
@@ -252,7 +252,7 @@ export function Dashboard() {
             {betaMode ? (
               <span className="text-sm text-white/70">
                 <span className="text-[#FFC107] font-bold">Open Beta</span> — Free Guest Pass shows 1 of {allPicks.length} picks today.
-                <Link href="/subscribe" className="ml-1 text-[#FFC107] hover:underline font-medium">Join the waitlist</Link> for the full slate when paid opens.
+                <Link href="/subscribe" className="ml-1 text-[#FFC107] hover:underline font-medium">Join the waitlist</Link> for full-slate access when paid opens.
               </span>
             ) : (
               <span className="text-sm text-white/70">

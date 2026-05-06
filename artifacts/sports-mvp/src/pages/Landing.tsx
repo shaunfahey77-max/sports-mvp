@@ -14,23 +14,18 @@ import { useLaunchConfig } from "@/hooks/useLaunchConfig";
 const STAT_WINDOW = 47;
 const SERIF = "'Playfair Display', serif";
 
-// Hardcoded current-state truth, sourced 1:1 from
-// artifacts/api-server/src/config/scoringModelConfig.ts (READ-ONLY through
-// the May-5 watch-read window). Update only when the config changes.
-//
-//   MARKET_DISABLED:           nhl_moneyline, nba_moneyline, nba_total,
-//                              mlb_spread, mlb_total, nfl_*, ncaaf_*
-//   MARKET_MODEL_WATCH_ONLY:   nhl_spread, mlb_moneyline, nhl_total (R1),
-//                              nba_spread (R2)
-//   Active Official markets across NBA + NHL + MLB:  none
-const ACTIVE_EVALUATION_MARKETS = 4;
-
-function useLandingPerf() {
+function useLandingStats() {
   return useQuery({
-    queryKey: ["landing-perf-stats"],
+    queryKey: ["landing-perf-stats", STAT_WINDOW],
     queryFn: async () => {
-      const res = await axios.get(`/performance?window=${STAT_WINDOW}`);
-      return res.data;
+      const [performanceRes, watchRes] = await Promise.all([
+        axios.get(`/performance?window=${STAT_WINDOW}`),
+        axios.get(`/performance/model-watch?window=${STAT_WINDOW}`),
+      ]);
+      return {
+        performance: performanceRes.data,
+        watch: watchRes.data,
+      };
     },
     staleTime: 10 * 60 * 1000,
   });
@@ -87,6 +82,8 @@ function LandingNav() {
 /* ---------------- HERO ---------------- */
 function HeroSection() {
   const { betaMode } = useLaunchConfig();
+  const { data } = useLandingStats();
+  const activeWatchMarkets = data?.watch?.activeMarkets ?? null;
   const pillars = [
     {
       icon: Shield,
@@ -191,9 +188,11 @@ function HeroSection() {
         {/* Honest current-state lane disclosure. */}
         <div className="mt-6 mx-auto max-w-3xl text-center text-white/55 text-sm leading-relaxed">
           <span className="text-[#FFC107] font-mono text-xs uppercase tracking-widest mr-2">Today</span>
-          Active markets: <span className="text-white/80">NBA spreads, NHL spreads, NHL totals, and MLB moneylines</span> are
-          in Model Watch evaluation. Markets earn Official status only after they
-          build enough evidence to clear the promotion bar.
+          {activeWatchMarkets === null ? (
+            <>Model Watch is the live evaluation lane. Markets earn Official status only after they build enough evidence to clear the promotion bar.</>
+          ) : (
+            <><span className="text-white/80">{activeWatchMarkets} active market{activeWatchMarkets === 1 ? "" : "s"}</span> are currently in Model Watch evaluation. Markets earn Official status only after they build enough evidence to clear the promotion bar.</>
+          )}
         </div>
 
         <div className="mt-3 text-center">
@@ -220,7 +219,7 @@ function AccessSummarySection() {
             Choose your starting point
           </div>
           <h2 className="text-2xl md:text-3xl font-bold text-white" style={{ fontFamily: SERIF }}>
-            Free shows you the model. Members see the slate.
+            Free shows the evaluation lane. Members see the full slate.
           </h2>
         </div>
 
@@ -258,7 +257,7 @@ function AccessSummarySection() {
             <ul className="space-y-2.5 text-sm text-white/85">
               <li className="flex items-start gap-2.5">
                 <Check size={16} className="text-[#FFC107] shrink-0 mt-0.5" />
-                Full daily slate, all tiers — Official + Model Watch
+                Full daily slate across Official and Model Watch lanes
               </li>
               <li className="flex items-start gap-2.5">
                 <Check size={16} className="text-[#FFC107] shrink-0 mt-0.5" />
@@ -270,7 +269,7 @@ function AccessSummarySection() {
               </li>
               <li className="flex items-start gap-2.5">
                 <Check size={16} className="text-[#FFC107] shrink-0 mt-0.5" />
-                Re-scored every 10 minutes
+                Frequent market refreshes throughout the day
               </li>
             </ul>
           </div>
@@ -423,10 +422,10 @@ function TodaysTopPick() {
               A glimpse inside the vault.
             </h2>
             <p className="text-white/60 mb-8 leading-relaxed font-light text-lg">
-              Members get the entire daily slate the moment our model surfaces it.
-              When a Tier-A Official play clears today's threshold, it lands here —
-              published with the same metrics members see: market probability, model
-              probability, and the true edge between them.
+              Members see the broader daily slate alongside the same market
+              probability, model probability, and edge context used to rank it.
+              When an Official pick clears today's bar, the unlocked preview
+              lands here with the same supporting detail.
             </p>
 
             <div className="grid grid-cols-2 gap-6 mb-2">
@@ -452,9 +451,9 @@ function TodaysTopPick() {
                   Awaiting Today's Official Slate
                 </div>
                 <p className="text-white/60 text-sm leading-relaxed">
-                  No Tier-A Official play has cleared today's threshold yet —
-                  that's the discipline. Members still see the full Model Watch
-                  lane and the slate re-scores every 10 minutes.
+                  No Tier-A Official play has cleared today's bar yet. That is
+                  part of the discipline. Members still see the broader Model
+                  Watch lane while evaluation continues through the day.
                 </p>
               </div>
             )}
@@ -476,9 +475,9 @@ function MethodologySection() {
     {
       step: "01",
       title: "Market Snapshots",
-      desc: "Every 10 minutes we ingest live odds from DraftKings, FanDuel, BetMGM, Caesars and more, plus matched alt-line and total pairs. Real-time ingestion is the baseline for every calculation.",
+      desc: "We continuously ingest live odds from DraftKings, FanDuel, BetMGM, Caesars and more, plus matched alt-line and total pairs. Market snapshots are the baseline for every downstream calculation.",
       icon: Database,
-      meta: ["8+ sportsbooks", "10-minute cadence"],
+      meta: ["8+ sportsbooks", "Continuous ingestion"],
     },
     {
       step: "02",
@@ -490,7 +489,7 @@ function MethodologySection() {
     {
       step: "03",
       title: "Tiered Grading",
-      desc: "Every candidate is tiered A / B / C by composite rank score. Markets only earn the Official label when calibration, edge, and CLV consistently clear our launch thresholds — newer or recovering markets surface in a separate Model Watch lane, visible to members and graded the same way. Every result is published the next morning.",
+      desc: "Every candidate is tiered A / B / C by composite rank score. Markets earn the Official label only when calibration, edge, and CLV clear the current promotion bar. Newer or recovering markets stay in Model Watch and are graded separately against the same evaluation standards.",
       icon: Shield,
       meta: ["A/B/C tiers", "Official + Model Watch lanes", "CLV tracked"],
     },
@@ -594,11 +593,14 @@ function LiveOutputStrip() {
 
 /* ---------------- TRACK RECORD ---------------- */
 function TrackRecordSection() {
-  const { data: perf, isLoading } = useLandingPerf();
+  const { data, isLoading } = useLandingStats();
+  const perf = data?.performance;
+  const watch = data?.watch;
   const picksGraded = perf
     ? (perf.wins ?? 0) + (perf.losses ?? 0) + (perf.pushes ?? 0)
     : null;
   const clvTracked = perf ? (perf.clvSampleSize ?? 0) : null;
+  const activeEvaluationMarkets = watch?.activeMarkets ?? null;
 
   const tiles = [
     {
@@ -607,7 +609,7 @@ function TrackRecordSection() {
     },
     {
       label: "Active evaluation markets",
-      value: `${ACTIVE_EVALUATION_MARKETS}`,
+      value: isLoading || activeEvaluationMarkets === null ? "—" : `${activeEvaluationMarkets}`,
     },
     {
       label: "CLV-tracked picks",
