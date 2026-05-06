@@ -682,7 +682,7 @@ function MembershipSection() {
     ? {
         name: "Members",
         tagline:
-          "Open Beta is live. Paid Membership opens when the model earns it — not before.",
+          "Open Beta is live. Paid Membership opens only after the evaluation lane earns a stronger public record.",
         billingNote: "Open Beta — paid not yet available",
         price: "Coming Soon",
         priceUnit: undefined as string | undefined,
@@ -695,7 +695,7 @@ function MembershipSection() {
           { ok: true, text: "Edge, EV, and CLV on every pick — the same data the model uses to rank it" },
           { ok: true, text: "Best-line shopping across 8+ sportsbooks, refreshed every 10 minutes" },
           { ok: true, text: "Parlay Builder + Bet Tracker with Kelly sizing" },
-          { ok: true, text: "Public grading the next morning — your record is our record" },
+          { ok: true, text: "Public grading the next morning across both evaluation lanes" },
         ],
         highlight: true,
         badge: "Coming Soon",
@@ -703,7 +703,7 @@ function MembershipSection() {
     : {
         name: "Members",
         tagline:
-          "See every pick the model surfaces, with the edge and CLV that justify it — graded publicly the next morning.",
+          "See every pick the model surfaces, with the edge and CLV context behind it and the next-morning public grade.",
         billingNote: "Billed as MVP",
         price: "$19.99",
         priceUnit: "/ mo" as string | undefined,
@@ -716,7 +716,7 @@ function MembershipSection() {
           { ok: true, text: "Edge, EV, and CLV on every pick — the same data the model uses to rank it" },
           { ok: true, text: "Best-line shopping across 8+ sportsbooks, refreshed every 10 minutes" },
           { ok: true, text: "Parlay Builder + Bet Tracker with Kelly sizing" },
-          { ok: true, text: "Public grading the next morning — your record is our record" },
+          { ok: true, text: "Public grading the next morning across both evaluation lanes" },
         ],
         highlight: true,
         badge: "Most Popular",
@@ -757,7 +757,7 @@ function MembershipSection() {
           </h2>
           <p className="text-white/60 font-light text-lg">
             {betaMode
-              ? "Free Guest Pass is live now. Paid Membership opens when the model earns it — not before."
+              ? "Free Guest Pass is live now. Paid Membership opens only after the evaluation lane earns a stronger public record."
               : "Start free. Upgrade when the picks prove themselves. Cancel any time — no contracts, no pressure."}
           </p>
         </div>
@@ -854,11 +854,10 @@ function LandingFooter() {
               <span className="text-xl font-bold text-white" style={{ fontFamily: SERIF }}>SportsMVP</span>
             </div>
             <p className="text-white/40 text-sm leading-relaxed max-w-sm">
-              SportsMVP is a data-driven sports analytics platform. We use calibrated
-              machine-learning models across NBA, NHL, and MLB. Picks publish as
-              Official only when their market clears our launch thresholds — others
-              surface in a Model Watch lane while they earn promotion. Every result
-              is graded publicly.
+              SportsMVP is a sports analytics product built around calibrated
+              market probabilities, public grading, and a separate Model Watch
+              evaluation lane. Official picks surface only after a market earns
+              that status through observed evidence.
             </p>
             <p className="text-white/25 text-xs mt-4">
               For entertainment and informational purposes only. Always wager responsibly.
