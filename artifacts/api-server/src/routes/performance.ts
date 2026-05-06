@@ -89,13 +89,13 @@ router.get("/performance", async (req, res): Promise<void> => {
   cutoffDate.setUTCDate(cutoffDate.getUTCDate() - window);
   const cutoff = cutoffDate.toISOString().split("T")[0];
 
-  const conditions = [gte(scoredPicksTable.date, cutoff)];
+  const scoredPicksConditions = [gte(scoredPicksTable.date, cutoff)];
   if (league) {
-    conditions.push(eq(scoredPicksTable.league, league));
+    scoredPicksConditions.push(eq(scoredPicksTable.league, league));
   } else {
-    conditions.push(inArray(scoredPicksTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+    scoredPicksConditions.push(inArray(scoredPicksTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
   }
-  if (market) conditions.push(eq(scoredPicksTable.market, market));
+  if (market) scoredPicksConditions.push(eq(scoredPicksTable.market, market));
   // Public surface: exclude pre-fix contaminated picks per
   // PUBLIC_TRACK_RECORD_CUTOFFS. Raw rows remain in scored_picks for audit;
   // only the public read filters them out.
@@ -103,17 +103,100 @@ router.get("/performance", async (req, res): Promise<void> => {
     scoredPicksTable.league,
     scoredPicksTable.date,
   );
-  if (scoredPicksExclusion) conditions.push(scoredPicksExclusion);
+  if (scoredPicksExclusion) scoredPicksConditions.push(scoredPicksExclusion);
   // Surgical exclusion: any row carrying a non-null data_quality label
   // (e.g. "contaminated_ingest" applied to specific stale-quote NHL games)
   // is hidden from the public surface. Raw rows remain in scored_picks
   // for audit. NULL = clean / publishable.
-  conditions.push(isNull(scoredPicksTable.dataQuality));
+  scoredPicksConditions.push(isNull(scoredPicksTable.dataQuality));
 
-  const picks = await db
+  const evaluationConditions = [
+    gte(evaluationResultsTable.date, cutoff),
+    eq(evaluationResultsTable.surfaceStatus, "official"),
+  ];
+  if (league) {
+    evaluationConditions.push(eq(evaluationResultsTable.league, league));
+  } else {
+    evaluationConditions.push(
+      inArray(evaluationResultsTable.league, [...DEFAULT_PRODUCTION_LEAGUES]),
+    );
+  }
+  if (market) evaluationConditions.push(eq(evaluationResultsTable.market, market));
+  const evaluationExclusion = buildPreFixExclusionCondition(
+    evaluationResultsTable.league,
+    evaluationResultsTable.date,
+  );
+  if (evaluationExclusion) evaluationConditions.push(evaluationExclusion);
+
+  const [evaluationRows, scoredPickRows] = await Promise.all([
+    db
+      .select({
+        date: evaluationResultsTable.date,
+        gameKey: evaluationResultsTable.gameKey,
+        league: evaluationResultsTable.league,
+        market: evaluationResultsTable.market,
+        pick: evaluationResultsTable.pick,
+        result: evaluationResultsTable.result,
+        publishOdds: evaluationResultsTable.publishOdds,
+        publishLine: evaluationResultsTable.publishLine,
+        closeOdds: evaluationResultsTable.closeOdds,
+        closeLine: evaluationResultsTable.closeLine,
+        modelProbCalibrated: evaluationResultsTable.modelProbCalibrated,
+        edge: evaluationResultsTable.edge,
+        ev: evaluationResultsTable.ev,
+        clvImpliedDelta: evaluationResultsTable.clvImpliedDelta,
+        tier: evaluationResultsTable.tier,
+      })
+      .from(evaluationResultsTable)
+      .where(and(...evaluationConditions)),
+    db
     .select()
     .from(scoredPicksTable)
-    .where(and(...conditions));
+    .where(and(...scoredPicksConditions)),
+  ]);
+
+  const evaluationKeys = new Set(
+    evaluationRows.map((row) => `${row.date}|${row.gameKey}|${row.market}|${row.pick}`),
+  );
+  const historicalFallbackRows = scoredPickRows.filter((row) => {
+    const key = `${row.date}|${row.gameKey}|${row.market}|${row.pick}`;
+    return !evaluationKeys.has(key);
+  });
+
+  const picksForValidation: PickWithFullData[] = [
+    ...evaluationRows.map((p, index) => ({
+      id: -1 - index,
+      league: p.league,
+      market: p.market,
+      pick: p.pick,
+      publishOdds: parseFloat(p.publishOdds),
+      closeOdds: p.closeOdds ? parseFloat(p.closeOdds) : null,
+      closeLine: p.closeLine ? parseFloat(p.closeLine) : null,
+      publishLine: p.publishLine ? parseFloat(p.publishLine) : null,
+      modelProbCalibrated: parseFloat(p.modelProbCalibrated),
+      result: p.result as "win" | "loss" | "push" | "pending",
+      ev: parseFloat(p.ev),
+      edge: parseFloat(p.edge),
+      clvImpliedDelta: p.clvImpliedDelta ? parseFloat(p.clvImpliedDelta) : null,
+      tier: p.tier,
+    })),
+    ...historicalFallbackRows.map((p) => ({
+      id: p.id,
+      league: p.league,
+      market: p.market,
+      pick: p.pick,
+      publishOdds: parseFloat(p.publishOdds),
+      closeOdds: p.closeOdds ? parseFloat(p.closeOdds) : null,
+      closeLine: p.closeLine ? parseFloat(p.closeLine) : null,
+      publishLine: p.publishLine ? parseFloat(p.publishLine) : null,
+      modelProbCalibrated: parseFloat(p.modelProbCalibrated),
+      result: p.result as "win" | "loss" | "push" | "pending",
+      ev: parseFloat(p.ev),
+      edge: parseFloat(p.edge),
+      clvImpliedDelta: p.clvImpliedDelta ? parseFloat(p.clvImpliedDelta) : null,
+      tier: p.tier,
+    })),
+  ];
 
   const candidateConditions = [gte(candidateBetsTable.snapshotDate, cutoff)];
   if (league) {
@@ -150,23 +233,6 @@ router.get("/performance", async (req, res): Promise<void> => {
   const totalCandidates = totalCandidatesRow?.total ?? 0;
   const publishedCandidates = publishedCandidatesRow?.total ?? 0;
   const passRate = totalCandidates > 0 ? publishedCandidates / totalCandidates : 0;
-
-  const picksForValidation: PickWithFullData[] = picks.map((p) => ({
-    id: p.id,
-    league: p.league,
-    market: p.market,
-    pick: p.pick,
-    publishOdds: parseFloat(p.publishOdds),
-    closeOdds: p.closeOdds ? parseFloat(p.closeOdds) : null,
-    closeLine: p.closeLine ? parseFloat(p.closeLine) : null,
-    publishLine: p.publishLine ? parseFloat(p.publishLine) : null,
-    modelProbCalibrated: parseFloat(p.modelProbCalibrated),
-    result: p.result as "win" | "loss" | "push" | "pending",
-    ev: parseFloat(p.ev),
-    edge: parseFloat(p.edge),
-    clvImpliedDelta: p.clvImpliedDelta ? parseFloat(p.clvImpliedDelta) : null,
-    tier: p.tier,
-  }));
 
   // Determine the effective public-track-record window. The pre-fix
   // cutoff can be stricter than the requested `window` cutoff, in which
