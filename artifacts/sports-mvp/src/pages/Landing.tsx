@@ -123,7 +123,7 @@ function HeroSection() {
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#FFC107]/30 bg-[#FFC107]/5 mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-[#FFC107] animate-pulse" />
             <span className="text-xs font-bold text-[#FFC107] uppercase tracking-widest">
-              Live Models · NBA · NHL · MLB
+              Open Beta · Public Evaluation · NBA · NHL · MLB
             </span>
           </div>
 
@@ -131,17 +131,17 @@ function HeroSection() {
             className="text-5xl md:text-7xl font-bold leading-[1.05] mb-6 text-white"
             style={{ fontFamily: SERIF }}
           >
-            Sportsbook-grade math.{" "}
+            Sports market analysis{" "}
             <span className="italic text-[#FFC107]">
-              {betaMode ? "Open Beta — free for everyone." : "Member-only picks."}
+              {betaMode ? "Open Beta — free for everyone." : "built for discipline and trust."}
             </span>{" "}
-            Public grading.
+            Public evaluation.
           </h1>
 
           <p className="text-xl text-white/70 mb-10 leading-relaxed max-w-2xl font-light">
-            Calibrated models score every NBA, NHL, and MLB market every 10 minutes.
-            When a market clears our launch thresholds, the picks publish to your
-            Official slate. Every result is graded the next morning — no cherry-picking.
+            Our models continuously evaluate active NBA, NHL, and MLB markets.
+            Picks surface only when a market clears the current launch criteria,
+            and every result is graded publicly the next morning.
           </p>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-8">
@@ -149,7 +149,7 @@ function HeroSection() {
               href="/sign-up"
               className="w-full sm:w-auto px-8 py-4 bg-gradient-to-r from-[#FFC107] to-[#B38700] hover:from-[#FFD54F] hover:to-[#FFC107] text-[#060D1F] font-bold uppercase tracking-widest text-sm transition-all shadow-[0_0_30px_rgba(255,193,7,0.2)] hover:shadow-[0_0_40px_rgba(255,193,7,0.4)] flex items-center justify-center gap-2 rounded-sm"
             >
-              Start free — see what the model surfaces today <ChevronRight size={16} />
+              Start free — review today’s surface <ChevronRight size={16} />
             </Link>
             <Link
               href="/subscribe"
@@ -193,7 +193,7 @@ function HeroSection() {
           <span className="text-[#FFC107] font-mono text-xs uppercase tracking-widest mr-2">Today</span>
           Active markets: <span className="text-white/80">NBA spreads, NHL spreads, NHL totals, and MLB moneylines</span> are
           in Model Watch evaluation. Markets earn Official status only after they
-          clear the promotion bar.
+          build enough evidence to clear the promotion bar.
         </div>
 
         <div className="mt-3 text-center">

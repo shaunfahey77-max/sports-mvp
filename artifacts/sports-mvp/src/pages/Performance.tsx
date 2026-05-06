@@ -60,24 +60,24 @@ function MethodologyDisclosure({ open, onToggle }: { open: boolean; onToggle: ()
         <div className="px-5 pb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 text-sm text-white/70 border-t border-[#1A3066] pt-6">
           {[
             {
-              n: "01", title: "Probability Estimation",
-              body: "Nine separate ML models generate raw win/cover/over probabilities — one per league per market. Each model is trained on historical game data and refreshed regularly.",
+              n: "01", title: "Probability First",
+              body: "The system starts with market-specific win, cover, or over probabilities. Those probabilities are the foundation; picks, tiers, and rankings are downstream transforms.",
             },
             {
               n: "02", title: "Calibration",
-              body: "Raw probabilities are calibrated using Platt Scaling (sigmoid) or isotonic regression to correct systematic over/under-confidence. Output matches empirical frequencies.",
+              body: "Raw model output is calibrated before it reaches a public surface. The goal is simple: stated probabilities should line up as closely as possible with observed frequencies.",
             },
             {
               n: "03", title: "Scoring & Edge",
-              body: "Fair market probability is extracted by removing vig. Edge = calibrated − fair. EV = p×(decimal−1) − (1−p). Picks ranked by composite score: EV 50%, edge 25%, calibration 15%, market quality 10%.",
+              body: "We compare calibrated probability to a vig-removed market baseline. Edge and EV are derived from that comparison, then used to rank what the model currently prefers.",
             },
             {
-              n: "04", title: "Tier Assignment",
-              body: "Top-ranked picks above thresholds are tiered. A ≥ 0.65, B ≥ 0.50, C ≥ 0.35. Below 0.35 is PASS. Only A–C are published.",
+              n: "04", title: "Promotion Rules",
+              body: "Markets do not stay on the Official surface by default. They earn or lose status based on evidence, calibration quality, and observed behavior against the close.",
             },
             {
-              n: "05", title: "Model Watch Lane",
-              body: "A separate evaluation lane for markets that aren't yet trusted enough for the Official record (e.g. newly recovered or freshly recalibrated). Watch leans are graded the same way but never enter the numbers above — they live in their own summary at the bottom of this page.",
+              n: "05", title: "Model Watch",
+              body: "Model Watch is the live evaluation lane. It shows what the system is currently studying, while the Official block above stays reserved for markets with a publishable public record.",
             },
           ].map((item) => (
             <div key={item.n}>
@@ -124,7 +124,7 @@ export function Performance() {
             Performance
           </h1>
           <p className="text-white/55 mt-3 text-base max-w-xl">
-            Every pick graded the next morning. No cherry-picking. No hidden losers.
+            Every Official pick is graded the next morning and kept in the public record.
           </p>
           <p className="text-white/45 mt-2 text-sm max-w-xl">
             Model Watch leans are summarized separately below and never mixed into these numbers.

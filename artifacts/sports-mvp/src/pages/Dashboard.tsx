@@ -87,7 +87,7 @@ function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void })
         <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground border-t border-[#1A3066] pt-4">
           <div>
             <div className="text-[#FFC107] font-bold font-display mb-1 uppercase text-xs tracking-wider">Tier</div>
-            <p>Picks are ranked <strong className="text-foreground">A, B, or C</strong> based on the model's composite rank score. Tier A carries the strongest edge and highest confidence. Size your bets accordingly — A gets full units, B gets half, C gets quarter.</p>
+            <p>Picks are ranked <strong className="text-foreground">A, B, or C</strong> based on the model's composite rank score. Tier A reflects the strongest signal on the current slate, with B and C trailing behind it.</p>
           </div>
           <div>
             <div className="text-[#4ADE80] font-bold font-display mb-1 uppercase text-xs tracking-wider">Edge &amp; EV</div>
@@ -157,7 +157,7 @@ function UpgradeBanner({ pickCount, betaMode }: { pickCount: number; betaMode: b
           <div className="text-white/55 text-xs mt-0.5">
             {betaMode
               ? "Paid Membership opens when our first market reaches Official status with 30 days of clean public record. Join the waitlist and we'll email you the moment it does."
-              : "Upgrade to MVP for all Tier A, B, and C picks with full edge, EV, and CLV data."}
+              : "MVP adds the full slate and the supporting edge, EV, and CLV context behind each pick."}
           </div>
         </div>
       </div>
@@ -257,7 +257,7 @@ export function Dashboard() {
             ) : (
               <span className="text-sm text-white/70">
                 <span className="text-[#FFC107] font-bold">Free plan</span> — showing 1 of {allPicks.length} picks today.
-                <Link href="/subscribe" className="ml-1 text-[#FFC107] hover:underline font-medium">Upgrade to MVP</Link> to unlock all picks.
+                <Link href="/subscribe" className="ml-1 text-[#FFC107] hover:underline font-medium">See MVP access</Link> for the full slate and supporting detail.
               </span>
             )}
           </div>
@@ -300,8 +300,8 @@ export function Dashboard() {
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#4ADE80]"></span>
             </span>
             <div>
-              <div className="text-sm font-bold text-[#4ADE80] mb-0.5">Live Candidates — Closing Lines Pending</div>
-              <p className="text-xs text-muted-foreground">Picks are generated. Final scoring happens once closing lines are posted. These are pre-score candidates using opening probabilities.</p>
+              <div className="text-sm font-bold text-[#4ADE80] mb-0.5">Live Candidates — Evaluation in Progress</div>
+              <p className="text-xs text-muted-foreground">These markets have surfaced candidates, but final grading depends on settlement and close-line capture. They are shown here for transparency, not as settled track record.</p>
             </div>
           </div>
           <TopPickCallout candidates={liveCandidates} />
