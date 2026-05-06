@@ -27,6 +27,22 @@ function getSlateDayET(now: Date = new Date()): string {
   }).format(now);
 }
 
+function parseArgs(argv: string[]): { date?: string } {
+  const parsed: { date?: string } = {};
+  for (const arg of argv.slice(2)) {
+    if (arg.startsWith("--date=")) {
+      const value = arg.slice("--date=".length).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw new Error(`--date must be YYYY-MM-DD (got ${value})`);
+      }
+      parsed.date = value;
+      continue;
+    }
+    throw new Error(`unknown arg: ${arg}`);
+  }
+  return parsed;
+}
+
 function resolvePersistedCandidateSurfaceStatus(candidate: {
   surfaceStatus?: string | null;
   selectionReason?: string | null;
@@ -97,15 +113,17 @@ function formatEventStart(value: Date | string | null | undefined): string {
 }
 
 async function main(): Promise<void> {
+  const args = parseArgs(process.argv);
+
   if (!process.env.DATABASE_URL) {
     console.error(
-      "DATABASE_URL is not set. Export it first, then rerun: pnpm --filter @workspace/api-server exec tsx scripts/showTodaysSlate.ts",
+      "DATABASE_URL is not set. Export it first, then rerun the today:slate command.",
     );
     process.exitCode = 1;
     return;
   }
 
-  const today = getSlateDayET();
+  const today = args.date ?? getSlateDayET();
 
   const officialConditions = [
     eq(scoredPicksTable.date, today),
