@@ -2,7 +2,6 @@ import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import {
   scoredPicksTable,
-  validationMetricsTable,
   candidateBetsTable,
   evaluationResultsTable,
 } from "@workspace/db";
@@ -10,6 +9,10 @@ import { eq, and, gte, desc, ne, count, inArray, or, isNull } from "drizzle-orm"
 import { GetPerformanceModelWatchQueryParams } from "@workspace/api-zod";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
 import { mergeOfficialPerformanceRows } from "../scoring/officialPerformanceMerge";
+import {
+  buildOfficialHistoryRecords,
+  mergeOfficialHistoryRows,
+} from "../scoring/officialHistoryRecords";
 import { americanToDecimal } from "../scoring/marketProb";
 import {
   DATA_QUALITY_PRE_FIX,
@@ -225,39 +228,80 @@ router.get("/performance/history", async (req, res): Promise<void> => {
   const { league, market } = req.query as Record<string, string | undefined>;
   const days = parseInt((req.query.days as string) ?? "45");
 
-  const conditions = [];
+  const scoredConditions = [];
+  const evaluationConditions = [];
   if (league) {
-    conditions.push(eq(validationMetricsTable.league, league));
+    scoredConditions.push(eq(scoredPicksTable.league, league));
+    evaluationConditions.push(eq(evaluationResultsTable.league, league));
   } else {
     // Gate NCAAM (experimental) off the default history surface.
-    conditions.push(inArray(validationMetricsTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+    scoredConditions.push(inArray(scoredPicksTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+    evaluationConditions.push(
+      inArray(evaluationResultsTable.league, [...DEFAULT_PRODUCTION_LEAGUES]),
+    );
   }
-  if (market) conditions.push(eq(validationMetricsTable.market, market));
+  if (market) {
+    scoredConditions.push(eq(scoredPicksTable.market, market));
+    evaluationConditions.push(eq(evaluationResultsTable.market, market));
+  }
 
   // Public surface: exclude rows labeled as contaminated. We filter on the
-  // explicit data_quality label (set by scripts/label-pre-fix-validation-metrics.ts
-  // from the same PUBLIC_TRACK_RECORD_CUTOFFS source of truth) AND defensively
-  // re-apply the date cutoff so any unlabeled-but-pre-fix row (e.g. a fresh
-  // backfill that ran before label) is also excluded. Both expressions point
-  // at the same underlying cutoff, so they always agree once labels are in sync.
-  conditions.push(
-    or(
-      isNull(validationMetricsTable.dataQuality),
-      ne(validationMetricsTable.dataQuality, DATA_QUALITY_PRE_FIX),
-    )!,
+  // explicit data_quality label on scored_picks AND defensively re-apply the
+  // date cutoff to both legacy and rebuilt rows so unlabeled-but-pre-fix data
+  // cannot leak onto the public history surface.
+  scoredConditions.push(isNull(scoredPicksTable.dataQuality));
+  const scoredHistoryExclusion = buildPreFixExclusionCondition(
+    scoredPicksTable.league,
+    scoredPicksTable.date,
   );
-  const historyExclusion = buildPreFixExclusionCondition(
-    validationMetricsTable.league,
-    validationMetricsTable.runDate,
+  if (scoredHistoryExclusion) scoredConditions.push(scoredHistoryExclusion);
+  const evaluationHistoryExclusion = buildPreFixExclusionCondition(
+    evaluationResultsTable.league,
+    evaluationResultsTable.date,
   );
-  if (historyExclusion) conditions.push(historyExclusion);
+  if (evaluationHistoryExclusion) evaluationConditions.push(evaluationHistoryExclusion);
+  evaluationConditions.push(eq(evaluationResultsTable.surfaceStatus, "official"));
 
-  const records = await db
-    .select()
-    .from(validationMetricsTable)
-    .where(and(...conditions))
-    .orderBy(desc(validationMetricsTable.runDate))
-    .limit(days);
+  const [scoredPickRows, evaluationRows] = await Promise.all([
+    db
+      .select()
+      .from(scoredPicksTable)
+      .where(and(...scoredConditions))
+      .orderBy(desc(scoredPicksTable.date), desc(scoredPicksTable.rankScore)),
+    db
+      .select({
+        date: evaluationResultsTable.date,
+        gameKey: evaluationResultsTable.gameKey,
+        league: evaluationResultsTable.league,
+        market: evaluationResultsTable.market,
+        pick: evaluationResultsTable.pick,
+        result: evaluationResultsTable.result,
+        publishOdds: evaluationResultsTable.publishOdds,
+        publishLine: evaluationResultsTable.publishLine,
+        closeOdds: evaluationResultsTable.closeOdds,
+        closeLine: evaluationResultsTable.closeLine,
+        modelProbCalibrated: evaluationResultsTable.modelProbCalibrated,
+        edge: evaluationResultsTable.edge,
+        ev: evaluationResultsTable.ev,
+        clvImpliedDelta: evaluationResultsTable.clvImpliedDelta,
+        tier: evaluationResultsTable.tier,
+      })
+      .from(evaluationResultsTable)
+      .where(and(...evaluationConditions))
+      .orderBy(desc(evaluationResultsTable.date), desc(evaluationResultsTable.updatedAt)),
+  ]);
+
+  const mergedRows = mergeOfficialHistoryRows({
+    evaluationRows,
+    scoredPickRows,
+  });
+
+  const records = buildOfficialHistoryRecords({
+    rows: mergedRows,
+    league,
+    market,
+    limit: days,
+  });
 
   res.json(records);
 });
