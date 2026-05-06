@@ -4,6 +4,7 @@ import {
   gameSnapshotsTable,
   candidateBetsTable,
   scoredPicksTable,
+  evaluationResultsTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, desc, inArray, sql, isNull, or } from "drizzle-orm";
 import {
@@ -27,6 +28,7 @@ import { ODDS_RANGE_GUARDRAIL_LEAGUES } from "../config/scoringModelConfig";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 import { buildPreFixExclusionCondition } from "../lib/preFixCutoff";
 import { buildPlausibleEventStartCondition } from "../lib/plausibleEventStart";
+import { mergeOfficialPickRows } from "../scoring/officialPicksMerge";
 
 // Leagues surfaced by default to subscribers. NCAAM is experimental (hash-noise
 // pseudo-models) and must be requested explicitly via ?league=ncaam.
@@ -110,16 +112,25 @@ router.get("/picks", async (req, res): Promise<void> => {
   const offset = parseInt((req.query.offset as string) ?? "0");
 
   const conditions = [];
+  const evaluationConditions = [];
   if (date) conditions.push(eq(scoredPicksTable.date, date));
+  if (date) evaluationConditions.push(eq(evaluationResultsTable.date, date));
   if (league) {
     conditions.push(eq(scoredPicksTable.league, league));
+    evaluationConditions.push(eq(evaluationResultsTable.league, league));
   } else {
     // No explicit league filter → serve production leagues only (exclude experimental NCAAM).
     conditions.push(inArray(scoredPicksTable.league, [...DEFAULT_PRODUCTION_LEAGUES]));
+    evaluationConditions.push(
+      inArray(evaluationResultsTable.league, [...DEFAULT_PRODUCTION_LEAGUES]),
+    );
   }
   if (market) conditions.push(eq(scoredPicksTable.market, market));
+  if (market) evaluationConditions.push(eq(evaluationResultsTable.market, market));
   if (tier) conditions.push(eq(scoredPicksTable.tier, tier));
+  if (tier) evaluationConditions.push(eq(evaluationResultsTable.tier, tier));
   if (result) conditions.push(eq(scoredPicksTable.result, result));
+  if (result) evaluationConditions.push(eq(evaluationResultsTable.result, result));
 
   // Public read surface: exclude pre-fix contaminated picks per
   // PUBLIC_TRACK_RECORD_CUTOFFS. Raw rows remain in scored_picks for audit;
@@ -149,28 +160,102 @@ router.get("/picks", async (req, res): Promise<void> => {
   );
   if (plausibleScoredPicksCondition) conditions.push(plausibleScoredPicksCondition);
 
-  // Fetch ordered by rankScore DESC so the cap selects the best picks per league/game
-  const raw =
+  evaluationConditions.push(eq(evaluationResultsTable.surfaceStatus, "official"));
+
+  const [scoredPickRows, evaluationRows] = await Promise.all([
     conditions.length > 0
-      ? await db
+      ? db
           .select()
           .from(scoredPicksTable)
           .where(and(...conditions))
           .orderBy(desc(scoredPicksTable.rankScore))
-          .limit(limit)
-          .offset(offset)
-      : await db
+      : db
           .select()
           .from(scoredPicksTable)
-          .orderBy(desc(scoredPicksTable.rankScore))
-          .limit(limit)
-          .offset(offset);
+          .orderBy(desc(scoredPicksTable.rankScore)),
+    db
+      .select({
+        date: evaluationResultsTable.date,
+        gameKey: evaluationResultsTable.gameKey,
+        league: evaluationResultsTable.league,
+        market: evaluationResultsTable.market,
+        pick: evaluationResultsTable.pick,
+        result: evaluationResultsTable.result,
+        publishOdds: evaluationResultsTable.publishOdds,
+        publishLine: evaluationResultsTable.publishLine,
+        closeOdds: evaluationResultsTable.closeOdds,
+        closeLine: evaluationResultsTable.closeLine,
+        modelProbRaw: evaluationResultsTable.modelProbRaw,
+        modelProbCalibrated: evaluationResultsTable.modelProbCalibrated,
+        marketProbFair: evaluationResultsTable.marketProbFair,
+        edge: evaluationResultsTable.edge,
+        ev: evaluationResultsTable.ev,
+        rankScore: evaluationResultsTable.rankScore,
+        tier: evaluationResultsTable.tier,
+        clvLineDelta: evaluationResultsTable.clvLineDelta,
+        clvImpliedDelta: evaluationResultsTable.clvImpliedDelta,
+        modelVersion: evaluationResultsTable.modelVersion,
+        scoringVersion: evaluationResultsTable.scoringVersion,
+      })
+      .from(evaluationResultsTable)
+      .where(and(...evaluationConditions))
+      .orderBy(desc(evaluationResultsTable.rankScore)),
+  ]);
+
+  const evaluationRowKeys = evaluationRows.map((row) =>
+    and(
+      eq(candidateBetsTable.snapshotDate, row.date),
+      eq(candidateBetsTable.gameKey, row.gameKey),
+      eq(candidateBetsTable.marketType, row.market),
+      eq(candidateBetsTable.side, row.pick),
+    ),
+  );
+  const plausibleCandidateCondition = buildPlausibleEventStartCondition(
+    candidateBetsTable.league,
+    candidateBetsTable.eventStart,
+  );
+  const candidateRows = evaluationRowKeys.length > 0
+    ? await db
+        .select({
+          date: candidateBetsTable.snapshotDate,
+          gameKey: candidateBetsTable.gameKey,
+          market: candidateBetsTable.marketType,
+          pick: candidateBetsTable.side,
+          eventStart: candidateBetsTable.eventStart,
+          createdAt: candidateBetsTable.createdAt,
+        })
+        .from(candidateBetsTable)
+        .where(
+          and(
+            or(...evaluationRowKeys)!,
+            isNull(candidateBetsTable.dataQuality),
+            plausibleCandidateCondition ?? sql`true`,
+          ),
+        )
+    : [];
+
+  const scoredPickKeys = new Set(
+    scoredPickRows.map((row) => `${row.date}|${row.gameKey}|${row.market}|${row.pick}`),
+  );
+  const candidateKeys = new Set(
+    candidateRows.map((row) => `${row.date}|${row.gameKey}|${row.market}|${row.pick}`),
+  );
+  const filteredEvaluationRows = evaluationRows.filter((row) => {
+    const key = `${row.date}|${row.gameKey}|${row.market}|${row.pick}`;
+    return scoredPickKeys.has(key) || candidateKeys.has(key);
+  });
+
+  const merged = mergeOfficialPickRows({
+    evaluationRows: filteredEvaluationRows,
+    scoredPickRows,
+    candidateRows,
+  }).sort((a, b) => Number(b.rankScore) - Number(a.rankScore));
 
   // When filtering by a single date, apply per-league cap and re-sort chronologically.
   // Historical queries (no date, or multi-day) are returned as-is sorted by rankScore.
   const picks = date && !league
-    ? capAndSort(raw.map(p => ({ ...p, eventStart: p.eventStart ?? p.date })))
-    : raw;
+    ? capAndSort(merged.map(p => ({ ...p, eventStart: p.eventStart ?? p.date })))
+    : merged.slice(offset, offset + limit);
 
   res.json({ picks, total: picks.length, offset, limit });
 });
