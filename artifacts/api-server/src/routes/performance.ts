@@ -9,6 +9,7 @@ import {
 import { eq, and, gte, desc, ne, count, inArray, or, isNull } from "drizzle-orm";
 import { GetPerformanceModelWatchQueryParams } from "@workspace/api-zod";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
+import { mergeOfficialPerformanceRows } from "../scoring/officialPerformanceMerge";
 import { americanToDecimal } from "../scoring/marketProb";
 import {
   DATA_QUALITY_PRE_FIX,
@@ -155,48 +156,10 @@ router.get("/performance", async (req, res): Promise<void> => {
     .where(and(...scoredPicksConditions)),
   ]);
 
-  const evaluationKeys = new Set(
-    evaluationRows.map((row) => `${row.date}|${row.gameKey}|${row.market}|${row.pick}`),
-  );
-  const historicalFallbackRows = scoredPickRows.filter((row) => {
-    const key = `${row.date}|${row.gameKey}|${row.market}|${row.pick}`;
-    return !evaluationKeys.has(key);
+  const picksForValidation = mergeOfficialPerformanceRows({
+    evaluationRows,
+    scoredPickRows,
   });
-
-  const picksForValidation: PickWithFullData[] = [
-    ...evaluationRows.map((p, index) => ({
-      id: -1 - index,
-      league: p.league,
-      market: p.market,
-      pick: p.pick,
-      publishOdds: parseFloat(p.publishOdds),
-      closeOdds: p.closeOdds ? parseFloat(p.closeOdds) : null,
-      closeLine: p.closeLine ? parseFloat(p.closeLine) : null,
-      publishLine: p.publishLine ? parseFloat(p.publishLine) : null,
-      modelProbCalibrated: parseFloat(p.modelProbCalibrated),
-      result: p.result as "win" | "loss" | "push" | "pending",
-      ev: parseFloat(p.ev),
-      edge: parseFloat(p.edge),
-      clvImpliedDelta: p.clvImpliedDelta ? parseFloat(p.clvImpliedDelta) : null,
-      tier: p.tier,
-    })),
-    ...historicalFallbackRows.map((p) => ({
-      id: p.id,
-      league: p.league,
-      market: p.market,
-      pick: p.pick,
-      publishOdds: parseFloat(p.publishOdds),
-      closeOdds: p.closeOdds ? parseFloat(p.closeOdds) : null,
-      closeLine: p.closeLine ? parseFloat(p.closeLine) : null,
-      publishLine: p.publishLine ? parseFloat(p.publishLine) : null,
-      modelProbCalibrated: parseFloat(p.modelProbCalibrated),
-      result: p.result as "win" | "loss" | "push" | "pending",
-      ev: parseFloat(p.ev),
-      edge: parseFloat(p.edge),
-      clvImpliedDelta: p.clvImpliedDelta ? parseFloat(p.clvImpliedDelta) : null,
-      tier: p.tier,
-    })),
-  ];
 
   const candidateConditions = [gte(candidateBetsTable.snapshotDate, cutoff)];
   if (league) {
