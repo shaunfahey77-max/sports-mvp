@@ -10,10 +10,12 @@ import {
   gameSnapshotsTable,
   candidateBetsTable,
   scoredPicksTable,
+  evaluationResultsTable,
   validationMetricsTable,
 } from "@workspace/db";
 import { eq, and, lt, sql } from "drizzle-orm";
 import { computeValidationMetrics, type PickWithFullData } from "../scoring/validatePicks";
+import { mergeOfficialPerformanceRows } from "../scoring/officialPerformanceMerge";
 import { logger } from "../lib/logger";
 import { capAndSort, computeStaleScoredPicksKeys } from "../lib/pickUtils";
 import {
@@ -658,8 +660,9 @@ async function runNightlyValidation(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Validation-metrics rollup. /performance/history reads from validation_metrics;
 // this persists a per-day, per-league summary row (windowDays=1, market=null)
-// from graded rows in scored_picks. Idempotent: deletes existing daily rows
-// in the date range before reinserting.
+// from rebuilt official evaluation rows with scored_picks as historical
+// fallback. Idempotent: deletes existing daily rows in the date range before
+// reinserting.
 // ---------------------------------------------------------------------------
 export interface ValidationMetricsBackfillResult {
   datesProcessed: number;
@@ -694,29 +697,45 @@ export async function backfillValidationMetrics(
   while (date <= endDate) {
     for (const league of leagues) {
       try {
-        const picks = await db
-          .select()
-          .from(scoredPicksTable)
-          .where(and(eq(scoredPicksTable.date, date), eq(scoredPicksTable.league, league)));
+        const [scoredPickRows, evaluationRows] = await Promise.all([
+          db
+            .select()
+            .from(scoredPicksTable)
+            .where(and(eq(scoredPicksTable.date, date), eq(scoredPicksTable.league, league))),
+          db
+            .select({
+              date: evaluationResultsTable.date,
+              gameKey: evaluationResultsTable.gameKey,
+              league: evaluationResultsTable.league,
+              market: evaluationResultsTable.market,
+              pick: evaluationResultsTable.pick,
+              result: evaluationResultsTable.result,
+              publishOdds: evaluationResultsTable.publishOdds,
+              publishLine: evaluationResultsTable.publishLine,
+              closeOdds: evaluationResultsTable.closeOdds,
+              closeLine: evaluationResultsTable.closeLine,
+              modelProbCalibrated: evaluationResultsTable.modelProbCalibrated,
+              edge: evaluationResultsTable.edge,
+              ev: evaluationResultsTable.ev,
+              clvImpliedDelta: evaluationResultsTable.clvImpliedDelta,
+              tier: evaluationResultsTable.tier,
+            })
+            .from(evaluationResultsTable)
+            .where(
+              and(
+                eq(evaluationResultsTable.date, date),
+                eq(evaluationResultsTable.league, league),
+                eq(evaluationResultsTable.surfaceStatus, "official"),
+              ),
+            ),
+        ]);
 
-        if (picks.length === 0) continue;
+        const picksForValidation: PickWithFullData[] = mergeOfficialPerformanceRows({
+          evaluationRows,
+          scoredPickRows,
+        });
 
-        const picksForValidation: PickWithFullData[] = picks.map((p) => ({
-          id: p.id,
-          league: p.league,
-          market: p.market,
-          pick: p.pick,
-          publishOdds: parseFloat(p.publishOdds),
-          closeOdds: p.closeOdds ? parseFloat(p.closeOdds) : null,
-          closeLine: p.closeLine ? parseFloat(p.closeLine) : null,
-          publishLine: p.publishLine ? parseFloat(p.publishLine) : null,
-          modelProbCalibrated: parseFloat(p.modelProbCalibrated),
-          result: p.result as "win" | "loss" | "push" | "pending",
-          ev: parseFloat(p.ev),
-          edge: parseFloat(p.edge),
-          clvImpliedDelta: p.clvImpliedDelta ? parseFloat(p.clvImpliedDelta) : null,
-          tier: p.tier,
-        }));
+        if (picksForValidation.length === 0) continue;
 
         const m = computeValidationMetrics(picksForValidation, 1);
 
