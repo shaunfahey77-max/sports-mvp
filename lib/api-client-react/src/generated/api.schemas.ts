@@ -118,6 +118,7 @@ export interface CandidateBet {
   calibrationVersion: string;
   marketQuality: number;
   selectionReason?: string | null;
+  surfaceStatus: 'shadow' | 'model_watch' | 'official' | 'suppressed';
   snapshotDate: string;
   modelVersion: string;
   createdAt: string;

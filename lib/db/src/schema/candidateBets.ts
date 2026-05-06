@@ -33,6 +33,7 @@ export const candidateBetsTable = pgTable(
     calibrationVersion: text("calibration_version").notNull().default("v1"),
     marketQuality: numeric("market_quality").notNull().default("1.0"),
     selectionReason: text("selection_reason"),
+    surfaceStatus: text("surface_status").notNull().default("shadow"),
     snapshotDate: date("snapshot_date").notNull(),
     modelVersion: text("model_version").notNull().default("v1"),
     // Internal audit label. NULL = clean / publishable on the public read

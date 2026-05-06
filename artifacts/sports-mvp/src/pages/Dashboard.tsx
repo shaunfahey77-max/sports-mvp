@@ -28,7 +28,7 @@ function pickToLogData(pick: ScoredPick): LogPickData {
     : pickIsUnder ? 'UNDER'
     : pickIsHome ? (matchup?.homeAbbrev ?? 'HOME')
     : (matchup?.awayAbbrev ?? 'AWAY');
-  const line = pick.publishLine != null && pick.publishLine !== '' ? ` ${Number(pick.publishLine) > 0 ? '+' : ''}${pick.publishLine}` : '';
+  const line = pick.publishLine != null ? ` ${Number(pick.publishLine) > 0 ? '+' : ''}${pick.publishLine}` : '';
   return {
     league: pick.league,
     matchup: matchupStr,

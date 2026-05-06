@@ -40,6 +40,9 @@ export const MODEL_WATCH_BOARD_DISCLAIMER =
 export const MEMBER_BOARD_ALLOWED_SELECTION_REASONS: ReadonlySet<string> =
   new Set(["model_watch_only"]);
 
+export const MEMBER_BOARD_ALLOWED_SURFACE_STATUSES: ReadonlySet<string> =
+  new Set(["model_watch"]);
+
 /**
  * Minimal shape of a candidate the selector cares about. Kept structural
  * (not tied to the generated CandidateBet) so the test can construct
@@ -48,17 +51,36 @@ export const MEMBER_BOARD_ALLOWED_SELECTION_REASONS: ReadonlySet<string> =
  * `rankScore` and `ev` may arrive as strings from the wire; the selector
  * coerces with Number() to match the rest of the dashboard.
  *
- * `selectionReason` mirrors the optional/nullable field on the wire
- * `CandidateBet` schema; the selector requires it to be
- * `'model_watch_only'` for any row that is allowed onto the board.
+ * `surfaceStatus` is the rebuild control-plane truth. `selectionReason`
+ * remains useful for transition fallback and UI copy, but board
+ * eligibility should prefer `surfaceStatus === 'model_watch'` whenever
+ * the field is present on the wire.
  */
 export interface RankableCandidate {
   rankScore: number | string;
   ev: number | string;
+  surfaceStatus?: string | null;
   selectionReason?: string | null;
 }
 
-function isAllowedSelectionReason(c: RankableCandidate): boolean {
+function hasRecognizedSurfaceStatus(c: RankableCandidate): boolean {
+  return (
+    c.surfaceStatus === "shadow" ||
+    c.surfaceStatus === "model_watch" ||
+    c.surfaceStatus === "official" ||
+    c.surfaceStatus === "suppressed"
+  );
+}
+
+function isAllowedCandidate(c: RankableCandidate): boolean {
+  if (hasRecognizedSurfaceStatus(c)) {
+    return (
+      c.surfaceStatus === "model_watch" &&
+      typeof c.selectionReason === "string" &&
+      MEMBER_BOARD_ALLOWED_SELECTION_REASONS.has(c.selectionReason)
+    );
+  }
+
   return (
     typeof c.selectionReason === "string" &&
     MEMBER_BOARD_ALLOWED_SELECTION_REASONS.has(c.selectionReason)
@@ -89,7 +111,7 @@ export function selectModelWatchBoardCandidates<T extends RankableCandidate>(
   // a board slot and render with the disabled-market copy. Centralising
   // the filter here means every call site (Dashboard, fallback section,
   // future surfaces) inherits the rule for free.
-  const eligible = passCandidates.filter(isAllowedSelectionReason);
+  const eligible = passCandidates.filter(isAllowedCandidate);
   if (eligible.length === 0) return [];
 
   const sorted = [...eligible].sort(
@@ -173,7 +195,7 @@ export function selectFallbackSection<T extends RankableCandidate>(args: {
   // would leak into the Free fallback card just as easily as the Member
   // board (one disabled card with a strong rankScore => identical
   // exposure on the Public surface).
-  const eligible = passCandidates.filter(isAllowedSelectionReason);
+  const eligible = passCandidates.filter(isAllowedCandidate);
 
   if (eligible.length === 0) {
     return { kind: "no-action" };

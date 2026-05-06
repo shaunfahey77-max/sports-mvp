@@ -9,7 +9,7 @@ export function SignInPage() {
         routing="path"
         path={`${basePath}/sign-in`}
         signUpUrl={`${basePath}/sign-up`}
-        afterSignInUrl={`${basePath}/picks`}
+        forceRedirectUrl={`${basePath}/picks`}
       />
     </div>
   );

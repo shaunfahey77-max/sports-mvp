@@ -104,12 +104,12 @@ function Router() {
       <Route path="/" component={HomeRedirect} />
       <Route path="/sign-in/*?" component={() => (
         <div className="min-h-screen bg-[#060D1F] flex items-center justify-center">
-          <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} afterSignInUrl={`${basePath}/picks`} />
+          <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} forceRedirectUrl={`${basePath}/picks`} />
         </div>
       )} />
       <Route path="/sign-up/*?" component={() => (
         <div className="min-h-screen bg-[#060D1F] flex items-center justify-center">
-          <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} afterSignUpUrl={`${basePath}/picks`} />
+          <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} forceRedirectUrl={`${basePath}/picks`} />
         </div>
       )} />
       <Route path="/picks" component={() => <ProtectedRoute><Dashboard /></ProtectedRoute>} />

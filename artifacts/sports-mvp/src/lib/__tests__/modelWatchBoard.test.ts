@@ -4,6 +4,7 @@ import {
   selectModelWatchBoardCandidates,
   selectFallbackSection,
   MEMBER_BOARD_ALLOWED_SELECTION_REASONS,
+  MEMBER_BOARD_ALLOWED_SURFACE_STATUSES,
   MODEL_WATCH_BOARD_TITLE,
   MODEL_WATCH_BOARD_DISCLAIMER,
   MODEL_WATCH_BOARD_DEFAULT_TARGET,
@@ -23,6 +24,7 @@ type Fixture = {
   id: string;
   rankScore: number;
   ev: number;
+  surfaceStatus?: string | null;
   selectionReason: string;
 };
 
@@ -31,10 +33,12 @@ const c = (
   rankScore: number,
   ev: number,
   selectionReason: string = "model_watch_only",
+  surfaceStatus: string | null = "model_watch",
 ): Fixture => ({
   id,
   rankScore,
   ev,
+  surfaceStatus,
   selectionReason,
 });
 
@@ -122,12 +126,14 @@ test("selector: rankScore arriving as string is coerced (matches CandidateBet wi
       id: "x",
       rankScore: "0.95",
       ev: "0.05",
+      surfaceStatus: "model_watch",
       selectionReason: "model_watch_only",
     },
     {
       id: "y",
       rankScore: "0.90",
       ev: "0.04",
+      surfaceStatus: "model_watch",
       selectionReason: "model_watch_only",
     },
   ]);
@@ -351,12 +357,34 @@ test("invariant: allowed reasons set is exactly { 'model_watch_only' } (single s
   // 'rank_score_below_threshold') is caught immediately by this test.
   assert.equal(MEMBER_BOARD_ALLOWED_SELECTION_REASONS.size, 1);
   assert.ok(MEMBER_BOARD_ALLOWED_SELECTION_REASONS.has("model_watch_only"));
+  assert.equal(MEMBER_BOARD_ALLOWED_SURFACE_STATUSES.size, 1);
+  assert.ok(MEMBER_BOARD_ALLOWED_SURFACE_STATUSES.has("model_watch"));
   for (const r of ALL_NON_ELIGIBLE_PASS_REASONS) {
     assert.ok(
       !MEMBER_BOARD_ALLOWED_SELECTION_REASONS.has(r),
       `reason '${r}' must NOT be allowed on the board`,
     );
   }
+});
+
+test("surface-status invariant: suppressed/official/shadow rows never surface even if selectionReason says model_watch_only", () => {
+  const board = selectModelWatchBoardCandidates([
+    c("suppressed", 1.0, 0.20, "model_watch_only", "suppressed"),
+    c("official", 0.95, 0.10, "model_watch_only", "official"),
+    c("shadow", 0.90, 0.10, "model_watch_only", "shadow"),
+    c("watch", 0.85, 0.05, "model_watch_only", "model_watch"),
+  ]);
+
+  assert.deepEqual(board.map((x) => x.id), ["watch"]);
+});
+
+test("transition fallback: missing surfaceStatus still honors selectionReason-only eligibility", () => {
+  const board = selectModelWatchBoardCandidates([
+    { id: "legacy-watch", rankScore: 0.9, ev: 0.05, selectionReason: "model_watch_only" },
+    { id: "legacy-disabled", rankScore: 1.0, ev: 0.10, selectionReason: "market_disabled" },
+  ]);
+
+  assert.deepEqual(board.map((x) => x.id), ["legacy-watch"]);
 });
 
 test("task #38 (a): high-rankScore market_disabled row is excluded; lower-ranked model_watch_only rows still surface in rankScore order", () => {
@@ -453,6 +481,12 @@ test("task #38 (e): property-style — for any input, every returned card has se
         id: `s${shift}-i${i}`,
         rankScore: 1.0 - i * 0.05,
         ev: 0.05 - i * 0.005,
+        surfaceStatus:
+          reason === "model_watch_only"
+            ? "model_watch"
+            : reason === "market_disabled"
+            ? "suppressed"
+            : "shadow",
         selectionReason: reason ?? null,
       } as Fixture);
     }

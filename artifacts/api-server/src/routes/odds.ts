@@ -142,6 +142,7 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
             calibrationVersion: c.calibrationVersion,
             marketQuality: String(c.marketQuality),
             selectionReason: c.selectionReason,
+            surfaceStatus: c.surfaceStatus ?? "shadow",
             snapshotDate: snapshots[0]?.snapshotDate ?? new Date().toISOString().split("T")[0],
             modelVersion: "v1",
           }))
@@ -163,6 +164,7 @@ router.post("/odds/ingest", async (req, res): Promise<void> => {
             rankScore: sql`EXCLUDED.rank_score`,
             tier: sql`EXCLUDED.tier`,
             selectionReason: sql`EXCLUDED.selection_reason`,
+            surfaceStatus: sql`EXCLUDED.surface_status`,
           },
         });
 

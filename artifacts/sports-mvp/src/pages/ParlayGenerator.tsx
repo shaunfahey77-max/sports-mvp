@@ -98,7 +98,7 @@ function ParlayPickRow({
           <span className={cn(isOver || isUnder ? "text-[#00897B]" : "text-foreground")}>
             {pickLabel}
           </span>
-          {pick.publishLine != null && pick.publishLine !== "" && (
+          {pick.publishLine != null && (
             <span className="text-muted-foreground text-xs">
               {Number(pick.publishLine) > 0 ? `+${pick.publishLine}` : pick.publishLine}
             </span>
@@ -182,7 +182,7 @@ function ParlaySlip({
                     <span className={cn(isOver || isUnder ? "text-[#00897B]" : "text-foreground")}>
                       {pickLabel}
                     </span>
-                    {leg.publishLine != null && leg.publishLine !== "" && (
+                    {leg.publishLine != null && (
                       <span className="text-muted-foreground text-[10px]">
                         {Number(leg.publishLine) > 0 ? `+${leg.publishLine}` : leg.publishLine}
                       </span>

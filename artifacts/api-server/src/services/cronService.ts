@@ -199,6 +199,7 @@ async function runOddsIngest(): Promise<void> {
               calibrationVersion: c.calibrationVersion,
               marketQuality: String(c.marketQuality),
               selectionReason: c.selectionReason,
+              surfaceStatus: c.surfaceStatus ?? "shadow",
               snapshotDate: date,
               modelVersion: "v1",
             }))
@@ -221,6 +222,7 @@ async function runOddsIngest(): Promise<void> {
               rankScore: sql`EXCLUDED.rank_score`,
               tier: sql`EXCLUDED.tier`,
               selectionReason: sql`EXCLUDED.selection_reason`,
+              surfaceStatus: sql`EXCLUDED.surface_status`,
             },
           });
       }

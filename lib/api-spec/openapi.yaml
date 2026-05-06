@@ -530,6 +530,9 @@ components:
         selectionReason:
           type: string
           nullable: true
+        surfaceStatus:
+          type: string
+          enum: [shadow, model_watch, official, suppressed]
         snapshotDate:
           type: string
         modelVersion:
@@ -555,6 +558,7 @@ components:
         - calibrationMethod
         - calibrationVersion
         - marketQuality
+        - surfaceStatus
         - snapshotDate
         - modelVersion
         - createdAt

@@ -49,6 +49,59 @@ const MODEL_WATCH_ONLY_CANDIDATE_PAIRS: ReadonlyArray<{
   market: string;
 }> = [{ league: "mlb", market: "moneyline" }];
 
+type CandidateSurfaceStatus =
+  | "shadow"
+  | "model_watch"
+  | "official"
+  | "suppressed";
+
+function resolvePersistedCandidateSurfaceStatus(candidate: {
+  surfaceStatus?: string | null;
+  selectionReason?: string | null;
+}): CandidateSurfaceStatus {
+  if (
+    candidate.surfaceStatus === "shadow" ||
+    candidate.surfaceStatus === "model_watch" ||
+    candidate.surfaceStatus === "official" ||
+    candidate.surfaceStatus === "suppressed"
+  ) {
+    return candidate.surfaceStatus;
+  }
+
+  // Transitional fallback for rows written before candidate_bets.surface_status
+  // existed or before the migration has been applied in a target environment.
+  if (candidate.selectionReason === "model_watch_only") return "model_watch";
+  if (candidate.selectionReason === "market_disabled") return "suppressed";
+  return "shadow";
+}
+
+function isRenderableCandidateRow(candidate: {
+  tier: string;
+  selectionReason?: string | null;
+  surfaceStatus?: string | null;
+}): boolean {
+  const surfaceStatus = resolvePersistedCandidateSurfaceStatus(candidate);
+  if (surfaceStatus === "suppressed") return false;
+
+  // PASS rows should only ever surface through the explicit Model Watch lane.
+  if (candidate.tier === "PASS") {
+    return (
+      surfaceStatus === "model_watch" &&
+      candidate.selectionReason === "model_watch_only"
+    );
+  }
+
+  // Non-PASS rows are renderable for active surfaces. In the rebuild, that is
+  // typically shadow/official; model_watch should already have been forced to
+  // PASS at score time, but allowing it here keeps older rows from vanishing
+  // unexpectedly during the transition.
+  return (
+    surfaceStatus === "shadow" ||
+    surfaceStatus === "official" ||
+    surfaceStatus === "model_watch"
+  );
+}
+
 const router: IRouter = Router();
 
 router.get("/picks", async (req, res): Promise<void> => {
@@ -224,9 +277,8 @@ router.get("/picks/candidates", async (req, res): Promise<void> => {
     }
   }
 
-  const RENDERABLE_REASONS = new Set<string | null>([null, "model_watch_only"]);
   const deduped = Array.from(seen.values())
-    .filter((c) => RENDERABLE_REASONS.has(c.selectionReason))
+    .filter((c) => isRenderableCandidateRow(c))
     .sort((a, b) => parseFloat(b.rankScore) - parseFloat(a.rankScore))
     .map((c) => ({ ...c, eventStart: c.eventStart ?? new Date() }));
 
@@ -322,6 +374,7 @@ router.post("/picks/score", async (req, res): Promise<void> => {
           calibrationVersion: c.calibrationVersion,
           marketQuality: String(c.marketQuality),
           selectionReason: c.selectionReason,
+          surfaceStatus: c.surfaceStatus ?? "shadow",
           snapshotDate: date,
           modelVersion,
         }))
@@ -346,6 +399,7 @@ router.post("/picks/score", async (req, res): Promise<void> => {
           rankScore: sql`EXCLUDED.rank_score`,
           tier: sql`EXCLUDED.tier`,
           selectionReason: sql`EXCLUDED.selection_reason`,
+          surfaceStatus: sql`EXCLUDED.surface_status`,
         },
       });
   }
@@ -452,6 +506,7 @@ router.post("/picks/score", async (req, res): Promise<void> => {
     calibrationVersion: c.calibrationVersion,
     marketQuality: c.marketQuality,
     selectionReason: c.selectionReason,
+    surfaceStatus: c.surfaceStatus ?? "shadow",
     snapshotDate: date,
     modelVersion,
     createdAt: new Date().toISOString(),
