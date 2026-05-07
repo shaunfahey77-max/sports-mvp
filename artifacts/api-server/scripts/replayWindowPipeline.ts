@@ -32,7 +32,8 @@ type OfficialProfile =
   | "r5_disciplined_officials"
   | "r6_spread_discipline"
   | "r7_tier_a_discipline"
-  | "r8_no_a";
+  | "r8_no_a"
+  | "r9_rebuild_a";
 
 type SnapshotRow = {
   gameKey: string;
@@ -107,10 +108,11 @@ function parseArgs(argv: string[]): Args {
         value !== "r5_disciplined_officials" &&
         value !== "r6_spread_discipline" &&
         value !== "r7_tier_a_discipline" &&
-        value !== "r8_no_a"
+        value !== "r8_no_a" &&
+        value !== "r9_rebuild_a"
       ) {
         throw new Error(
-          `--profile must be one of baseline, r5_disciplined_officials, r6_spread_discipline, r7_tier_a_discipline, r8_no_a (got ${value})`,
+          `--profile must be one of baseline, r5_disciplined_officials, r6_spread_discipline, r7_tier_a_discipline, r8_no_a, r9_rebuild_a (got ${value})`,
         );
       }
       args.profile = value;
@@ -214,7 +216,11 @@ function applyOfficialProfile(candidates: CandidateOutput[], profile: OfficialPr
       if (candidate.marketType === "spread" && candidate.publishOdds > 100) return false;
     }
 
-    if (profile === "r7_tier_a_discipline" || profile === "r8_no_a") {
+    if (
+      profile === "r7_tier_a_discipline" ||
+      profile === "r8_no_a" ||
+      profile === "r9_rebuild_a"
+    ) {
       // R7 builds on R6's spread discipline, then leaves the official lane
       // intact while we test a more selective Tier A label. The actual
       // relabeling happens in a second pass so we don't remove picks.
@@ -226,6 +232,22 @@ function applyOfficialProfile(candidates: CandidateOutput[], profile: OfficialPr
 }
 
 function applyTierProfile(candidates: CandidateOutput[], profile: OfficialProfile): CandidateOutput[] {
+  if (profile === "r9_rebuild_a") {
+    return candidates.map((candidate) => {
+      const promotedToA =
+        candidate.marketType === "total" &&
+        candidate.publishOdds <= 110 &&
+        candidate.rankScore >= 0.8 &&
+        candidate.ev >= 0.12 &&
+        candidate.edge >= 0.1;
+
+      return {
+        ...candidate,
+        tier: promotedToA ? ("A" as const) : ("B" as const),
+      };
+    });
+  }
+
   if (profile === "r8_no_a") {
     return candidates.map((candidate) =>
       candidate.tier === "A"
@@ -436,7 +458,11 @@ async function main(): Promise<void> {
     if (args.profile !== "baseline" && baselineOfficial.length !== official.length) {
       console.log(`  profile trim: ${baselineOfficial.length} -> ${official.length}`);
     }
-    if (args.profile === "r7_tier_a_discipline" || args.profile === "r8_no_a") {
+    if (
+      args.profile === "r7_tier_a_discipline" ||
+      args.profile === "r8_no_a" ||
+      args.profile === "r9_rebuild_a"
+    ) {
       const originalA = filteredOfficial.filter((pick) => pick.tier === "A").length;
       const relabeledA = official.filter((pick) => pick.tier === "A").length;
       if (originalA !== relabeledA) {

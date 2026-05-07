@@ -35,7 +35,8 @@ function useLandingStats() {
 function LandingNav() {
   const { betaMode } = useLaunchConfig();
   return (
-    <nav className="sticky top-0 z-40 border-b border-[#FFC107]/20 bg-[#060D1F]/90 backdrop-blur-md">
+    <nav className="sticky top-0 z-40 border-b border-white/10 bg-[#060D1F]/90 backdrop-blur-xl">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#F5B700]/70 to-transparent" />
       <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-3">
           <img
@@ -173,7 +174,7 @@ function HeroSection() {
         </div>
 
         {/* Capability pillars — replaces the floating perf-stat tiles. */}
-        <div className="mt-16 grid md:grid-cols-3 gap-px bg-[#FFC107]/20 border border-[#FFC107]/30 rounded-sm overflow-hidden">
+        <div className="mt-16 grid md:grid-cols-3 gap-px bg-[#FFC107]/20 border border-[#FFC107]/30 rounded-sm overflow-hidden shadow-[0_24px_60px_rgba(0,0,0,0.24)]">
           {pillars.map((p) => (
             <div key={p.title} className="bg-[#0D1B3E]/95 backdrop-blur p-6">
               <p.icon className="w-6 h-6 text-[#FFC107] mb-3" />
@@ -315,7 +316,7 @@ function TopPickCard({ pick }: { pick: any }) {
   const marketProb = parseFloat(pick.marketProbFair ?? "0.5");
 
   return (
-    <div className="bg-[#060D1F] border border-[#FFC107]/30 p-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] relative overflow-hidden rounded-sm">
+    <div className="brand-panel p-8 relative overflow-hidden rounded-sm">
       <div className="absolute top-0 right-0 w-32 h-32 bg-[#FFC107]/5 rounded-bl-full pointer-events-none" />
 
       <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-6 relative">
@@ -364,7 +365,7 @@ function TopPickCard({ pick }: { pick: any }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 bg-[#0D1B3E] p-4 rounded-sm border border-white/5 relative">
+      <div className="grid grid-cols-3 gap-4 bg-[#0A142E]/80 p-4 rounded-sm border border-white/8 relative">
         <div>
           <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1">Market Prob</div>
           <div className="text-lg font-mono text-white">{(marketProb * 100).toFixed(1)}%</div>
@@ -894,7 +895,7 @@ function LandingFooter() {
 /* ---------------- ROOT ---------------- */
 export function Landing() {
   return (
-    <div className="min-h-screen bg-[#060D1F] text-white selection:bg-[#FFC107] selection:text-[#060D1F]">
+    <div className="brand-shell min-h-screen bg-[#060D1F] text-white selection:bg-[#FFC107] selection:text-[#060D1F]">
       <LandingNav />
       <HeroSection />
       <AccessSummarySection />

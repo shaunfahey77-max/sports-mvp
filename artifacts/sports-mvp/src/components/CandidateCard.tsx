@@ -48,10 +48,10 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
 
   return (
     <Card className={cn(
-      "p-4 border flex flex-col gap-3 transition-colors",
+      "rounded-sm p-4 border flex flex-col gap-3 transition-all duration-200",
       highlight
-        ? "bg-[#0D1B3E] border-[#FFC107]/40 shadow-[0_0_20px_rgba(255,193,7,0.1)]"
-        : "bg-card/80 border-border hover:bg-card"
+        ? "brand-panel border-[#FFC107]/40 shadow-[0_0_28px_rgba(245,183,0,0.12)]"
+        : "brand-panel-muted border-white/10 hover:border-[#FFC107]/24 hover:-translate-y-0.5"
     )}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
@@ -62,7 +62,7 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
             {bet.marketType.toUpperCase()}
           </Badge>
         </div>
-        <Badge className={cn(getTierColorClass(bet.tier), "text-[10px] px-1.5 py-0")}>
+        <Badge className={cn(getTierColorClass(bet.tier), "text-[10px] px-1.5 py-0 rounded-sm")}>
           SCORE {bet.tier}
           <InfoTooltip content={
             bet.tier === 'B' ? 'Score B — strongest currently-publishable internal band.' :
@@ -108,7 +108,7 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
       )}
 
       <div>
-        <div className="text-xl font-bold font-display tracking-tight flex items-baseline gap-2">
+        <div className="text-xl font-semibold tracking-tight flex items-baseline gap-2">
           <span className={cn(sideIsOver || sideIsUnder ? "text-[#7FD4C5]" : "text-white")} style={{ fontFamily: SERIF }}>
             {bet.side.toUpperCase()}
           </span>
@@ -122,7 +122,7 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 pt-3 border-t border-border">
+      <div className="grid grid-cols-2 gap-2 pt-3 border-t border-white/10">
         <div>
           <div className="text-[10px] uppercase text-muted-foreground tracking-wider flex items-center">
             Edge
@@ -162,7 +162,7 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
       {onLogPick && (
         <button
           onClick={onLogPick}
-          className="mt-1 w-full flex items-center justify-center gap-1.5 py-2 rounded border border-[#FFC107]/40 bg-[#FFC107]/5 text-[#FFC107] text-xs font-bold font-display uppercase tracking-[0.18em] hover:bg-[#FFC107]/15 hover:border-[#FFC107]/70 transition-colors"
+          className="mt-1 w-full flex items-center justify-center gap-1.5 py-2 rounded-sm border border-[#FFC107]/40 bg-[#FFC107]/5 text-[#FFC107] text-xs font-bold uppercase tracking-[0.18em] hover:bg-[#FFC107]/15 hover:border-[#FFC107]/70 transition-colors"
           aria-label="Add this candidate to your bet tracker"
         >
           <Plus size={13} strokeWidth={2.5} />

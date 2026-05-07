@@ -45,12 +45,13 @@ export function Navigation() {
   }, []);
 
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-[#1A3066] bg-[#060D1F]/95 backdrop-blur supports-[backdrop-filter]:bg-[#060D1F]/80">
-      <div className="container mx-auto flex h-16 items-center justify-between px-6">
+    <nav className="sticky top-0 z-50 w-full border-b border-white/10 bg-[#060D1F]/92 backdrop-blur-xl supports-[backdrop-filter]:bg-[#060D1F]/80">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#F5B700]/70 to-transparent" />
+      <div className="container mx-auto flex h-[4.5rem] items-center justify-between px-6">
         <Link href="/" aria-label="SportsMVP home" className="flex items-center gap-3 mr-8 shrink-0">
           <img src="/logo-nav.png" alt="SportsMVP" className="h-9 object-contain" />
           <span
-            className="hidden sm:inline text-lg font-bold tracking-wide text-white"
+            className="hidden sm:inline text-xl font-bold tracking-wide text-white"
             style={{ fontFamily: SERIF }}
           >
             SportsMVP
@@ -65,15 +66,18 @@ export function Navigation() {
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  "relative whitespace-nowrap text-sm font-medium transition-colors py-2",
+                  "relative whitespace-nowrap text-sm font-semibold transition-colors py-2",
                   active
-                    ? "text-[#FFC107]"
-                    : "text-white/60 hover:text-white"
+                    ? "text-[#F5B700]"
+                    : "text-white/58 hover:text-white"
                 )}
               >
                 {link.label}
                 {active && (
-                  <span className="absolute -bottom-[17px] left-0 right-0 h-[2px] bg-[#FFC107]" />
+                  <>
+                    <span className="absolute -bottom-[21px] left-0 right-0 h-[2px] bg-[#F5B700]" />
+                    <span className="absolute left-1/2 top-full mt-2 h-1 w-1 -translate-x-1/2 rounded-full bg-[#F5B700]" />
+                  </>
                 )}
               </Link>
             );
@@ -98,12 +102,12 @@ export function Navigation() {
                 <button
                   onClick={() => setMenuOpen((o) => !o)}
                   className={cn(
-                    "flex items-center gap-1.5 text-xs font-bold transition-colors px-2.5 py-1.5 rounded-sm border",
+                    "flex items-center gap-1.5 text-xs font-bold transition-colors px-3 py-2 rounded-sm border shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]",
                     tier === "mvp_pro"
                       ? "text-[#FFC107] border-[#FFC107]/40 hover:bg-[#FFC107]/10"
                       : tier === "mvp"
-                      ? "text-[#C4D0E0] border-[#C4D0E0]/40 hover:bg-[#C4D0E0]/10"
-                      : "text-white/60 border-white/15 hover:bg-white/5"
+                      ? "text-[#C4D0E0] border-[#C4D0E0]/30 hover:bg-[#C4D0E0]/10"
+                      : "text-white/65 border-white/12 hover:bg-white/5"
                   )}
                 >
                   <TierIcon size={13} />

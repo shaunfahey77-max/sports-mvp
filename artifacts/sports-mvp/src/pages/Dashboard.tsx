@@ -75,16 +75,16 @@ function candidateToLogData(bet: CandidateBet): LogPickData {
 
 function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
-    <div className="rounded-lg border border-[#1A3066] bg-[#0D1B3E] overflow-hidden mb-8">
+    <div className="brand-panel rounded-sm overflow-hidden mb-8">
       <button
-        className="w-full flex items-center justify-between px-5 py-3 text-left"
+        className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
         onClick={onToggle}
       >
-        <span className="text-xs font-bold font-display uppercase tracking-widest text-muted-foreground">How to Read Today's Picks</span>
+        <span className="brand-kicker text-white/65">How to Read Today's Picks</span>
         {open ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
       </button>
       {open && (
-        <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground border-t border-[#1A3066] pt-4">
+        <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground border-t border-white/10 pt-5">
           <div>
             <div className="text-[#FFC107] font-bold font-display mb-1 uppercase text-xs tracking-wider">Surface</div>
             <p><strong className="text-foreground">Official</strong> picks have cleared the current publication filters. <strong className="text-foreground">Model Watch</strong> rows stay in the evaluation lane until they earn stronger evidence.</p>
@@ -105,7 +105,7 @@ function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void })
 
 function LockedPickCard() {
   return (
-    <div className="relative rounded-xl border border-[#1A3066] bg-[#0D1B3E] overflow-hidden select-none">
+    <div className="brand-panel-muted relative rounded-sm overflow-hidden select-none">
       {/* Blurred content placeholder */}
       <div className="p-4 blur-sm pointer-events-none">
         <div className="flex items-center justify-between mb-3">
@@ -143,7 +143,7 @@ function LockedPickCard() {
 
 function UpgradeBanner({ pickCount, betaMode }: { pickCount: number; betaMode: boolean }) {
   return (
-    <div className="rounded-sm border border-[#FFC107]/40 bg-gradient-to-r from-[#0D1B3E] to-[#112454] p-5 flex flex-col md:flex-row items-center gap-4 mt-2">
+    <div className="brand-panel rounded-sm p-5 flex flex-col md:flex-row items-center gap-4 mt-2">
       <div className="flex items-center gap-3 flex-1">
         <div className="h-10 w-10 rounded-full bg-[#FFC107]/15 border border-[#FFC107]/40 flex items-center justify-center shrink-0">
           <Crown size={18} className="text-[#FFC107]" />
@@ -154,7 +154,7 @@ function UpgradeBanner({ pickCount, betaMode }: { pickCount: number; betaMode: b
               ? `${pickCount - 1} more pick${pickCount - 1 !== 1 ? 's' : ''} reserved for Members`
               : `${pickCount - 1} more pick${pickCount - 1 !== 1 ? 's' : ''} available today`}
           </div>
-          <div className="text-white/55 text-xs mt-0.5">
+          <div className="brand-copy text-xs mt-0.5">
             {betaMode
               ? "Paid Membership opens when the first market sustains Official status with a clean public record. Join the waitlist and we’ll email you when that happens."
               : "MVP adds the full slate and the supporting edge, EV, and CLV context behind each pick."}
@@ -246,7 +246,7 @@ export function Dashboard() {
 
       {/* Free tier upgrade banner at top */}
       {!isMvp && tier === 'free' && allPicks.length > 1 && (
-        <div className="mb-6 rounded-lg border border-[#FFC107]/25 bg-[#FFC107]/5 px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="brand-panel rounded-sm px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-2 flex-1">
             <Lock size={14} className="text-[#FFC107] shrink-0" />
             {betaMode ? (
@@ -294,7 +294,7 @@ export function Dashboard() {
         </div>
       ) : liveCandidates.length > 0 ? (
         <div className="space-y-6">
-          <div className="bg-[#112454]/60 px-4 py-3 rounded-lg border border-[#1A3066] flex items-start gap-3">
+          <div className="brand-panel rounded-sm px-4 py-3 flex items-start gap-3">
             <span className="relative flex h-2.5 w-2.5 mt-0.5 shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4ADE80] opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#4ADE80]"></span>

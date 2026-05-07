@@ -12,21 +12,23 @@ interface PageLayoutProps {
 
 export function PageLayout({ children, title, subtitle, tagline }: PageLayoutProps) {
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[#060D1F] text-white">
+    <div className="brand-shell min-h-[100dvh] flex flex-col bg-[#060D1F] text-white">
       <Navigation />
 
       {title && (
-        <div className="relative border-b border-[#1A3066] bg-gradient-to-b from-[#0D1B3E] to-[#060D1F] overflow-hidden">
+        <div className="relative overflow-hidden border-b border-white/10 bg-gradient-to-b from-[#0D1B3E] via-[#09132B] to-[#060D1F]">
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#F5B700]/70 to-transparent" />
           <div
-            className="pointer-events-none absolute inset-0 opacity-[0.07]"
+            className="pointer-events-none absolute inset-0 opacity-[0.14]"
             style={{
               backgroundImage:
-                "radial-gradient(circle at 30% 0%, #FFC107 0%, transparent 55%)",
+                "radial-gradient(circle at 18% 0%, rgba(245,183,0,0.9) 0%, transparent 34%), radial-gradient(circle at 82% 8%, rgba(20,40,80,0.9) 0%, transparent 28%)",
             }}
           />
-          <div className="relative container mx-auto px-6 py-16 text-center">
+          <div className="pointer-events-none absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)", backgroundSize: "72px 72px" }} />
+          <div className="relative container mx-auto px-6 py-18 text-center">
             {tagline && (
-              <div className="text-[#FFC107] text-[11px] font-bold tracking-[0.25em] uppercase mb-4">
+              <div className="brand-kicker mb-4">
                 {tagline}
               </div>
             )}
@@ -37,7 +39,7 @@ export function PageLayout({ children, title, subtitle, tagline }: PageLayoutPro
               {title}
             </h1>
             {subtitle && (
-              <p className="text-white/55 text-base md:text-lg max-w-xl mx-auto font-light">
+              <p className="brand-copy text-base md:text-lg max-w-2xl mx-auto font-light">
                 {subtitle}
               </p>
             )}
@@ -45,11 +47,11 @@ export function PageLayout({ children, title, subtitle, tagline }: PageLayoutPro
         </div>
       )}
 
-      <main className="flex-1 bg-[#060D1F]">
+      <main className="relative flex-1 bg-transparent">
         <div className="container mx-auto px-6 py-12">{children}</div>
       </main>
 
-      <footer className="border-t border-[#1A3066] bg-[#060D1F] py-10">
+      <footer className="border-t border-white/10 bg-[#060D1F]/90 py-10 backdrop-blur-sm">
         <div className="container mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-sm">
           <div className="flex items-center gap-3">
             <img src="/logo-nav.png" alt="SportsMVP" className="h-8 object-contain opacity-70" />

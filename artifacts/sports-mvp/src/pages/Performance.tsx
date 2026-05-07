@@ -45,12 +45,12 @@ const MARKET_COLORS: Record<string, string> = {
 
 function MethodologyDisclosure({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
-    <div className="rounded-sm border border-[#1A3066] bg-[#0D1B3E] overflow-hidden mb-10">
+    <div className="brand-panel rounded-sm overflow-hidden mb-10">
       <button
         className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
         onClick={onToggle}
       >
-        <span className="flex items-center gap-2.5 text-[11px] font-bold uppercase tracking-[0.2em] text-[#FFC107]">
+        <span className="flex items-center gap-2.5 brand-kicker">
           <span className="w-1 h-1 rounded-full bg-[#FFC107]" />
           The Methodology
         </span>
@@ -115,15 +115,15 @@ export function Performance() {
 
   return (
     <PageLayout>
-      <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-[#1A3066]">
+        <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-white/10">
         <div>
-          <div className="text-[#FFC107] text-[11px] font-bold tracking-[0.25em] uppercase mb-3">
+          <div className="brand-kicker mb-3">
             Official Picks — Public Track Record
           </div>
           <h1 className="text-4xl md:text-5xl font-bold text-white leading-tight" style={{ fontFamily: SERIF }}>
             Performance
           </h1>
-          <p className="text-white/55 mt-3 text-base max-w-xl">
+          <p className="brand-copy mt-3 text-base max-w-xl">
             Every Official pick is graded the next morning and kept in the public record.
           </p>
           <p className="text-white/45 mt-2 text-sm max-w-xl">
@@ -331,10 +331,10 @@ export function Performance() {
 
 function SectionLabel({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
-    <div className="flex items-center gap-2 mb-5 text-[11px] font-bold uppercase tracking-[0.2em] text-white/40">
+    <div className="flex items-center gap-2 mb-5 text-[11px] font-bold uppercase tracking-[0.2em] text-white/50">
       <span className="text-[#FFC107]">{icon}</span>
       {text}
-      <span className="flex-1 h-px bg-[#1A3066] ml-2" />
+      <span className="flex-1 h-px bg-white/10 ml-2" />
     </div>
   );
 }
@@ -345,7 +345,7 @@ function HeroStat({
   label: string; value: string; trend?: "positive" | "negative" | "neutral"; tooltip?: string; subLabel?: string;
 }) {
   return (
-    <div className="bg-[#0D1B3E] p-6 hover:bg-[#112454] transition-colors">
+    <div className="brand-panel p-6 hover:border-[#FFC107]/25 transition-colors">
       <div className="text-[10px] uppercase tracking-[0.2em] text-white/40 mb-3 flex items-center">
         {label}
         {tooltip && <InfoTooltip content={tooltip} />}
@@ -373,7 +373,7 @@ function SecondaryStat({
   label: string; value: string; trend?: "positive" | "negative" | "neutral"; tooltip?: string; subLabel?: string;
 }) {
   return (
-    <div className="bg-[#0D1B3E] border border-[#1A3066] rounded-sm p-5 hover:border-[#FFC107]/30 transition-colors">
+    <div className="brand-panel-muted rounded-sm p-5 hover:border-[#FFC107]/30 transition-colors">
       <div className="text-[10px] uppercase tracking-widest text-white/40 mb-2 flex items-center">
         {label}
         {tooltip && <InfoTooltip content={tooltip} />}
@@ -407,7 +407,7 @@ function DistributionPanel({
   const total = entries.reduce((sum, [, count]) => sum + (count as number), 0);
 
   return (
-    <div className="bg-[#0D1B3E] border border-[#1A3066] rounded-sm p-6">
+    <div className="brand-panel-muted rounded-sm p-6">
       <h3 className="text-[11px] font-bold uppercase tracking-[0.2em] text-[#FFC107] mb-5">
         {title}
       </h3>

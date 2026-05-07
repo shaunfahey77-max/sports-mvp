@@ -56,7 +56,7 @@ export function TopPickCallout({ picks = [], candidates = [] }: TopPickCalloutPr
   const matchup = parseGameMatchup(gameKey, league);
 
   return (
-    <div className="relative rounded-xl border border-[#FFC107]/30 bg-gradient-to-br from-[#0D1B3E] via-[#112454] to-[#0D1B3E] p-5 shadow-[0_0_40px_rgba(255,193,7,0.08)] overflow-hidden mb-8">
+    <div className="brand-panel relative rounded-sm p-5 shadow-[0_0_40px_rgba(255,193,7,0.08)] overflow-hidden mb-8">
       <div className="absolute inset-0 opacity-[0.03] pointer-events-none"
         style={{ backgroundImage: 'repeating-linear-gradient(45deg, #FFC107 0, #FFC107 1px, transparent 0, transparent 50%)', backgroundSize: '12px 12px' }}
       />
@@ -65,9 +65,9 @@ export function TopPickCallout({ picks = [], candidates = [] }: TopPickCalloutPr
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-3">
             <Star size={14} className="text-[#FFC107] fill-[#FFC107]" />
-            <span className="text-[#FFC107] text-[11px] font-bold tracking-[0.25em] uppercase">Top Pick of the Day</span>
-            <Badge className="bg-[#FFC107] text-[#060D1F] text-[10px] font-bold border-transparent px-1.5 py-0">
-              TIER {tier}
+            <span className="brand-kicker">Official Spotlight</span>
+            <Badge className="bg-[#FFC107] text-[#060D1F] text-[10px] font-bold border-transparent px-1.5 py-0 rounded-sm">
+              SCORE {tier}
             </Badge>
           </div>
 
@@ -96,7 +96,7 @@ export function TopPickCallout({ picks = [], candidates = [] }: TopPickCalloutPr
             <Badge className={cn(getMarketColorClass(market), "text-[10px] px-1.5 py-0")}>
               {market.toUpperCase()}
             </Badge>
-            <div className="text-2xl font-black tracking-tight flex items-baseline gap-2" style={{ fontFamily: SERIF }}>
+            <div className="text-2xl font-semibold tracking-tight flex items-baseline gap-2" style={{ fontFamily: SERIF }}>
               <span className="text-white">{side.toUpperCase()}</span>
               {publishLine !== null && publishLine !== undefined && (
                 <span className="text-white/50 text-xl">{publishLine > 0 ? `+${publishLine}` : publishLine}</span>

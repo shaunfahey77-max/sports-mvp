@@ -15,7 +15,7 @@ export function NoOfficialPicksSection({
   if (section.kind === "member-board") {
     return (
       <div className="space-y-6" data-testid="model-watch-board-section">
-        <div className="bg-[#0B142E]/70 px-4 py-3 rounded-lg border border-dashed border-white/20 flex items-start gap-3">
+        <div className="brand-panel-muted px-4 py-3 rounded-sm border-dashed flex items-start gap-3">
           <Eye size={14} className="text-white/60 mt-0.5 shrink-0" />
           <div>
             <div
@@ -55,7 +55,7 @@ export function NoOfficialPicksSection({
   if (section.kind === "free-fallback") {
     return (
       <div className="space-y-6" data-testid="fallback-section">
-        <div className="bg-[#0B142E]/70 px-4 py-3 rounded-lg border border-dashed border-white/20 flex items-start gap-3">
+        <div className="brand-panel-muted px-4 py-3 rounded-sm border-dashed flex items-start gap-3">
           <Eye size={14} className="text-white/60 mt-0.5 shrink-0" />
           <div>
             <div className="text-sm font-bold text-white/80 mb-0.5">
@@ -84,7 +84,7 @@ export function NoOfficialPicksSection({
 
   return (
     <div
-      className="py-20 text-center border border-border rounded-xl bg-card/30"
+      className="brand-panel-muted py-20 text-center rounded-sm"
       data-testid="no-action-section"
     >
       <img
