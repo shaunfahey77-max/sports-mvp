@@ -232,7 +232,7 @@ function AccessSummarySection() {
             <ul className="space-y-2.5 text-sm text-white/75">
               <li className="flex items-start gap-2.5">
                 <Check size={16} className="text-[#388E3C] shrink-0 mt-0.5" />
-                Today's top Tier-A Official pick — when one clears (delayed)
+                Today's unlocked Official pick — when one clears (delayed)
               </li>
               <li className="flex items-start gap-2.5">
                 <Check size={16} className="text-[#388E3C] shrink-0 mt-0.5" />
@@ -321,7 +321,7 @@ function TopPickCard({ pick }: { pick: any }) {
       <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-6 relative">
         <div className="flex items-center gap-3">
           <span className="px-3 py-1 bg-[#FFC107] text-[#060D1F] text-xs font-bold uppercase tracking-widest rounded-sm">
-            Tier {pick.tier ?? "A"}
+            Official Pick
           </span>
           <span className="text-white/50 text-sm uppercase tracking-wider">
             {pick.league?.toUpperCase()} {pick.market}
@@ -385,7 +385,7 @@ function TopPickCard({ pick }: { pick: any }) {
           marketProb,
           edge,
           ev,
-          tier: pick.tier ?? "A",
+          tier: pick.tier ?? "B",
           rankScore: parseFloat(pick.rankScore ?? "0.8"),
           market: pick.market ?? "total",
           league: pick.league ?? "nhl",
@@ -403,7 +403,7 @@ function TodaysTopPick() {
   const { data, isLoading } = useQuery({
     queryKey: ["landing-top-pick", today],
     queryFn: async () => {
-      const res = await axios.get(`/picks?date=${today}&tier=A&result=pending&limit=1`);
+      const res = await axios.get(`/picks?date=${today}&result=pending&limit=1`);
       return res.data;
     },
     staleTime: 5 * 60 * 1000,
@@ -451,7 +451,7 @@ function TodaysTopPick() {
                   Awaiting Today's Official Slate
                 </div>
                 <p className="text-white/60 text-sm leading-relaxed">
-                  No Tier-A Official play has cleared today's bar yet. That is
+                  No Official play has cleared today's bar yet. That is
                   part of the discipline. Members still see the broader Model
                   Watch lane while evaluation continues through the day.
                 </p>
@@ -489,9 +489,9 @@ function MethodologySection() {
     {
       step: "03",
       title: "Tiered Grading",
-      desc: "Every candidate is tiered A / B / C by composite rank score. Markets earn the Official label only when calibration, edge, and CLV clear the current promotion bar. Newer or recovering markets stay in Model Watch and are graded separately against the same evaluation standards.",
+      desc: "Every candidate is ranked by a composite score. Markets earn the Official label only when calibration, edge, and CLV clear the current promotion bar. Newer or recovering markets stay in Model Watch and are graded separately against the same evaluation standards.",
       icon: Shield,
-      meta: ["A/B/C tiers", "Official + Model Watch lanes", "CLV tracked"],
+      meta: ["Composite score bands", "Official + Model Watch lanes", "CLV tracked"],
     },
   ];
 
@@ -580,7 +580,7 @@ function LiveOutputStrip() {
               <div><span className="text-slate-500">model_prob:</span> 56.12% <span className="text-slate-500">(calibrated)</span></div>
               <div><span className="text-slate-500">edge:</span> <span className="text-[#388E3C]">+3.74%</span></div>
               <div><span className="text-slate-500">ev:</span> <span className="text-[#388E3C]">+7.14%</span></div>
-              <div><span className="text-slate-500">tier:</span> <span className="text-[#FFC107]">"A"</span></div>
+              <div><span className="text-slate-500">surface:</span> <span className="text-[#FFC107]">"official"</span></div>
             </div>
             <div className="flex text-slate-500 pt-2 border-t border-[#1A3066]/50"><span className="w-20 shrink-0">14:02:46</span><span>[INFO] publishing_to_dashboard... [OK]</span></div>
             <div className="flex"><span className="w-20 shrink-0 text-slate-500">14:02:47</span><span className="text-slate-400 animate-pulse">awaiting_next_tick...</span></div>
@@ -734,8 +734,8 @@ function MembershipSection() {
       ctaHref: "/sign-up",
       ctaStyle: "border border-white/20 hover:bg-white/5 text-white",
       features: [
-        { ok: true, text: "Today's top Tier-A Official pick — when one clears (delayed)" },
-        { ok: true, text: "Public tier badge + final result" },
+          { ok: true, text: "Today's unlocked Official pick — when one clears (delayed)" },
+          { ok: true, text: "Public result + grading record" },
         { ok: false, text: "No edge / EV / probability metrics" },
         { ok: false, text: "No full slate or history" },
       ],

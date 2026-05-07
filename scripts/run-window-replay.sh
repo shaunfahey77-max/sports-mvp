@@ -16,11 +16,7 @@ fi
 export DATABASE_URL
 
 if [[ "$#" -gt 0 ]]; then
-  if [[ "$#" -eq 1 && "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    corepack pnpm --dir "$API_DIR" exec node --import tsx ./scripts/showTodaysSlate.ts "--date=$1"
-  else
-    corepack pnpm --dir "$API_DIR" exec node --import tsx ./scripts/showTodaysSlate.ts "$@"
-  fi
+  corepack pnpm --dir "$API_DIR" exec node --import tsx ./scripts/replayWindowPipeline.ts "$@"
 else
-  corepack pnpm --dir "$API_DIR" run today:slate
+  corepack pnpm --dir "$API_DIR" run replay:window
 fi

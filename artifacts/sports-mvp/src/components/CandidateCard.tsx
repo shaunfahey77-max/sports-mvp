@@ -63,12 +63,12 @@ export function CandidateCard({ bet, highlight = false, onLogPick }: { bet: Cand
           </Badge>
         </div>
         <Badge className={cn(getTierColorClass(bet.tier), "text-[10px] px-1.5 py-0")}>
-          TIER {bet.tier}
+          SCORE {bet.tier}
           <InfoTooltip content={
-            bet.tier === 'A' ? 'Tier A — Strongest edge. Highest priority bet.' :
-            bet.tier === 'B' ? 'Tier B — Solid play. Good risk/reward.' :
-            bet.tier === 'C' ? 'Tier C — Marginal edge. Use reduced sizing.' :
-            'PASS — No actionable edge.'
+            bet.tier === 'B' ? 'Score B — strongest currently-publishable internal band.' :
+            bet.tier === 'C' ? 'Score C — lower internal rank band. Evaluation can continue without surfacing it officially.' :
+            bet.tier === 'A' ? 'Legacy Score A — retained only in older data while the premium band is being rebuilt.' :
+            'PASS — no publishable edge cleared the current rules.'
           } />
         </Badge>
       </div>

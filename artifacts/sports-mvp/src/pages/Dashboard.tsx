@@ -86,16 +86,16 @@ function HowItWorks({ open, onToggle }: { open: boolean; onToggle: () => void })
       {open && (
         <div className="px-5 pb-5 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-muted-foreground border-t border-[#1A3066] pt-4">
           <div>
-            <div className="text-[#FFC107] font-bold font-display mb-1 uppercase text-xs tracking-wider">Tier</div>
-            <p>Picks are ranked <strong className="text-foreground">A, B, or C</strong> based on the model's composite rank score. Tier A reflects the strongest signal on the current slate, with B and C trailing behind it.</p>
+            <div className="text-[#FFC107] font-bold font-display mb-1 uppercase text-xs tracking-wider">Surface</div>
+            <p><strong className="text-foreground">Official</strong> picks have cleared the current publication filters. <strong className="text-foreground">Model Watch</strong> rows stay in the evaluation lane until they earn stronger evidence.</p>
           </div>
           <div>
             <div className="text-[#4ADE80] font-bold font-display mb-1 uppercase text-xs tracking-wider">Edge &amp; EV</div>
             <p><strong className="text-foreground">Edge</strong> is the gap between our calibrated probability and the book's true fair probability (after removing the vig). <strong className="text-foreground">EV</strong> is the estimated profit per $100 wagered. Both should be positive to bet.</p>
           </div>
           <div>
-            <div className="text-[#FFC107] font-bold font-display mb-1 uppercase text-xs tracking-wider">Matchup</div>
-            <p>The highlighted team or side is our pick. <strong className="text-foreground">HOME</strong> = home team, <strong className="text-foreground">AWAY</strong> = away team. For totals, <strong className="text-foreground">OVER/UNDER</strong> refers to the posted total. Odds are shown in American format.</p>
+            <div className="text-[#FFC107] font-bold font-display mb-1 uppercase text-xs tracking-wider">Score Band</div>
+            <p>The letter badge is an internal score band used for sorting. The more important distinction on this page is whether a pick is on the <strong className="text-foreground">Official</strong> surface or still in <strong className="text-foreground">Model Watch</strong>.</p>
           </div>
         </div>
       )}

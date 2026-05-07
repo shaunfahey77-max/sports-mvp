@@ -24,12 +24,6 @@ const MARKET_NOTES: Record<string, string> = {
   nhl_moneyline: "NHL moneylines have strong model calibration driven by historical goaltender and shot-quality metrics.",
 };
 
-const TIER_CONTEXT: Record<string, string> = {
-  A: "Rank score ≥ 0.65 — top percentile across all markets scored today.",
-  B: "Rank score ≥ 0.50 — solid play with above-threshold edge and EV.",
-  C: "Rank score ≥ 0.35 — marginal edge; consider half-size bet.",
-};
-
 export function buildWhyPoints(p: WhyPickInput): string[] {
   const bullets: string[] = [];
 
@@ -44,8 +38,9 @@ export function buildWhyPoints(p: WhyPickInput): string[] {
   const oddsStr = p.publishOdds > 0 ? `+${p.publishOdds}` : `${p.publishOdds}`;
   bullets.push(`At ${oddsStr} odds → +${evPct}% expected return per unit wagered`);
 
-  const tierNote = TIER_CONTEXT[p.tier];
-  if (tierNote) bullets.push(tierNote);
+  if (Number.isFinite(p.rankScore)) {
+    bullets.push(`Composite score: ${p.rankScore.toFixed(2)} on today's scoring scale`);
+  }
 
   const marketNote = MARKET_NOTES[`${p.league}_${p.market}`];
   if (marketNote) bullets.push(marketNote);
@@ -74,7 +69,7 @@ export function WhyThisPickPopover({ input }: { input: WhyPickInput }) {
       >
         <div className="px-4 py-3 border-b border-[#1A3066] flex items-center gap-2">
           <Sparkles size={13} className="text-[#FFC107]" />
-          <span className="text-white text-xs font-black uppercase tracking-widest">Why this is a premium pick</span>
+          <span className="text-white text-xs font-black uppercase tracking-widest">Why this pick surfaced</span>
         </div>
         <ul className="px-4 py-3 flex flex-col gap-2.5">
           {points.map((point, i) => (

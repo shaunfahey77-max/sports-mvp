@@ -4,7 +4,15 @@
  */
 
 import type { League, MarketType } from "../config/scoringModelConfig";
-import { MAX_EV_CAP, MARKET_DISABLED, MARKET_MODEL_WATCH_ONLY } from "../config/scoringModelConfig";
+import {
+  MAX_EV_CAP,
+  MARKET_DISABLED,
+  MARKET_MODEL_WATCH_ONLY,
+  OFFICIAL_MAX_NBA_SPREAD_ABS,
+  OFFICIAL_MAX_PLUS_MONEY,
+  OFFICIAL_MAX_SPREAD_PLUS_MONEY,
+  RETIRE_LIVE_TIER_A,
+} from "../config/scoringModelConfig";
 import { computeMarketProbFair, computeMarketQuality } from "./marketProb";
 import { calibrateProb, getCalibrationParams, getCalibrationConfidence } from "./calibration";
 import { computeEdge, computeEV } from "./expectedValue";
@@ -402,6 +410,57 @@ export function isOfficialCandidate(
   return candidate.tier !== "PASS";
 }
 
+function applyOfficialLaneDiscipline(
+  candidate: CandidateOutput & { surfaceStatus?: ResolvedSurfaceStatus },
+): CandidateOutput & { surfaceStatus?: ResolvedSurfaceStatus } {
+  if (candidate.tier === "PASS") return candidate;
+  if (candidate.surfaceStatus === "suppressed" || candidate.surfaceStatus === "model_watch") {
+    return candidate;
+  }
+
+  if (candidate.publishOdds > OFFICIAL_MAX_PLUS_MONEY) {
+    return {
+      ...candidate,
+      tier: "PASS",
+      selectionReason: "official_profile_filtered",
+    };
+  }
+
+  if (
+    candidate.marketType === "spread" &&
+    candidate.publishOdds > OFFICIAL_MAX_SPREAD_PLUS_MONEY
+  ) {
+    return {
+      ...candidate,
+      tier: "PASS",
+      selectionReason: "official_profile_filtered",
+    };
+  }
+
+  if (
+    candidate.league === "nba" &&
+    candidate.marketType === "spread" &&
+    candidate.publishLine != null &&
+    Math.abs(candidate.publishLine) > OFFICIAL_MAX_NBA_SPREAD_ABS
+  ) {
+    return {
+      ...candidate,
+      tier: "PASS",
+      selectionReason: "official_profile_filtered",
+    };
+  }
+
+  if (RETIRE_LIVE_TIER_A && candidate.tier === "A") {
+    return {
+      ...candidate,
+      tier: "B",
+      selectionReason: "medium_rank_score",
+    };
+  }
+
+  return candidate;
+}
+
 export async function scorePicks(
   games: GameMarketInput[],
   markets: MarketType[],
@@ -516,12 +575,13 @@ export function applyTieringToCandidates(
       }
     }
 
-    return {
+    const candidate = {
       ...c,
       rankScore,
       surfaceStatus: resolvedSurfaceStatus,
       tier,
       selectionReason,
     };
+    return applyOfficialLaneDiscipline(candidate);
   });
 }

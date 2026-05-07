@@ -12,6 +12,7 @@
  *   tsx src/scripts/validateGateChange.ts --proposal=R1
  *   tsx src/scripts/validateGateChange.ts --proposal=R2
  *   tsx src/scripts/validateGateChange.ts --proposal=R3-nhl-spread-isotonic
+ *   tsx src/scripts/validateGateChange.ts --proposal=R4-open-all
  *   tsx src/scripts/validateGateChange.ts --proposal=R1 --window-start=2026-03-12 --window-end=2026-04-27
  *
  * Proposal "R2" demonstrates the in-memory sigmoidA override path: the proposed
@@ -101,7 +102,7 @@ function parseArgs(): Args {
     else if (a.startsWith("--window-end=")) args.windowEnd = a.slice("--window-end=".length);
     else if (a === "--help" || a === "-h") {
       console.log(
-        "Usage: tsx src/scripts/validateGateChange.ts --proposal=R1|R2|R3-nhl-spread-isotonic [--window-start=YYYY-MM-DD] [--window-end=YYYY-MM-DD]"
+        "Usage: tsx src/scripts/validateGateChange.ts --proposal=R1|R2|R3-nhl-spread-isotonic|R4-open-all [--window-start=YYYY-MM-DD] [--window-end=YYYY-MM-DD]"
       );
       process.exit(0);
     }
@@ -242,9 +243,22 @@ async function applyProposal(
       cfg.isotonicBucketsOverride.nhl_spread = r3.refitBuckets;
       return { cfg, r3 };
     }
+    case "R4-open-all":
+      // Product-direction replay (2026-05-07): clear the legacy hard-coded
+      // suppression/watch-only maps so every currently modeled market is
+      // allowed to flow through normal tiering. This is read-only and lets us
+      // quantify what the daily slate would have looked like under the open
+      // market plan without mutating production data.
+      for (const key of Object.keys(cfg.marketDisabled)) {
+        delete cfg.marketDisabled[key];
+      }
+      for (const key of Object.keys(cfg.marketWatchOnly)) {
+        delete cfg.marketWatchOnly[key];
+      }
+      return { cfg };
     default:
       console.error(
-        `ERROR: unknown proposal '${name}' (supported: R1, R2, R3-nhl-spread-isotonic)`
+        `ERROR: unknown proposal '${name}' (supported: R1, R2, R3-nhl-spread-isotonic, R4-open-all)`
       );
       process.exit(2);
   }
@@ -696,6 +710,8 @@ interface CandidateForReplay {
   ev: number;
   rankScore: number;
   marketQuality: number;
+  persistedTier?: Tier;
+  persistedSelectionReason?: string | null;
   /** Raw model probability persisted on candidate_bets — input to recompute under sigmoidA override. */
   modelProbRaw: number;
   /** Fair market probability persisted on candidate_bets — second input to edge recompute. */
@@ -731,6 +747,89 @@ interface ReplayOutcome {
   effectiveEdge: number;
   effectiveEv: number;
   effectiveRankScore: number;
+}
+
+function replayPersistedBaseline(c: CandidateForReplay): ReplayOutcome {
+  const persistedTier = c.persistedTier ?? "PASS";
+  const persistedReason = c.persistedSelectionReason ?? null;
+
+  if (persistedReason === "model_watch_only") {
+    return {
+      rawTier: persistedTier === "PASS" ? "PASS" : persistedTier,
+      rawReason: persistedReason,
+      finalTier: "PASS",
+      finalReason: "model_watch_only",
+      surfaced: true,
+      officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
+    };
+  }
+
+  if (
+    persistedReason === "market_disabled" ||
+    persistedReason === "odds_out_of_range" ||
+    persistedReason === "market_quality_too_low" ||
+    persistedReason === "insufficient_edge" ||
+    persistedReason === "negative_ev" ||
+    persistedReason === "rank_score_below_threshold"
+  ) {
+    return {
+      rawTier: "PASS",
+      rawReason: persistedReason,
+      finalTier: "PASS",
+      finalReason: persistedReason,
+      surfaced: false,
+      officialSurfaced: false,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
+    };
+  }
+
+  if (persistedTier === "A" || persistedTier === "B" || persistedTier === "C") {
+    return {
+      rawTier: persistedTier,
+      rawReason: persistedReason,
+      finalTier: persistedTier,
+      finalReason: persistedReason,
+      surfaced: true,
+      officialSurfaced: true,
+      effectiveEdge: c.edge,
+      effectiveEv: c.ev,
+      effectiveRankScore: c.rankScore,
+    };
+  }
+
+  return {
+    rawTier: "PASS",
+    rawReason: persistedReason,
+    finalTier: "PASS",
+    finalReason: persistedReason,
+    surfaced: false,
+    officialSurfaced: false,
+    effectiveEdge: c.edge,
+    effectiveEv: c.ev,
+    effectiveRankScore: c.rankScore,
+  };
+}
+
+interface SnapshotForReplay {
+  gameKey: string;
+  status: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  publishSpread: string | null;
+  publishTotal: string | null;
+  homeCloseMl: string | null;
+  awayCloseMl: string | null;
+  closeSpread: string | null;
+  closeSpreadLine: string | null;
+  closeAwaySpreadLine: string | null;
+  closeTotal: string | null;
+  closeOverLine: string | null;
+  closeUnderLine: string | null;
 }
 
 /**
@@ -1252,7 +1351,24 @@ async function main(): Promise<void> {
 
   // Load candidate_bets in the frozen window (created_at-based).
   const rawCandidates = await db
-    .select()
+    .select({
+      id: candidateBetsTable.id,
+      gameKey: candidateBetsTable.gameKey,
+      league: candidateBetsTable.league,
+      marketType: candidateBetsTable.marketType,
+      side: candidateBetsTable.side,
+      publishOdds: candidateBetsTable.publishOdds,
+      publishLine: candidateBetsTable.publishLine,
+      modelProbRaw: candidateBetsTable.modelProbRaw,
+      marketProbFair: candidateBetsTable.marketProbFair,
+      edge: candidateBetsTable.edge,
+      ev: candidateBetsTable.ev,
+      rankScore: candidateBetsTable.rankScore,
+      tier: candidateBetsTable.tier,
+      marketQuality: candidateBetsTable.marketQuality,
+      selectionReason: candidateBetsTable.selectionReason,
+      createdAt: candidateBetsTable.createdAt,
+    })
     .from(candidateBetsTable)
     .where(
       and(
@@ -1265,12 +1381,27 @@ async function main(): Promise<void> {
 
   // Batch-fetch matching snapshots (for realized result + close-odds).
   const gameKeys = Array.from(new Set(rawCandidates.map((r) => r.gameKey)));
-  const snapByKey = new Map<string, typeof gameSnapshotsTable.$inferSelect>();
+  const snapByKey = new Map<string, SnapshotForReplay>();
   const CHUNK = 500;
   for (let i = 0; i < gameKeys.length; i += CHUNK) {
     const slice = gameKeys.slice(i, i + CHUNK);
     const rows = await db
-      .select()
+      .select({
+        gameKey: gameSnapshotsTable.gameKey,
+        status: gameSnapshotsTable.status,
+        homeScore: gameSnapshotsTable.homeScore,
+        awayScore: gameSnapshotsTable.awayScore,
+        publishSpread: gameSnapshotsTable.publishSpread,
+        publishTotal: gameSnapshotsTable.publishTotal,
+        homeCloseMl: gameSnapshotsTable.homeCloseMl,
+        awayCloseMl: gameSnapshotsTable.awayCloseMl,
+        closeSpread: gameSnapshotsTable.closeSpread,
+        closeSpreadLine: gameSnapshotsTable.closeSpreadLine,
+        closeAwaySpreadLine: gameSnapshotsTable.closeAwaySpreadLine,
+        closeTotal: gameSnapshotsTable.closeTotal,
+        closeOverLine: gameSnapshotsTable.closeOverLine,
+        closeUnderLine: gameSnapshotsTable.closeUnderLine,
+      })
       .from(gameSnapshotsTable)
       .where(inArray(gameSnapshotsTable.gameKey, slice));
     for (const r of rows) snapByKey.set(r.gameKey, r);
@@ -1296,12 +1427,17 @@ async function main(): Promise<void> {
       edge: parseFloat(c.edge),
       ev: parseFloat(c.ev),
       rankScore: parseFloat(c.rankScore),
+      persistedTier: c.tier as Tier,
+      persistedSelectionReason: c.selectionReason,
       marketQuality: parseFloat(c.marketQuality),
       modelProbRaw: parseFloat(c.modelProbRaw),
       marketProbFair: parseFloat(c.marketProbFair),
     };
 
-    const baseOut = replayAssignTier(replayInput, baseCfg);
+    const baseOut =
+      args.proposal === "R4-open-all"
+        ? replayPersistedBaseline(replayInput)
+        : replayAssignTier(replayInput, baseCfg);
     const propOut = replayAssignTier(replayInput, propCfg);
 
     s.baselineRawTier[baseOut.rawTier]++;

@@ -8,7 +8,9 @@
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "today:slate": "node --import tsx ./scripts/showTodaysSlate.ts"
+    "today:slate": "node --import tsx ./scripts/showTodaysSlate.ts",
+    "suppression:report": "node --import tsx ./scripts/pickSuppressionReport.ts",
+    "replay:window": "node --import tsx ./scripts/replayWindowPipeline.ts"
   },
   "dependencies": {
     "@clerk/express": "^2.0.8",

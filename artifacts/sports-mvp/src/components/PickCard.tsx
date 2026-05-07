@@ -64,12 +64,12 @@ export function PickCard({ pick, highlight = false, onLogPick }: { pick: ScoredP
           </Badge>
         </div>
         <Badge className={cn(getTierColorClass(pick.tier), "text-[10px] px-1.5 py-0")}>
-          TIER {pick.tier}
+          SCORE {pick.tier}
           <InfoTooltip content={
-            pick.tier === 'A' ? 'Tier A — Strongest edge. Model confidence is highest.' :
-            pick.tier === 'B' ? 'Tier B — Solid play. Good edge with strong market quality.' :
-            pick.tier === 'C' ? 'Tier C — Marginal edge. Bet smaller if at all.' :
-            'PASS — No actionable edge found.'
+            pick.tier === 'B' ? 'Score B — current official band. The pick cleared the live publication filters.' :
+            pick.tier === 'C' ? 'Score C — lower internal rank band. Logged for record-keeping but not treated as premium.' :
+            pick.tier === 'A' ? 'Legacy Score A — retained only in historical records while the premium band is being rebuilt.' :
+            'PASS — no publishable edge cleared the current rules.'
           } />
         </Badge>
       </div>

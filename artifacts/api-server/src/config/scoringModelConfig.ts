@@ -55,6 +55,24 @@ export const TIER_A_THRESHOLD_OVERRIDE: Partial<Record<string, number>> = {
   nba_total: 0.80,
 };
 
+// Official-lane discipline layer. These rules do NOT disable any markets and
+// do NOT affect model generation. They only decide which already-scored,
+// already-eligible rows are trustworthy enough to surface as Official picks.
+//
+// Calibrated from the 2026-04-28 → 2026-05-07 replay work:
+// - long plus-money dogs above +150 were the single weakest surfaced slice
+// - plus-money spread exposure above +100 continued to drag the official lane
+// - extreme NBA spread points beyond 12.5 behaved like a separate weak tail
+//
+// We also retire the current "A" promotion for now. The replay evidence
+// showed the existing A label underperforming the B band, so live official
+// picks are relabeled to B until a stricter premium tier is rebuilt from
+// evidence rather than legacy thresholds.
+export const OFFICIAL_MAX_PLUS_MONEY = 150;
+export const OFFICIAL_MAX_SPREAD_PLUS_MONEY = 100;
+export const OFFICIAL_MAX_NBA_SPREAD_ABS = 12.5;
+export const RETIRE_LIVE_TIER_A = true;
+
 // Odds-range guardrail. When enabled for a given league, candidates whose
 // American publish_odds fall outside these bounds are forced to PASS with
 // selection_reason 'odds_out_of_range' before tier assignment. This blocks
@@ -219,129 +237,25 @@ export const LEAGUE_MARKET_QUALITY = {
 } as const;
 
 /**
- * Hard market gate. When `true`, every candidate for that league_market
- * is force-PASSED with selection_reason="market_disabled" before any other
- * risk control runs. Use this (not a contrived MARKET_MIN_EDGE) when the
- * intent is "do not surface this market to users at all".
+ * Hard market gate.
  *
- * Set during Phase 0.75B based on KPI report findings:
- *   - nhl_moneyline: 0/6 resolved post-fix (-100% ROI)
- *   - nba_moneyline: 22% wr, -47% ROI on 9 resolved post-fix
- *
- * Phase 0.75C addition (post-fix evidence, both cohorts agree):
- *   - nhl_total: PRE 37.5% wr / -21.3% ROI on 25 resolved;
- *                POST 30.8% wr / -21.5% ROI on 26 resolved.
- *                Brier 0.240 (worse than naive 0.27 threshold) and
- *                26.6% of picks carry edge >0.20 — clear calibration
- *                drift, not bad luck. Per-market MIN_EDGE of 0.04 is
- *                not enough; gate it.
- *
- * 2026-04-26 calibration-review addition (NBA spread demote from Official):
- *   - nba_spread: PRE clean 175 resolved (67-105-3) → 39.0% wr,
- *                 -21.46% ROI, Brier skill -3.97% vs market_prob_fair.
- *                 Edge→winRate monotonicity inverted on the large-n
- *                 cohort (corr -0.933): the top-edge bucket posted
- *                 30.0% wr / -38.41% ROI, the lowest-edge bucket
- *                 42.6% wr. POST clean is only 12 resolved (well below
- *                 minResolved=50) and POST monotonicity also inverts
- *                 on n=1-3 buckets. CLV sample size is 0 across all
- *                 NBA spread rows (separate telemetry investigation),
- *                 so the standard CLV half of the promotion gate is
- *                 inapplicable. Disabling per the calibration-review
- *                 conclusion and explicit user direction. Re-evaluate
- *                 only after a model recalibration is performed AND a
- *                 fresh post-recalibration sample of resolved>=50
- *                 clears the promotion bar.
- *
- * Re-evaluate after the next 7-day post-fix settlement window.
+ * Keep this empty by default. Product direction on 2026-05-07 is the
+ * original daily-picks plan across the current modeled markets, with no
+ * legacy config-level suppression starving the slate. If a market needs to be
+ * suppressed again, do it explicitly via `market_registry`, not through this
+ * fallback map.
  */
-export const MARKET_DISABLED: Partial<Record<string, boolean>> = {
-  nhl_moneyline: true,
-  nba_moneyline: true,
-  // nba_spread: lifted out of MARKET_DISABLED on 2026-04-28 (R2 recovery)
-  // and routed into MARKET_MODEL_WATCH_ONLY below alongside the calibration
-  // relaxation in calibration.ts (sigmoidA 0.85 → 0.92, version v3 → v4).
-  // No Official picks are produced from this market.
-  // NBA total: model-edge ceiling sits well below the per-market 10% floor
-  // (max edge across 214 candidates over a 14d window: 6.8%). Bucket has
-  // been functionally dead — formal disable makes the state explicit and
-  // prevents false-positive activity if MARKET_MIN_EDGE.nba_total is ever
-  // tuned downward without a corresponding model review. Re-enable only
-  // after a model review establishes whether real edge is reachable.
-  nba_total: true,
-  // MLB Phase 0.75D foundation: moneyline only. Run line (mlb_spread) and
-  // totals (mlb_total) are explicitly disabled here as a defensive marker
-  // — the cron path also skips them via per-league markets list. No models
-  // exist for these markets yet; do not enable without wiring SP data.
-  mlb_spread: true,
-  mlb_total: true,
-  // NFL Phase 0.75E foundation: no models built yet. All three markets
-  // are disabled. Spread will be the first market enabled (per project
-  // direction) once nflSpreadModel.ts is built and backtested. Moneyline
-  // and total stay disabled until they too have models + evidence. The
-  // cron path additionally does NOT include "nfl" in LEAGUES, so no
-  // candidates can be generated even if these flags were lifted.
-  nfl_spread: true,
-  nfl_moneyline: true,
-  nfl_total: true,
-  // NCAAF Phase 0.75F foundation: no models built yet. Same gating
-  // posture as NFL — all three markets disabled, cron LEAGUES excludes
-  // "ncaaf", spread is the planned first-market build.
-  ncaaf_spread: true,
-  ncaaf_moneyline: true,
-  ncaaf_total: true,
-};
+export const MARKET_DISABLED: Partial<Record<string, boolean>> = {};
 
 /**
- * Markets that produce candidates but are NOT presented as Official picks.
- * Every candidate whose `${league}_${marketType}` key is true here is force-
- * PASSED with selection_reason='model_watch_only' AFTER the MARKET_DISABLED
- * branch. Disabled markets keep their `market_disabled` reason; everything
- * else in this set surfaces only via the dashboard's existing Model Watch
- * (FallbackCandidateCard) treatment.
+ * Legacy watch-only fallback map.
  *
- * Effect on the public surface:
- *   - candidate_bets: rows still written (so the dashboard can pick the
- *     highest-rank PASS candidate to render as Model Watch).
- *   - scored_picks:   rows are NEVER written for these markets (PASS is
- *     filtered out before persistence in /picks/score and the cron).
- *   - Performance / History: untouched — they read from scored_picks, so
- *     Model-Watch-only markets cannot enter Official metrics.
- *
- * Criteria for removing an entry (i.e. promoting back to Official):
- *   - nhl_spread: closure of Task #4 (NHL edge inflation) PLUS a sustained
- *     post-cutoff Tier-A win-rate sample comparable to NBA spread.
- *   - mlb_moneyline: a longer post-launch calibration window (still in the
- *     first weeks of Phase 0.75D MLB foundation) PLUS Tier-A evidence on a
- *     non-trivial settled sample.
- *
- * This is a registry / surface change, not a model change. Toggling an
- * entry off restores the prior Official behavior with no schema migration.
+ * Keep this empty by default. Watch routing still exists, but only through
+ * explicit registry state. That makes the default scorer behavior simple:
+ * modeled markets flow through normal tiering unless the registry says
+ * otherwise.
  */
-export const MARKET_MODEL_WATCH_ONLY: Partial<Record<string, boolean>> = {
-  nhl_spread: true,
-  mlb_moneyline: true,
-  // R1 recovery (2026-04-27): lifted from MARKET_DISABLED into watch-only
-  // after a 45-day read-only replay (validateGateChange.ts --proposal=R1)
-  // showed 132 candidates would surface, with 57.3% realized win rate on
-  // 82 decided games (Tier A 60.9%, Tier B 55.9%) and mean CLV +2.07%.
-  // Both watch-promotion bars were cleared (>=5 surfaced; mean CLV >= -2%).
-  // No Official picks are produced from this market — promotion to Official
-  // requires a fresh post-watch-window analysis on the post-2026-04-12
-  // line-shopping-fix sample only.
-  nhl_total: true,
-  // R2 recovery (2026-04-28): lifted from MARKET_DISABLED into watch-only
-  // alongside the calibration relaxation in calibration.ts (sigmoidA
-  // 0.85 → 0.92, version v3 → v4). Read-only replay (validateGateChange.ts
-  // --proposal=R2 over 2026-03-12 → 2026-04-27) surfaced 25 candidates with
-  // 56.0% realized win rate (Tier-A 10W-5L = 66.7% n=15, Tier-B 4W-6L =
-  // 40.0% n=10) and mean CLV +0.24pp (n=19). Both watch-promotion bars
-  // cleared (>=5 surfaced; mean CLV >= -2pp). No Official picks are
-  // produced from this market — promotion to Official requires the
-  // universal Tier-A floor (n>=75 graded picks) AND a fresh post-R2-window
-  // analysis on the post-2026-04-28 sample only.
-  nba_spread: true,
-};
+export const MARKET_MODEL_WATCH_ONLY: Partial<Record<string, boolean>> = {};
 
 /**
  * Promotion-alert thresholds for the nightly Model-Watch alert check

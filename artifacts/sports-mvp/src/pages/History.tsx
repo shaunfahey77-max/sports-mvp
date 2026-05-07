@@ -143,11 +143,11 @@ export function History() {
             { value: "spread", label: "Spread" },
             { value: "total", label: "Total" },
           ]} />
-          <FilterSelect label="Tier" value={tier} onChange={(v) => setTier(v as any)} options={[
-            { value: "ALL", label: "All Tiers" },
-            { value: "A", label: "Tier A" },
-            { value: "B", label: "Tier B" },
-            { value: "C", label: "Tier C" },
+          <FilterSelect label="Score" value={tier} onChange={(v) => setTier(v as any)} options={[
+            { value: "ALL", label: "All Scores" },
+            { value: "A", label: "Score A" },
+            { value: "B", label: "Score B" },
+            { value: "C", label: "Score C" },
             { value: "PASS", label: "Pass" },
           ]} />
         </div>
