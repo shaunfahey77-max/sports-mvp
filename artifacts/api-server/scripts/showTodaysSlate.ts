@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import {
   candidateBetsTable,
   db,
@@ -30,6 +30,21 @@ function getPgErrorCode(error: unknown): string | null {
   ) {
     return (error as { code: string }).code;
   }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "cause" in error
+  ) {
+    const cause = (error as { cause?: unknown }).cause;
+    if (
+      typeof cause === "object" &&
+      cause !== null &&
+      "code" in cause &&
+      typeof (cause as { code?: unknown }).code === "string"
+    ) {
+      return (cause as { code: string }).code;
+    }
+  }
   return null;
 }
 
@@ -39,8 +54,8 @@ function getSlateDayET(now: Date = new Date()): string {
   }).format(now);
 }
 
-function parseArgs(argv: string[]): { date?: string } {
-  const parsed: { date?: string } = {};
+function parseArgs(argv: string[]): { date?: string; from?: string; to?: string } {
+  const parsed: { date?: string; from?: string; to?: string } = {};
   for (const arg of argv.slice(2)) {
     if (arg.startsWith("--date=")) {
       const value = arg.slice("--date=".length).trim();
@@ -50,7 +65,29 @@ function parseArgs(argv: string[]): { date?: string } {
       parsed.date = value;
       continue;
     }
+    if (arg.startsWith("--from=")) {
+      const value = arg.slice("--from=".length).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw new Error(`--from must be YYYY-MM-DD (got ${value})`);
+      }
+      parsed.from = value;
+      continue;
+    }
+    if (arg.startsWith("--to=")) {
+      const value = arg.slice("--to=".length).trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        throw new Error(`--to must be YYYY-MM-DD (got ${value})`);
+      }
+      parsed.to = value;
+      continue;
+    }
     throw new Error(`unknown arg: ${arg}`);
+  }
+  if (parsed.date && (parsed.from || parsed.to)) {
+    throw new Error("Use either --date or --from/--to, not both.");
+  }
+  if ((parsed.from && !parsed.to) || (!parsed.from && parsed.to)) {
+    throw new Error("Both --from and --to are required for a range query.");
   }
   return parsed;
 }
@@ -124,6 +161,30 @@ function formatEventStart(value: Date | string | null | undefined): string {
   }).format(dt);
 }
 
+function formatDayHeader(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const dt = new Date(Date.UTC(year, (month ?? 1) - 1, day ?? 1));
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).format(dt);
+}
+
+function formatResult(result: string): string {
+  switch (result) {
+    case "win":
+      return "WIN";
+    case "loss":
+      return "LOSS";
+    case "push":
+      return "PUSH";
+    default:
+      return result.toUpperCase();
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv);
 
@@ -136,6 +197,78 @@ async function main(): Promise<void> {
   }
 
   const today = args.date ?? getSlateDayET();
+
+  if (args.from && args.to) {
+    const rangeConditions = [
+      gte(scoredPicksTable.date, args.from),
+      lte(scoredPicksTable.date, args.to),
+      inArray(scoredPicksTable.league, [...DEFAULT_PRODUCTION_LEAGUES]),
+      isNull(scoredPicksTable.dataQuality),
+    ];
+    const rangeExclusion = buildPreFixExclusionCondition(
+      scoredPicksTable.league,
+      scoredPicksTable.date,
+    );
+    if (rangeExclusion) rangeConditions.push(rangeExclusion);
+    const plausibleRangeCondition = buildPlausibleEventStartCondition(
+      scoredPicksTable.league,
+      scoredPicksTable.eventStart,
+    );
+    if (plausibleRangeCondition) rangeConditions.push(plausibleRangeCondition);
+
+    const rangeRows = await db
+      .select()
+      .from(scoredPicksTable)
+      .where(and(...rangeConditions))
+      .orderBy(desc(scoredPicksTable.date), desc(scoredPicksTable.rankScore));
+
+    console.log(`\nSportsMVP official picks from ${args.from} to ${args.to} (ET)\n`);
+
+    if (rangeRows.length === 0) {
+      console.log("No official picks found in this date range.\n");
+      return;
+    }
+
+    const grouped = new Map<string, typeof rangeRows>();
+    for (const row of rangeRows) {
+      const bucket = grouped.get(row.date) ?? [];
+      bucket.push(row);
+      grouped.set(row.date, bucket);
+    }
+
+    for (const [date, rows] of grouped) {
+      console.log(`${formatDayHeader(date)} · ${date}`);
+      for (const row of rows) {
+        printBullet([
+          `[${row.tier}] ${row.league.toUpperCase()} ${describeMarketPick({
+            market: row.market,
+            side: row.pick,
+            publishLine: row.publishLine,
+            publishOdds: row.publishOdds,
+          })}`,
+          `result ${formatResult(row.result)} | edge ${formatSignedPercent(row.edge)} | EV ${formatSignedPercent(row.ev)} | model ${formatPercent(row.modelProbCalibrated)}`,
+          `starts ${formatEventStart(row.eventStart)}`,
+        ]);
+      }
+      console.log("");
+    }
+
+    const summary = rangeRows.reduce(
+      (acc, row) => {
+        if (row.result === "win") acc.wins += 1;
+        else if (row.result === "loss") acc.losses += 1;
+        else if (row.result === "push") acc.pushes += 1;
+        else acc.pending += 1;
+        return acc;
+      },
+      { wins: 0, losses: 0, pushes: 0, pending: 0 },
+    );
+
+    console.log(
+      `Summary: ${rangeRows.length} official picks | ${summary.wins}W-${summary.losses}L-${summary.pushes}P | ${summary.pending} pending`,
+    );
+    return;
+  }
 
   const officialConditions = [
     eq(scoredPicksTable.date, today),
