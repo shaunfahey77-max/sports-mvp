@@ -21,6 +21,18 @@ type CandidateSurfaceStatus =
   | "official"
   | "suppressed";
 
+function getPgErrorCode(error: unknown): string | null {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+  ) {
+    return (error as { code: string }).code;
+  }
+  return null;
+}
+
 function getSlateDayET(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
@@ -154,9 +166,38 @@ async function main(): Promise<void> {
   );
   if (evaluationExclusion) evaluationConditions.push(evaluationExclusion);
 
-  const [scoredPickRows, evaluationRows] = await Promise.all([
-    db.select().from(scoredPicksTable).where(and(...officialConditions)).orderBy(desc(scoredPicksTable.rankScore)),
-    db
+  const scoredPickRows = await db
+    .select()
+    .from(scoredPicksTable)
+    .where(and(...officialConditions))
+    .orderBy(desc(scoredPicksTable.rankScore));
+
+  let evaluationRows: Array<{
+    date: string;
+    gameKey: string;
+    league: string;
+    market: string;
+    pick: string;
+    result: string;
+    publishOdds: string;
+    publishLine: string | null;
+    closeOdds: string | null;
+    closeLine: string | null;
+    modelProbRaw: string;
+    modelProbCalibrated: string;
+    marketProbFair: string;
+    edge: string;
+    ev: string;
+    rankScore: string;
+    tier: string;
+    clvLineDelta: string | null;
+    clvImpliedDelta: string | null;
+    modelVersion: string;
+    scoringVersion: string;
+  }> = [];
+
+  try {
+    evaluationRows = await db
       .select({
         date: evaluationResultsTable.date,
         gameKey: evaluationResultsTable.gameKey,
@@ -182,8 +223,17 @@ async function main(): Promise<void> {
       })
       .from(evaluationResultsTable)
       .where(and(...evaluationConditions))
-      .orderBy(desc(evaluationResultsTable.rankScore)),
-  ]);
+      .orderBy(desc(evaluationResultsTable.rankScore));
+  } catch (error) {
+    const code = getPgErrorCode(error);
+    if (code === "42P01") {
+      console.warn(
+        "evaluation_results is not present in this database yet; falling back to legacy scored_picks-only official slate.",
+      );
+    } else {
+      throw error;
+    }
+  }
 
   const evaluationRowKeys = evaluationRows.map((row) =>
     and(
@@ -264,11 +314,80 @@ async function main(): Promise<void> {
   );
   if (candidatesExclusion) candidateConditions.push(candidatesExclusion);
 
-  const rawCandidates = await db
-    .select()
-    .from(candidateBetsTable)
-    .where(and(...candidateConditions))
-    .orderBy(desc(candidateBetsTable.rankScore));
+  let rawCandidates: Array<{
+    id: number;
+    gameKey: string;
+    league: string;
+    marketType: string;
+    side: string;
+    eventStart: Date;
+    publishOdds: string;
+    publishLine: string | null;
+    modelProbCalibrated: string;
+    edge: string;
+    ev: string;
+    rankScore: string;
+    tier: string;
+    selectionReason: string | null;
+    surfaceStatus: string | null;
+    snapshotDate: string;
+  }> = [];
+
+  try {
+    rawCandidates = await db
+      .select({
+        id: candidateBetsTable.id,
+        gameKey: candidateBetsTable.gameKey,
+        league: candidateBetsTable.league,
+        marketType: candidateBetsTable.marketType,
+        side: candidateBetsTable.side,
+        eventStart: candidateBetsTable.eventStart,
+        publishOdds: candidateBetsTable.publishOdds,
+        publishLine: candidateBetsTable.publishLine,
+        modelProbCalibrated: candidateBetsTable.modelProbCalibrated,
+        edge: candidateBetsTable.edge,
+        ev: candidateBetsTable.ev,
+        rankScore: candidateBetsTable.rankScore,
+        tier: candidateBetsTable.tier,
+        selectionReason: candidateBetsTable.selectionReason,
+        surfaceStatus: candidateBetsTable.surfaceStatus,
+        snapshotDate: candidateBetsTable.snapshotDate,
+      })
+      .from(candidateBetsTable)
+      .where(and(...candidateConditions))
+      .orderBy(desc(candidateBetsTable.rankScore));
+  } catch (error) {
+    const code = getPgErrorCode(error);
+    if (code === "42703") {
+      console.warn(
+        "candidate_bets.surface_status is not present in this database yet; falling back to selection_reason-based candidate visibility.",
+      );
+      rawCandidates = await db
+        .select({
+          id: candidateBetsTable.id,
+          gameKey: candidateBetsTable.gameKey,
+          league: candidateBetsTable.league,
+          marketType: candidateBetsTable.marketType,
+          side: candidateBetsTable.side,
+          eventStart: candidateBetsTable.eventStart,
+          publishOdds: candidateBetsTable.publishOdds,
+          publishLine: candidateBetsTable.publishLine,
+          modelProbCalibrated: candidateBetsTable.modelProbCalibrated,
+          edge: candidateBetsTable.edge,
+          ev: candidateBetsTable.ev,
+          rankScore: candidateBetsTable.rankScore,
+          tier: candidateBetsTable.tier,
+          selectionReason: candidateBetsTable.selectionReason,
+          snapshotDate: candidateBetsTable.snapshotDate,
+        })
+        .from(candidateBetsTable)
+        .where(and(...candidateConditions))
+        .orderBy(desc(candidateBetsTable.rankScore))
+        .then((rows) => rows.map((row) => ({ ...row, surfaceStatus: null })));
+    } else {
+      throw error;
+    }
+  }
 
   const renderableCandidates = rawCandidates.filter(isRenderableCandidateRow);
   const liveCandidates = renderableCandidates.filter((row) => row.tier !== "PASS");
